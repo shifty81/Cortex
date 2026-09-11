@@ -1,9 +1,10 @@
 # ForgePY F60R17 -> Rust Forge Parity Matrix
 
-| Surface | ForgePY F60R17 | Rust FR01 | Next authority pass |
+| Surface | ForgePY F60R17 | Rust FR02 | Next authority pass |
 |---|---|---|---|
-| `forge.project.v1` | GREEN | IMPLEMENTED | Harden schema/versioning |
-| Project-native provider | GREEN | IMPLEMENTED | capability discovery JSON |
+| `forge.project.v1` | GREEN | HARDENED | compatibility-range negotiation |
+| Project-native provider | GREEN | IMPLEMENTED | provider health/version handshake |
+| Capability discovery JSON | GREEN-equivalent | IMPLEMENTED (`forge.capabilities.v1`) | expose in GUI/project registry |
 | Quick Full Gate/Build/Run | GREEN | IMPLEMENTED | operation receipts |
 | Live project console | GREEN | IMPLEMENTED | stop/cancel + log files |
 | Semantic PASS/WARN/FAIL | GREEN | IMPLEMENTED | token-only rich rendering |

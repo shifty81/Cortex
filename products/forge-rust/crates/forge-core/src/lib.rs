@@ -1,4 +1,4 @@
-use forge_contracts::{substitute_root, ProjectContract};
+use forge_contracts::{provider_command, substitute_root, ProjectCapabilities, ProjectContract};
 use forge_process::CommandSpec;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -30,6 +30,11 @@ impl ProjectSession {
             .root_control_center
             .provider_path()
             .is_some_and(|provider| self.root.join(provider).is_file())
+    }
+
+    #[must_use]
+    pub fn capabilities(&self) -> ProjectCapabilities {
+        self.contract.capabilities(&self.root)
     }
 
     pub fn resolve(&self, operation: &str) -> Result<CommandSpec, ResolveError> {
@@ -77,25 +82,7 @@ impl ProjectSession {
 
 #[must_use]
 pub fn provider_alias(operation: &str) -> Option<&'static str> {
-    match operation {
-        "project.status" => Some("status-json"),
-        "gate.quick" => Some("quick"),
-        "gate.fast" => Some("fast"),
-        "gate.full" => Some("full"),
-        "build.native" => Some("build"),
-        "build.release" => Some("build-release"),
-        "run.gui" => Some("launch-gui"),
-        "project.self-test" => Some("self-test"),
-        "diagnostics.bundle" => Some("debug-bundle"),
-        "patch.status" => Some("patch-status"),
-        "patch.apply" => Some("patch-apply"),
-        "git.status" => Some("git-status"),
-        "git.commit-green" => Some("commit-green"),
-        "git.commit-push-green" => Some("commit-push-green"),
-        "git.push" => Some("push"),
-        "doctor.status" => Some("doctor-json"),
-        _ => None,
-    }
+    provider_command(operation)
 }
 
 #[cfg(test)]
