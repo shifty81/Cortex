@@ -4,13 +4,25 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+autobins = false
 
 [dependencies]
 eframe.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 forge-contracts = { path = "../../crates/forge-contracts" }
 forge-core = { path = "../../crates/forge-core" }
 forge-process = { path = "../../crates/forge-process" }
+forge-state = { path = "../../crates/forge-state" }
+forge-ide = { path = "../../crates/forge-ide" }
+forge-toolchain = { path = "../../crates/forge-toolchain" }
+forge-diagnostics = { path = "../../crates/forge-diagnostics" }
+forge-ember = { path = "../../crates/forge-ember" }
 cortex-bridge = { path = "../../crates/cortex-bridge" }
+
+[[bin]]
+name = "forge-rs"
+path = "src/main_forge_host.rs"
 
 [lints]
 workspace = true

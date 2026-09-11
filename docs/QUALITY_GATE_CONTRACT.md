@@ -1,42 +1,66 @@
-# Cortex Standalone Quality Gate Contract
+# Cortex / Rust Forge Quality Gate Contract
 
-## Full Quality
+## Cortex Full Quality
 
 Canonical order:
 
-1. root/inbox transactional patch intake;
-2. root cleanliness and manifest sanity;
+1. patch/update intake through production authority;
+2. root cleanliness/contract sanity;
 3. toolchain/workspace/dependency health;
 4. format verification;
 5. Cargo check/all-target compilation;
 6. unit/integration tests;
 7. Clippy with warnings denied;
-8. full workspace build;
-9. Cortex CLI/API/schema fixtures;
-10. provider/plugin/tool execution contracts;
+8. full Cortex workspace build;
+9. CLI/API/schema fixtures;
+10. provider/plugin/tool contracts;
 11. transaction/recovery tests;
-12. Desktop/runtime smoke where available;
-13. Forge integration fixtures where available;
-14. artifacts/debug summary/provenance;
-15. GREEN/FAIL result with structured evidence.
+12. Desktop/runtime smoke;
+13. Forge integration fixtures;
+14. debug/provenance evidence;
+15. structured GREEN/FAIL result.
 
-## Fast Development Gate
+## Rust Forge candidate gate
 
-1. patch intake;
-2. workspace/dependency health;
-3. format verification;
-4. `cargo check`;
-5. impacted/targeted tests;
-6. lightweight CLI/schema contract smoke.
+Run independently through `forge-rust-gate`:
+
+1. format check;
+2. workspace/all-target Cargo check;
+3. workspace/all-target tests;
+4. Clippy `-D warnings`;
+5. `forge-rs` build.
+
+A GREEN candidate gate proves source/build health only. It does not grant takeover.
+
+## RS293 native runtime smoke
+
+After candidate gate, verify read-only behavior first:
+
+- project contract/provider load;
+- durable operation start/stop/history;
+- machine-state open/save/reopen;
+- project/fleet registry;
+- Cortex host connection and real conversation/chat;
+- active-project switch/rebind;
+- patch inspector without mutation;
+- Artifact Central inspector without promotion;
+- VCS state/history inspection;
+- intake classification with auto-apply disabled;
+- filesystem watch snapshot/diff;
+- toolchain doctor;
+- native diagnostics;
+- native IDE open/search/edit/undo/redo/conflict check using a disposable test file;
+- LSP/DAP frame round-trip tests;
+- Ember host inspector;
+- release-manifest/update-plan verification;
+- takeover matrix remains fail-closed.
+
+Then test mutation paths individually with recovery evidence before running Cortex Full Quality.
+
+## Takeover certification
+
+ForgePY remains production authority until every required takeover check is VERIFIED against side-by-side semantic fixtures for project/fleet discovery, operation cancellation, patch apply/rollback, Artifact Central/lineage, GitHub/Internal Git, diagnostics/recovery, services, Cortex hosting, scheduling, native IDE/platform/distribution and other required workstation behavior.
 
 ## Explicit exclusions
 
-The following must not be required by either gate:
-
-- standalone-boundary enforcement;
-- Open2D/Havenwild/PCC ownership checks;
-- Hxx/R051 literal-marker scans;
-- migration quarantine checks;
-- project-name policy scans whose purpose is only separation proof.
-
-A static scan is acceptable only when it protects a current engineering/security invariant that cannot be better expressed as a behavioral or schema test.
+Do not reintroduce obsolete migration/separation marker gates. Do not require WebView/Monaco for IDE certification.

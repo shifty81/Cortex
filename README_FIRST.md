@@ -1,50 +1,55 @@
-# Cortex Standalone — Normalized Project Handoff
+# Cortex — Intelligence Runtime Hosted by Forge
 
-Date: 2026-09-08  
-Status: Active standalone authority  
-Purpose: Continue Cortex as its own project. Separation is complete; no standalone-boundary enforcement is required.
+Date: 2026-09-11  
+Committed baseline: `6d35ceea75dfa00bce392239fbce7a30eb2d9cc5` (RS03 GREEN)  
+Current development lane: Rust Forge cumulative candidate RS04–RS293.
 
-## Authority
+## Product hierarchy
 
-Cortex is the authoritative standalone Cortex project.
+- **Forge** is the user-facing universal workstation and project/build/control/tooling shell.
+- **Cortex** is the intelligence/runtime subsystem under Forge and remains independently testable/service-capable.
+- **Ember** is the game-authoring/editor system hosted by Forge and powered by Cortex.
 
-Cortex owns its generic AI/agent/runtime/CLI/Desktop/plugin/provider/job/context/review infrastructure. External projects and tools integrate with Cortex through normal versioned contracts; they are not owners of Cortex internals and Cortex does not need policy gates proving that fact.
+The intended normal user experience is one Forge workstation with first-class Cortex and Ember workspaces, not three competing top-level control applications.
 
-Forge is the universal project-development/root-operations platform consumed by Cortex for project operations. Forge is an integration dependency/service surface, not a boundary Cortex must enforce.
+## Cortex authority
 
-## Active quality philosophy
+Cortex owns AI/agent orchestration, conversations, context/memory, providers/models, tools/permissions, jobs/tasks/activity, project intelligence, review intent/evidence, plugins/skills/protocol contracts and Cortex CLI/API/service behavior.
 
-The project validates engineering health, not migration history.
+Cortex does not own competing universal implementations of Forge project operations, Artifact Central, universal patch intake, Forge Repository/Internal Git, GitHub source hosting, universal build orchestration or Ember editing.
 
-Keep active checks for:
-- workspace and dependency health;
-- formatting, compile/check, tests, Clippy and builds;
-- CLI/API/schema behavior;
-- provider/model/tool execution contracts;
-- plugin/tool-provider compatibility;
-- cancellation/job lifecycle behavior;
-- transactions, recovery and mutation safety;
-- GUI/runtime smoke behavior;
-- Forge integration fixtures;
-- packaging, provenance and release artifacts.
+## Forge authority
 
-Do not require:
-- `Test-CortexStandaloneBoundary.ps1`;
-- Hxx/R051 literal marker gates;
-- Open2D/Havenwild/PCC ownership enforcement;
-- project-name prohibition scans whose only purpose was migration/separation;
-- static proof that Cortex is standalone.
+Forge owns project/fleet state, universal operations, build/test/run routing, update transactions, Artifact Central, GitHub/Internal Git, services, IDE, platform state, release/recovery and takeover certification.
 
-Historical separation material is retained under `docs/history/legacy-separation/` and `scripts/history/` only as evidence.
+ForgePY remains production authority until Rust Forge passes explicit takeover certification. The committed source is GREEN through RS03; RS04–RS293 remains candidate until the local nested Forge gate and Cortex Full Gate pass.
 
-## Immediate continuation
+## Native IDE direction
 
-1. Remove obsolete standalone-boundary invocation from the root Full Quality and fast-development paths.
-2. Remove Hxx/R051 policy-marker stages from active certification.
-3. Build the native Cortex CLI and expose typed status/build/test/certify commands.
-4. Keep the bootstrap/recovery menu only until the native CLI/GUI can own the same operations.
-5. Integrate Forge through typed machine contracts; do not duplicate Forge project-operation logic in Cortex.
-6. Drive Cortex to a real GREEN standalone gate: `fmt -> check -> test -> clippy -> build -> CLI/contract/runtime smoke`.
-7. Continue Desktop/agent/provider development only against this normalized authority.
+The Forge IDE is **native Rust**. WebView/Monaco is not required and is no longer the active architecture.
 
-See `docs/CURRENT_AUDIT.md`, `docs/QUALITY_GATE_CONTRACT.md`, and `docs/NORMALIZATION_ACTION_MATRIX.md`.
+The current candidate includes:
+
+- native egui IDE workspace;
+- multi-tab text editing;
+- bounded undo/redo;
+- dirty/conflict state;
+- SHA-preimage guarded transactional saves;
+- project file listing/search;
+- language-tool discovery;
+- native stdio `Content-Length` JSON-RPC transport for LSP/DAP-style processes;
+- native terminal profile contracts.
+
+Rope/tree-sitter-class editing, richer syntax presentation and full asynchronous LSP/DAP UI integration remain later hardening work after the first candidate build.
+
+## Current truth
+
+The Cortex native CLI and Desktop/controller stack are already implemented. Older documents stating that they are “not built yet” are stale historical material.
+
+See:
+
+- `docs/CURRENT_IMPLEMENTATION_AUDIT_RS293.md`;
+- `docs/QUALITY_GATE_CONTRACT.md`;
+- `docs/TARGET_ARCHITECTURE.md`;
+- `docs/FORGE_RUST_PARALLEL_LANE.md`;
+- `products/forge-rust/docs/RS04_RS293_CUMULATIVE_ROLLUP.md`.

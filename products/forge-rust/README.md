@@ -1,23 +1,49 @@
-# Forge Rust — Parallel Application Lane
+# Forge Rust — Parallel Candidate
 
-Status: **FR01 scaffold**.
+Status: **RS03 committed GREEN; RS04–RS293 cumulative candidate pending build**.
 
-This is the parallel Rust implementation of Forge. It lives inside the Cortex repository during the migration lane but is deliberately isolated in its own Cargo workspace so it can build without destabilizing the current Cortex workspace.
+Forge Rust is the native implementation of Forge, the universal workstation that hosts Cortex intelligence and Ember game authoring. It remains isolated under `products/forge-rust/` while takeover parity is developed.
 
-ForgePY remains the production universal front end until Rust Forge passes takeover certification. The Rust application consumes the same `forge.project.v1` project contract and project-owned machine provider used by ForgePY.
+ForgePY remains production authority.
 
-## Build through Cortex / ForgePY
+## Candidate crates
 
-ForgePY -> Cortex project provider -> `forge-rust-gate` / `forge-rust-build` / `forge-rust-run` -> this workspace.
+- `forge-contracts` — `forge.project.v1` and capability authority;
+- `forge-core` — project session/provider routing;
+- `forge-process` — durable operation IDs/receipts/logs/cancellation/recovery;
+- `forge-state` — machine fleet/settings/artifact/lineage/service/queue/source-control/takeover state;
+- `forge-update` — modern patch validation/transaction/rollback evidence;
+- `forge-artifacts` — Artifact Central verified promotion/index/retention;
+- `forge-vcs` — Git state/worktrees/branches/Internal Git/GitHub-origin backend;
+- `forge-scheduler` — persisted project queue plus conservative resource planning;
+- `forge-services` — service lifecycle/logging/health;
+- `forge-intake` — patch intake classification, watch integration and explicit promotion;
+- `forge-certify` — semantic takeover certification foundation;
+- `forge-ide` — native multi-tab editor/session/search/guarded-save authority;
+- `forge-protocol` — native stdio `Content-Length` JSON-RPC transport for LSP/DAP-style processes;
+- `forge-watch` — bounded filesystem snapshot/diff watcher;
+- `forge-toolchain` — project requirement/toolchain doctor;
+- `forge-diagnostics` — native Forge diagnostic aggregation;
+- `forge-ember` — project-provided Ember host adapter contract;
+- `forge-platform` — platform/tray/notification state contracts;
+- `forge-release` — release manifests, update plans and recovery checkpoints;
+- `cortex-bridge` — adapter over real Cortex Desktop core/client/protocol;
+- `forge-rs` — native Forge shell.
 
-Direct developer commands are also available:
+## Native IDE
 
-```bat
-cargo check --manifest-path products\forge-rust\Cargo.toml --workspace --all-targets
-cargo test --manifest-path products\forge-rust\Cargo.toml --workspace --all-targets
-cargo clippy --manifest-path products\forge-rust\Cargo.toml --workspace --all-targets -- -D warnings
-cargo build --manifest-path products\forge-rust\Cargo.toml -p forge-rs
-cargo run --manifest-path products\forge-rust\Cargo.toml -p forge-rs -- --root C:\path\to\project
+The IDE is native Rust and is rendered directly in Forge. It does **not** require Monaco/WebView/Electron/Chromium.
+
+Current candidate behavior includes multi-tab editing, bounded undo/redo, dirty/conflict state, SHA-preimage guarded saves, project file/search surfaces, language-tool discovery and native LSP/DAP stdio protocol framing.
+
+## Build through ForgePY/Cortex
+
+```text
+ForgePY -> Cortex project provider -> forge-rust-gate / forge-rust-build / forge-rust-run
 ```
 
-FR01 intentionally implements only the first trustworthy vertical slice: project-contract loading, project-native provider dispatch, native Rust shell, quick actions, structured live console, and project-health presentation. No GUI control claims functionality that is not wired.
+Direct developer commands remain available through the nested Cargo workspace.
+
+## Truth rule
+
+Every unbuilt surface remains `Candidate`. GUI labels, contracts or source presence do not make a subsystem production authority until its required gate/runtime/takeover evidence passes.

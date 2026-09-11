@@ -1,0 +1,18 @@
+[package]
+name = "forge-intake"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+forge-update = { path = "../forge-update" }
+forge-artifacts = { path = "../forge-artifacts" }
+forge-state = { path = "../forge-state" }
+forge-vcs = { path = "../forge-vcs" }
+forge-watch = { path = "../forge-watch" }
+
+[lints]
+workspace = true

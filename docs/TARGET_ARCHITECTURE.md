@@ -1,95 +1,81 @@
-# Cortex Standalone Target Architecture
+# Forge / Cortex / Ember Target Architecture
 
 ```text
-                         +-----------------------+
-                         |    Cortex Desktop     |
-                         | chat/projects/jobs/   |
-                         | workbench/review      |
-                         +-----------+-----------+
-                                     |
-              +----------------------+----------------------+
-              |                      |                      |
-              v                      v                      v
-       +------+-------+       +------+-------+       +------+-------+
-       | Cortex CLI   |       | Cortex Agent |       | API/Clients  |
-       | human/headless|      | orchestration|       | IDE/other UI |
-       +------+-------+       +------+-------+       +------+-------+
-              \______________________|______________________/
-                                     |
-                         +-----------+-----------+
-                         |  Cortex Application   |
-                         | Core/Services/Events  |
-                         +-----+-----------+-----+
-                               |           |
-                  +------------+           +----------------+
-                  v                                             v
-        +---------+----------+                         +--------+---------+
-        | Provider/Model/Tool|                         | Plugin/Provider  |
-        | Sessions/Context   |                         | Gateway          |
-        +--------------------+                         +--------+---------+
-                                                               |
-                                                               v
-                                                    external integrations
-
-                         Cortex Project Operations
-                                     |
-                                     v
-                           +---------+---------+
-                           |       FORGE       |
-                           | universal project |
-                           | development/root  |
-                           | operations        |
-                           +----+---------+----+
-                                |         |
-                     +----------+         +------------------+
-                     v                                     v
-              managed projects                     Git/Forgejo/tools
++---------------------------------------------------------------------+
+|                               FORGE                                 |
+| universal native Rust workstation / project-control-tooling shell   |
+|                                                                     |
+| Projects | Workspace | Vault | Source Control | Native IDE | Ember  |
+|                                                     |         |      |
+|                                                     |         +-->  |
+|                                                     |       game     |
+|                                                     |     authoring  |
+|                                                     |                |
+|                                                     +--> Cortex      |
+|                                                          workspace   |
++------------------------------+--------------------------------------+
+                               |
+                   versioned native contracts
+                               |
+                    +----------+----------+
+                    |       CORTEX        |
+                    | intelligence runtime|
+                    +----------+----------+
+                               |
+            providers/models + agents/tools + context/memory
 ```
+
+## Forge owns
+
+- native application shell/navigation/health;
+- project/fleet registry and nested project graph;
+- project selection/workspace hosting;
+- command/capability routing;
+- build/test/run/package orchestration;
+- durable operations/scheduling;
+- Artifact Central and patch lineage;
+- GitHub and Forge Repository/Internal Git;
+- patch/update transactions and rollback;
+- **native IDE/editor/tool integrations**;
+- services/settings/tray/notifications;
+- Ember host;
+- release/recovery/takeover certification.
+
+## Native IDE rule
+
+The Forge IDE must not require Chromium, Electron, WebView2, HTML, CSS or JavaScript.
+
+The current candidate uses egui-native presentation with a Rust editor/session backend and native stdio JSON-RPC framing for LSP/DAP-style processes. Future editor-core upgrades may reuse permissively licensed native Rust ideas/components, but the workstation must remain native and the IDE must continue consuming Forge project/source-control/build authority rather than creating parallel project-control systems.
 
 ## Cortex owns
 
-- agent/reasoning orchestration;
 - conversations/context/memory;
-- provider/model routing and lifecycle;
-- AI-visible tools and tool routing;
-- jobs/tasks/events/activity;
-- source-change intent, review and evidence;
-- permissions/policy for Cortex actions;
-- plugin/tool-provider discovery;
-- Desktop/CLI/API application contracts;
-- project-aware Library/Vault/index views;
-- Cortex's own build/test/release health.
+- providers/models/model lifecycle;
+- Chat/Inspect/Plan/Apply/Repair;
+- tools and Cortex permissions;
+- safe streaming telemetry;
+- Cortex jobs/tasks/activity;
+- semantic project intelligence;
+- Cortex review/approval intent;
+- plugin/skill/protocol contracts;
+- Cortex CLI/API/service contracts.
 
-## Forge owns universal project operations
+## Ember owns
 
-- project discovery/registry/topology;
-- universal command registry;
-- build/test/run/package orchestration;
-- Git/worktrees/execution leases;
-- transactional patch/update/apply/rollback;
-- filesystem mutation primitives;
-- diagnostics/debug bundles/artifacts/history;
-- dependency/toolchain resolution;
-- project health and machine-readable events;
-- source intelligence services shared across managed projects.
+- world/scene editing;
+- content/assets;
+- pixel/sprite/animation authoring;
+- terrain/tile/level authoring;
+- node/gameplay logic;
+- UI/audio/dialogue authoring;
+- engine/runtime/PIE authoring workflows.
 
-Cortex consumes these capabilities rather than implementing a competing operations backend.
+Ember consumes Forge services and Cortex intelligence; it does not become the project-control backend.
 
-## External projects
+## Project independence
 
-Open2D/Ember, Havenwild and future projects are ordinary managed projects/integrations. They can expose project-specific capabilities through Forge/project contracts and optional Cortex plugins. Cortex does not need enforcement gates proving their independence.
+Every managed project retains its own local CLI/PCC/provider and remains independently buildable/testable/runnable/certifiable without Forge. Forge discovers and invokes that authority through `forge.project.v1`.
 
-## Plugin boundary
+## Production migration
 
-Prefer out-of-process/versioned contracts for independently upgraded integrations. Internal stable Cortex crates may use native Rust traits. Public integration contracts must describe capabilities, schemas, version compatibility, permissions, cancellation and health.
-
-## State
-
-- Cortex application state: configured Cortex home;
-- Cortex Library/Vault/index: configured durable storage;
-- Forge machine state: Forge-owned;
-- project-local operational state: project/Forge-owned;
-- project/editor/runtime state: project-owned;
-- secrets: secure user/OS storage, not handoff archives.
-
-Stable IDs and structured contracts connect the systems; migration enforcement does not.
+ForgePY remains production authority until Rust Forge takeover certification is fully VERIFIED and explicitly approved. Candidate source or a single successful build is insufficient.

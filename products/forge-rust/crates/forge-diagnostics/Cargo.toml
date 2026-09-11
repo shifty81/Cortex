@@ -1,0 +1,16 @@
+[package]
+name = "forge-diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+forge-state = { path = "../forge-state" }
+forge-toolchain = { path = "../forge-toolchain" }
+forge-vcs = { path = "../forge-vcs" }
+
+[lints]
+workspace = true

@@ -6,6 +6,22 @@ members = [
     "crates/forge-process",
     "crates/forge-core",
     "crates/cortex-bridge",
+    "crates/forge-state",
+    "crates/forge-update",
+    "crates/forge-artifacts",
+    "crates/forge-vcs",
+    "crates/forge-scheduler",
+    "crates/forge-services",
+    "crates/forge-intake",
+    "crates/forge-certify",
+    "crates/forge-ide",
+    "crates/forge-platform",
+    "crates/forge-release",
+    "crates/forge-watch",
+    "crates/forge-toolchain",
+    "crates/forge-diagnostics",
+    "crates/forge-ember",
+    "crates/forge-protocol",
 ]
 
 [workspace.package]
@@ -19,6 +35,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 eframe = { version = "0.36.2", default-features = true }
+sha2 = "0.10"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

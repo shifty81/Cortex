@@ -1,78 +1,55 @@
-# Current Cortex Standalone Audit
+# Current Cortex / Forge Audit
 
-## 1. Current runtime evidence
+Committed baseline: RS03 GREEN at `6d35ceea75dfa00bce392239fbce7a30eb2d9cc5`.
 
-The latest root-utility run reaches:
+## Implemented Cortex authority
 
-- root incremental patch intake: PASS;
-- root cleanliness audit: PASS;
-- Cargo: Ready;
-- workspace: Ready;
-- native Cortex CLI: not built yet;
-- native Cortex GUI: not built yet.
+Cortex already has a native CLI, Desktop/controller/native host, service/RPC, provider router, local/native/LM Studio/ComfyUI provider paths, model host, tool broker, permissions, conversations, context, project/workspace registry and discovery, jobs/activity/tasks, transactions/recovery, observability, Vault/library, artifacts, review, plugins/skills/protocol manifests and project operations.
 
-The run then fails inside the legacy `Standalone boundary` stage through `Test-CortexStandaloneBoundary.ps1` with a PowerShell scalar/collection `.Count` error.
+The old “CLI not built yet / GUI not built yet” diagnosis is obsolete.
 
-## 2. Normalized diagnosis
+## Forge production/candidate split
 
-The `.Count` defect is real PowerShell behavior, but the stage itself is obsolete.
+ForgePY remains the production universal workstation. Rust Forge is a parallel candidate built through the Cortex project provider.
 
-Cortex is already the standalone project. Therefore the correct fix is to remove this stage from the active quality pipeline, not spend another pass hardening a migration gate.
+RS03 is committed GREEN and established durable Rust Forge operation IDs, receipts, logs, cancellation and interrupted recovery.
 
-The same rule applies to Hxx/R051 literal-marker certification. Those labels represent useful historical milestones, but their marker validators are not production engineering truth.
+RS04–RS293 is cumulative candidate source and must be built before any of it is called GREEN.
 
-## 3. What remains valuable from the old Cortex work
+## Candidate implementation through RS293
 
-Preserve the implemented behavior behind prior milestones, including:
+The candidate now includes:
 
-- structured tool execution;
-- provider/model routing;
-- hard-stop/cancellation behavior;
-- durable jobs/events/activity;
-- transactions and recovery;
-- source mutation evidence;
-- project switching/context;
-- Vault/Library/catalog behavior;
-- Desktop/controller behavior;
-- native model lifecycle;
-- repair/build/test/launch loops;
-- plugin/provider/tool contracts.
+- Forge-hosted Cortex normalization;
+- persistent machine project/fleet state;
+- nested project graph and active-project switching;
+- native `forge.patch.v1` transactional update engine;
+- Artifact Central promotion/index/retention;
+- GitHub/origin + Forge Repository/Internal Git backend;
+- durable scheduler execution plus conservative resource planning;
+- service lifecycle/logging/health;
+- manifest-aware patch intake and polling watch snapshots;
+- native toolchain doctor and diagnostic aggregation;
+- native release/update/recovery evidence;
+- fail-closed takeover comparison;
+- **native Rust IDE with no WebView requirement**;
+- native LSP/DAP-style stdio JSON-RPC framing;
+- Ember host adapter contract;
+- platform notification/tray state model.
 
-Normalize those into ordinary modules and behavioral tests without Hxx/R051 enforcement names where practical.
+## Remaining high-value gaps
 
-## 4. Root utility status
+1. First GREEN compile/test/Clippy/runtime certification of the cumulative candidate.
+2. Full asynchronous language-server/debug-adapter event loop and rich IDE diagnostics/completion UI.
+3. Rope/tree-sitter-class editor internals and syntax rendering after the native editor spine is certified.
+4. OS-native filesystem notification backend; current watcher is bounded polling/snapshot based.
+5. Truly concurrent scheduler workers with shared-state locking; current planner exposes budgets but execution remains conservative/sequential.
+6. Native Windows system tray/toasts.
+7. Installer/updater/signing/self-recovery and OS-backed secure credential storage.
+8. Actual installed ForgePY side-by-side takeover fixture run.
+9. Remaining rich Cortex review/tool-card/attachment/accessibility parity.
+10. Real Ember editor/component migration.
 
-The current PowerShell root utility is a bootstrap/recovery bridge while the native Cortex CLI/GUI are not yet built. It should remain useful for:
+## Build order
 
-- patch intake;
-- root/project status;
-- bootstrap dependency checks;
-- build/test/certification entrypoints;
-- debug bundle creation;
-- logs/artifacts access;
-- recovery.
-
-It should not own obsolete migration-policy gates.
-
-## 5. Forge relationship
-
-Forge is the universal root/project development platform beneath Cortex-managed project operations.
-
-Cortex should consume Forge capabilities through typed commands/events/contracts instead of copying project discovery, build orchestration, patch engines, Git/worktree operations, diagnostics, artifact history or recovery engines into a competing backend.
-
-Cortex still owns its own product build/test/release health like any other project.
-
-## 6. Active blocker order
-
-After removing obsolete enforcement, the first meaningful failure encountered by the normalized Full Quality Gate becomes the next blocker. Expected near-term sequence:
-
-1. workspace/dependency health;
-2. `cargo fmt --all -- --check`;
-3. `cargo check --workspace --all-targets`;
-4. `cargo test --workspace`;
-5. `cargo clippy --workspace --all-targets -- -D warnings`;
-6. `cargo build --workspace`;
-7. Cortex CLI fixtures/contracts;
-8. provider/plugin/tool contracts;
-9. Desktop/runtime smoke;
-10. packaging/release evidence.
+Apply only the newest RS04–RS293 cumulative patch, run `forge-rust-gate`, repair the first real compiler/test/Clippy blocker, smoke the native IDE/Cortex/project operations, then run the Cortex Full Quality Gate. Commit/snapshot only when both lanes are GREEN.

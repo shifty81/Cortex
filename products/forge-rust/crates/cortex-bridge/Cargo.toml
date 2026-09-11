@@ -7,6 +7,10 @@ license.workspace = true
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
+cortex_client = { path = "../../../../crates/cortex_client" }
+cortex_desktop_core = { path = "../../../../crates/cortex_desktop_core" }
+cortex_protocol = { path = "../../../../crates/cortex_protocol" }
 
 [lints]
 workspace = true
