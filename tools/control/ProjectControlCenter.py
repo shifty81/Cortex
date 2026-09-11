@@ -24,17 +24,38 @@ def run_forge_rust(command: str, root: Path) -> int:
     if not manifest.is_file():
         print(f'[FAIL] Rust Forge workspace is missing: {manifest}', file=sys.stderr)
         return 2
-    prefix = ['cargo', '--manifest-path', str(manifest)]
+
+    # `--manifest-path` belongs to each Cargo subcommand, not to the top-level
+    # `cargo` invocation. Keep the canonical ordering here so the project-side
+    # provider behaves exactly like the forge.project.v1 command descriptors.
     stages: dict[str, list[str]] = {
-        'forge-rust-fmt': ['cargo', 'fmt', '--manifest-path', str(manifest), '--all', '--', '--check'],
-        'forge-rust-check': [*prefix, 'check', '--workspace', '--all-targets'],
-        'forge-rust-test': [*prefix, 'test', '--workspace', '--all-targets'],
-        'forge-rust-clippy': [*prefix, 'clippy', '--workspace', '--all-targets', '--', '-D', 'warnings'],
-        'forge-rust-build': [*prefix, 'build', '-p', 'forge-rs'],
-        'forge-rust-run': [*prefix, 'run', '-p', 'forge-rs'],
+        'forge-rust-fmt': [
+            'cargo', 'fmt', '--manifest-path', str(manifest), '--all', '--', '--check'
+        ],
+        'forge-rust-check': [
+            'cargo', 'check', '--manifest-path', str(manifest), '--workspace', '--all-targets'
+        ],
+        'forge-rust-test': [
+            'cargo', 'test', '--manifest-path', str(manifest), '--workspace', '--all-targets'
+        ],
+        'forge-rust-clippy': [
+            'cargo', 'clippy', '--manifest-path', str(manifest), '--workspace', '--all-targets', '--', '-D', 'warnings'
+        ],
+        'forge-rust-build': [
+            'cargo', 'build', '--manifest-path', str(manifest), '-p', 'forge-rs'
+        ],
+        'forge-rust-run': [
+            'cargo', 'run', '--manifest-path', str(manifest), '-p', 'forge-rs', '--', '--root', str(root)
+        ],
     }
     if command == 'forge-rust-gate':
-        for stage in ('forge-rust-fmt','forge-rust-check','forge-rust-test','forge-rust-clippy','forge-rust-build'):
+        for stage in (
+            'forge-rust-fmt',
+            'forge-rust-check',
+            'forge-rust-test',
+            'forge-rust-clippy',
+            'forge-rust-build',
+        ):
             rc = run(stages[stage], root)
             if rc != 0:
                 return rc
