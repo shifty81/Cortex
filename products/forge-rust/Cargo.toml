@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/forge-rs",
+    "crates/forge-contracts",
+    "crates/forge-process",
+    "crates/forge-core",
+    "crates/cortex-bridge",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Proprietary"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+eframe = { version = "0.36.2", default-features = true }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = "warn"

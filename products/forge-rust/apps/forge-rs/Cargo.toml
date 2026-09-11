@@ -1,0 +1,16 @@
+[package]
+name = "forge-rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+eframe.workspace = true
+forge-contracts = { path = "../../crates/forge-contracts" }
+forge-core = { path = "../../crates/forge-core" }
+forge-process = { path = "../../crates/forge-process" }
+cortex-bridge = { path = "../../crates/cortex-bridge" }
+
+[lints]
+workspace = true

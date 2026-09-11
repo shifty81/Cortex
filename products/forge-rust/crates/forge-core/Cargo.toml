@@ -1,0 +1,14 @@
+[package]
+name = "forge-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+forge-contracts = { path = "../forge-contracts" }
+forge-process = { path = "../forge-process" }
+thiserror.workspace = true
+
+[lints]
+workspace = true

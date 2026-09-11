@@ -45,7 +45,8 @@
       "permissions": [],
       "network_required": false,
       "cancellation": "bounded_kill",
-      "rollback": "none"
+      "rollback": "none",
+      "category": "tooling"
     },
     {
       "key": "pcc.selftest",
@@ -66,7 +67,8 @@
       "permissions": [],
       "network_required": false,
       "cancellation": "bounded_kill",
-      "rollback": "none"
+      "rollback": "none",
+      "category": "diagnostics"
     },
     {
       "key": "fmt.check",
@@ -83,7 +85,8 @@
       "permissions": [],
       "network_required": false,
       "cancellation": "bounded_kill",
-      "rollback": "none"
+      "rollback": "none",
+      "category": "test"
     },
     {
       "key": "fmt.apply",
@@ -102,7 +105,8 @@
       ],
       "network_required": false,
       "cancellation": "bounded_kill",
-      "rollback": "git_or_snapshot"
+      "rollback": "git_or_snapshot",
+      "category": "tooling"
     },
     {
       "key": "check",
@@ -118,7 +122,8 @@
       "permissions": [],
       "network_required": false,
       "cancellation": "bounded_kill",
-      "rollback": "none"
+      "rollback": "none",
+      "category": "build"
     },
     {
       "key": "test",
@@ -134,7 +139,8 @@
       "permissions": [],
       "network_required": false,
       "cancellation": "bounded_kill",
-      "rollback": "none"
+      "rollback": "none",
+      "category": "test"
     },
     {
       "key": "clippy",
@@ -153,7 +159,8 @@
       "permissions": [],
       "network_required": false,
       "cancellation": "bounded_kill",
-      "rollback": "none"
+      "rollback": "none",
+      "category": "test"
     },
     {
       "key": "build",
@@ -170,7 +177,8 @@
       "permissions": [],
       "network_required": false,
       "cancellation": "bounded_kill",
-      "rollback": "none"
+      "rollback": "none",
+      "category": "build"
     },
     {
       "key": "build.release",
@@ -188,7 +196,131 @@
       "permissions": [],
       "network_required": false,
       "cancellation": "bounded_kill",
+      "rollback": "none",
+      "category": "build"
+    },
+    {
+      "key": "forge.rust.fmt",
+      "label": "Rust Forge format check",
+      "category": "test",
+      "risk": "read_only",
+      "program": "cargo",
+      "args": [
+        "fmt",
+        "--manifest-path",
+        "products/forge-rust/Cargo.toml",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "side_effects": [],
+      "permissions": [],
+      "network_required": false,
+      "cancellation": "bounded_kill",
       "rollback": "none"
+    },
+    {
+      "key": "forge.rust.check",
+      "label": "Rust Forge cargo check",
+      "category": "build",
+      "risk": "read_only",
+      "program": "cargo",
+      "args": [
+        "check",
+        "--manifest-path",
+        "products/forge-rust/Cargo.toml",
+        "--workspace",
+        "--all-targets"
+      ],
+      "side_effects": [],
+      "permissions": [],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "none"
+    },
+    {
+      "key": "forge.rust.test",
+      "label": "Rust Forge tests",
+      "category": "test",
+      "risk": "read_only",
+      "program": "cargo",
+      "args": [
+        "test",
+        "--manifest-path",
+        "products/forge-rust/Cargo.toml",
+        "--workspace",
+        "--all-targets"
+      ],
+      "side_effects": [],
+      "permissions": [],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "none"
+    },
+    {
+      "key": "forge.rust.clippy",
+      "label": "Rust Forge clippy warnings-as-errors",
+      "category": "test",
+      "risk": "read_only",
+      "program": "cargo",
+      "args": [
+        "clippy",
+        "--manifest-path",
+        "products/forge-rust/Cargo.toml",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "side_effects": [],
+      "permissions": [],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "none"
+    },
+    {
+      "key": "forge.rust.build",
+      "label": "Build Parallel Rust Forge",
+      "category": "build",
+      "risk": "local_mutation",
+      "program": "cargo",
+      "args": [
+        "build",
+        "--manifest-path",
+        "products/forge-rust/Cargo.toml",
+        "-p",
+        "forge-rs"
+      ],
+      "side_effects": [
+        "build_outputs"
+      ],
+      "permissions": [],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "none"
+    },
+    {
+      "key": "forge.rust.run",
+      "label": "Run Parallel Rust Forge",
+      "category": "run",
+      "risk": "local_mutation",
+      "program": "cargo",
+      "args": [
+        "run",
+        "--manifest-path",
+        "products/forge-rust/Cargo.toml",
+        "-p",
+        "forge-rs"
+      ],
+      "side_effects": [
+        "build_outputs",
+        "process_launch"
+      ],
+      "permissions": [],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "process_stop"
     }
   ],
   "quality_gates": [
@@ -211,6 +343,17 @@
         "test",
         "clippy",
         "build"
+      ]
+    },
+    {
+      "key": "forge-rust",
+      "label": "Parallel Rust Forge candidate gate",
+      "stages": [
+        "forge.rust.fmt",
+        "forge.rust.check",
+        "forge.rust.test",
+        "forge.rust.clippy",
+        "forge.rust.build"
       ]
     }
   ],
@@ -238,6 +381,10 @@
     {
       "key": "source-refresh",
       "path": "artifacts/source-refresh"
+    },
+    {
+      "key": "forge-rust-build",
+      "path": "products/forge-rust/target"
     }
   ],
   "root_control_center": {
@@ -246,7 +393,38 @@
     "runtime": "Cortex Root Project Control Center remains authoritative; Universal Python PCC provides typed project command/gate execution to Cortex CLI/AI/tooling",
     "upstream": "Cortex Root Control + Universal Python PCC provider",
     "external_runtime_required": false,
-    "python_provider": "tools/pcc/src/pcc",
-    "python_minimum_version": "3.11"
+    "python_provider": "tools/control/ProjectControlCenter.py",
+    "python_minimum_version": "3.11",
+    "launcher": "PROJECT_CONTROL_CENTER.cmd",
+    "machine_provider": "tools/control/ProjectControlCenter.py",
+    "implementation_authority": "tools/control/CortexPCC.py",
+    "forgepy_role": "external-standalone-universal-front-end",
+    "project_standalone_required": true
+  },
+  "schema": "forge.project.v1",
+  "updates": {
+    "incoming": "incoming.patch",
+    "patchSchema": "forge.patch.v1",
+    "downloadsAutoQueue": false,
+    "approvalRequiredForDownloads": true,
+    "artifactAuthority": "forge",
+    "lineageAuthority": "artifact-central"
+  },
+  "forgepy_compatibility": {
+    "contract": "forge.project.v1",
+    "role": "external-standalone-front-end",
+    "referenceOnlyWhenAttachedToChat": true,
+    "vendoredRuntimeDependency": false,
+    "projectStandaloneRequired": true,
+    "machineProvider": "tools/control/ProjectControlCenter.py",
+    "implementationAuthority": "tools/control/CortexPCC.py"
+  },
+  "forge_rust_candidate": {
+    "path": "products/forge-rust",
+    "status": "parallel-candidate",
+    "productionAuthority": "ForgePY",
+    "takeoverRequiresExplicitCertification": true,
+    "gui": "egui/eframe",
+    "projectContract": "forge.project.v1"
   }
 }
