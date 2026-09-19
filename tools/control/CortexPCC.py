@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 import CortexPCCMaintenance as maintenance
+import CortexSourceRollup as source_rollup
 
 PCC_VERSION = "CTX-PCC-12.0"
 DEFAULT_REMOTE = "https://github.com/shifty81/Cortex.git"
@@ -922,6 +923,39 @@ class CortexPCC:
             print(json.dumps(payload, indent=2, sort_keys=True))
         return 0 if payload.get("healthy") else 2
 
+    def create_source_rollup(self, *, open_after: bool = False) -> int:
+        """Create and verify a recoverable source snapshot without mutating source/Git."""
+        archive: Path | None = None
+        try:
+            archive = source_rollup.create(self.ctx.root)
+            verification = source_rollup.verify(archive)
+            actual_sha = source_rollup.sha_file(archive)
+            sidecar = archive.with_name(archive.name + ".sha256")
+            expected_sidecar = f"{actual_sha}  {archive.name}\n"
+            if not sidecar.is_file() or sidecar.read_text(encoding="ascii") != expected_sidecar:
+                raise source_rollup.RollupError("source rollup checksum sidecar mismatch")
+            if verification.get("sha256") != actual_sha:
+                raise source_rollup.RollupError("source rollup verification digest mismatch")
+            print("SOURCE_ROLLUP_CREATED=" + str(archive))
+            print("SOURCE_ROLLUP_SHA256=" + actual_sha)
+            print("SOURCE_ROLLUP_VERIFIED=" + json.dumps(verification, sort_keys=True))
+            self.log.emit("PASS", f"Source rollup created and independently verified: {archive}", phase="recovery:source-rollup")
+            if open_after:
+                open_folder(archive.parent)
+            return 0
+        except (source_rollup.RollupError, OSError, ValueError, zipfile.BadZipFile) as exc:
+            # The exporter already verifies before publication. If the second check fails,
+            # quarantine only this newly created archive so it cannot be shared as verified.
+            if archive is not None:
+                try:
+                    archive.unlink(missing_ok=True)
+                    archive.with_name(archive.name + ".sha256").unlink(missing_ok=True)
+                except OSError:
+                    pass
+            self.log.emit("FAIL", f"Source rollup creation/verification failed: {exc}", phase="recovery:source-rollup")
+            print("SOURCE_ROLLUP_FAILED=" + str(exc), file=sys.stderr)
+            return 1
+
     def verify_latest_debug(self) -> int:
         latest = self.ctx.debug_dir / "LATEST_DEBUG_BUNDLE.json"
         if not latest.is_file():
@@ -1074,6 +1108,7 @@ class CortexPCC:
             print(" 42 Pull origin/main - clean + fast-forward only")
             print(" 43 Initialize / connect / repair against origin/main")
             print(" 60 Manual governed-source commit - not GREEN protected")
+            print(" 70 Create + verify source recovery archive")
             print("  0 Back")
             choice = input("Select: ").strip()
             if choice == "0":
@@ -1103,6 +1138,7 @@ class CortexPCC:
             elif choice == "41": self.git.action("compare")
             elif choice == "42": self.git.action("pull")
             elif choice == "43": self.git.action("setup")
+            elif choice == "70": self.create_source_rollup(open_after=True)
             else:
                 print("Unknown option.")
                 continue
@@ -1148,6 +1184,7 @@ class CortexPCC:
             print("14 Artifact retention dry-run")
             print("15 Apply artifact retention policy")
             print("16 PCC doctor / artifact status")
+            print("17 Create + verify source recovery archive")
             print(" 0 Back")
             choice = input("Select: ").strip()
             if choice == "0": return
@@ -1169,6 +1206,7 @@ class CortexPCC:
                 answer = input("Delete artifacts beyond retention limits? [y/N] ").strip().lower()
                 if answer in {"y", "yes"}: self.prune_artifacts(apply=True)
             elif choice == "16": self.artifact_status()
+            elif choice == "17": self.create_source_rollup(open_after=True)
             else: continue
             input("Press Enter to continue...")
 
@@ -1218,7 +1256,7 @@ def build_parser() -> argparse.ArgumentParser:
         "commit-green", "commit-push-green", "push", "build", "build-release",
         "launch-gui", "self-test", "doctor", "doctor-json",
         "root-hygiene", "root-hygiene-fix", "artifact-status",
-        "artifact-prune", "artifact-prune-apply", "verify-latest-debug",
+        "artifact-prune", "artifact-prune-apply", "verify-latest-debug", "source-rollup",
     ])
     parser.add_argument("--root")
     parser.add_argument("--remote", default=DEFAULT_REMOTE)
@@ -1266,6 +1304,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if cmd == "artifact-prune": return pcc.prune_artifacts(apply=False)
     if cmd == "artifact-prune-apply": return pcc.prune_artifacts(apply=True)
     if cmd == "verify-latest-debug": return pcc.verify_latest_debug()
+    if cmd == "source-rollup": return pcc.create_source_rollup(open_after=args.open_folder)
     if cmd == "self-test": return run_self_tests(root, pcc.runner)
     raise PCCError(f"Unsupported command: {cmd}")
 
