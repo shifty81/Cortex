@@ -1062,7 +1062,9 @@ class CortexPCC:
         inspection = inspect_project(self.ctx.root, rust_consumer=True)
         if inspection["status"] == "INVALID":
             problems = "; ".join(inspection.get("errors", [])[:6])
-            self.log.emit("FAIL", f"Cortex Desktop launch blocked by typed project contract: {problems}")
+            self.log.emit("FAIL", f"Cortex Desktop launch blocked by typed project contract: {problems}. "
+                          "Inspect: python tools/control/CortexPCC.py contract-migrate --root . ; "
+                          "explicitly repair only if approved: contract-migrate --root . --yes")
             return 2
         target = self.cargo_target_dir()
         gui = self.binary_path("cortex_desktop", target)
@@ -1287,6 +1289,9 @@ def run_universal_python_regressions(root: Path, runner: CommandRunner | None = 
         root / "tools/control/tests/test_cortex_upcc_a01_integration.py",
         root / "tools/control/tests/test_universal_pcc_plan.py",
         root / "tools/control/tests/test_cortex_upcc_a02_integration.py",
+        root / "tools/control/tests/test_cortex_upcc_a03_restart.py",
+        root / "tools/control/tests/test_cortex_upcc_a04_parity.py",
+        root / "tools/control/tests/test_cortex_upcc_a05_contract.py",
     ]
     missing = [str(p.relative_to(root)) for p in tests if not p.is_file()]
     if missing:
@@ -1339,7 +1344,7 @@ def build_parser() -> argparse.ArgumentParser:
         "commit-green", "commit-push-green", "push", "build", "build-release",
         "launch-gui", "self-test", "doctor", "doctor-json",
         "root-hygiene", "root-hygiene-fix", "artifact-status",
-        "artifact-prune", "artifact-prune-apply", "verify-latest-debug", "source-rollup", "universal-audit", "universal-plan",
+        "artifact-prune", "artifact-prune-apply", "verify-latest-debug", "source-rollup", "universal-audit", "universal-plan", "forgepy-parity", "contract-migrate",
     ])
     parser.add_argument("--root")
     parser.add_argument("--scan-root", action="append", default=[], help="Additional roots for read-only PCC inventory")
@@ -1347,6 +1352,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gate-key", default="full", help="Requested gate for universal-plan; plan only, no execution")
     parser.add_argument("--project-root", help="Other repository to inspect using universal-plan (read-only)")
     parser.add_argument("--rust-consumer", action="store_true", help="Enforce typed Rust compatibility in universal-plan")
+    parser.add_argument("--forgepy-root", help="Optional exact ForgePY checkout for read-only feature inventory")
+    parser.add_argument("--expected-sha256", help="Optional additional contract migration SHA-256 preimage")
+    parser.add_argument("--strict", action="store_true", help="Fail forgepy-parity on missing source anchors or known contract blockers")
     parser.add_argument("--remote", default=DEFAULT_REMOTE)
     parser.add_argument("--message", default="")
     parser.add_argument("--yes", action="store_true", help="Do not prompt for explicit patch apply confirmation.")
@@ -1363,6 +1371,25 @@ def _dispatch_main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     root = normalize_root(args.root)
     cmd = args.command
+    if cmd == "contract-migrate":
+        # Inspection must not bootstrap the app or invoke any project command.
+        # Mutation is explicitly opted into with --yes, backup and shared lock.
+        from CortexContractMigration import main as migration_main
+        migration_args = ["--root", str(root)]
+        if args.expected_sha256:
+            migration_args.extend(["--expected-sha256", args.expected_sha256])
+        if args.yes:
+            migration_args.append("--yes")
+        return migration_main(migration_args)
+    if cmd == "forgepy-parity":
+        # No controller construction, imported donor code, background scan, or mutation.
+        from ForgePYParity import main as parity_main
+        parity_args = ["--root", str(root)]
+        if args.forgepy_root:
+            parity_args.extend(["--forgepy-root", args.forgepy_root])
+        if args.strict:
+            parity_args.append("--strict")
+        return parity_main(parity_args)
     if cmd == "universal-plan":
         # Independent read-only cross-project plan; no CortexPCC construction.
         from UniversalPCCPlan import main as plan_main
