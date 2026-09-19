@@ -1359,7 +1359,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _dispatch_main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     root = normalize_root(args.root)
     cmd = args.command
@@ -1411,6 +1411,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if cmd == "source-rollup": return pcc.create_source_rollup(open_after=args.open_folder)
     if cmd == "self-test": return run_self_tests(root, pcc.runner)
     raise PCCError(f"Unsupported command: {cmd}")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Public Python API: normalize an intentional control-plane restart to exit 0.
+
+    ProjectControlCenter.py imports this function rather than running CortexPCC.py
+    as __main__.  A successful self-update raised PCCRestart through that wrapper,
+    producing a Python traceback and an incorrect GUI FAIL despite an applied patch.
+    Keep the internal exception so nested interactive menus stop using stale code.
+    Do not catch patch errors or unsuccessful restart launches: they must still fail.
+    """
+    try:
+        return _dispatch_main(argv)
+    except PCCRestart:
+        return 0
 
 
 if __name__ == "__main__":
