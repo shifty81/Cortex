@@ -453,8 +453,19 @@ class GateEngine:
         # A root PATCH_MANIFEST.json must never make the project-contract gate pass.
         if not self.ctx.project_control.is_file():
             return "FAIL", f"project contract missing: {self.ctx.project_control.name}"
-        json.loads(self.ctx.project_control.read_text(encoding="utf-8-sig"))
-        return "PASS", "parsed 1 authoritative project JSON contract"
+        # The manifest must be semantically valid before Cargo starts. The
+        # existing Python controller can still inspect historical rollback
+        # descriptors, but they are explicitly WARN, not Rust-compatible.
+        from UniversalPCCAudit import _read_manifest, validate_contract
+        raw, _, error = _read_manifest(self.ctx.project_control)
+        if error or raw is None:
+            return "FAIL", error or "project contract missing"
+        validated = validate_contract(raw, rust_consumer=False)
+        if validated["errors"]:
+            return "FAIL", "; ".join(validated["errors"][:8])
+        if validated["warnings"]:
+            return "WARN", "legacy-provider contract accepted with compatibility warnings; typed Rust readiness NOT certified: " + "; ".join(validated["warnings"][:4])
+        return "PASS", "semantic contract valid; commands and required gate stages resolved"
 
     def _powershell_syntax(self) -> tuple[str, str]:
         ps = shutil.which("pwsh") or shutil.which("powershell") or shutil.which("powershell.exe")
@@ -594,6 +605,12 @@ class GateEngine:
     def full(self) -> bool:
         ok, _ = self.quick()
         if not ok:
+            return False
+        # Full Gate must include the Python operational control plane, not
+        # only the Rust workspace. All stages run before mark-green.
+        self.failed_stage = "python-pcc-regressions"
+        if run_universal_python_regressions(self.ctx.root, self.runner) != 0:
+            self.log.emit("FAIL", "Python PCC regression tests failed; GREEN not issued", phase="gate:full")
             return False
         steps: list[tuple[str, list[str], float]] = [
             ("cargo-fmt", ["fmt", "--all", "--", "--check"], 300),
@@ -1039,6 +1056,14 @@ class CortexPCC:
         return 0
 
     def launch_gui(self) -> int:
+        # Fail before any build or process launch when the typed Rust consumer
+        # cannot deserialize the manifest. Never rewrite rollback metadata.
+        from UniversalPCCAudit import inspect_project
+        inspection = inspect_project(self.ctx.root, rust_consumer=True)
+        if inspection["status"] == "INVALID":
+            problems = "; ".join(inspection.get("errors", [])[:6])
+            self.log.emit("FAIL", f"Cortex Desktop launch blocked by typed project contract: {problems}")
+            return 2
         target = self.cargo_target_dir()
         gui = self.binary_path("cortex_desktop", target)
         if not gui or not gui.is_file():
@@ -1050,8 +1075,24 @@ class CortexPCC:
         if not gui or not gui.is_file():
             self.log.emit("FAIL", "Cortex Desktop executable not found after build.")
             return 1
-        subprocess.Popen([str(gui), str(self.ctx.root)], cwd=str(self.ctx.root))
-        self.log.emit("PASS", f"Launched Cortex Desktop: {gui}")
+        # Process survival is a preliminary startup observation, not UI-ready.
+        runtime_logs = self.ctx.root / "artifacts" / "logs" / "runtime"
+        runtime_logs.mkdir(parents=True, exist_ok=True)
+        runtime_log = runtime_logs / f"cortex-desktop-{local_stamp()}-{uuid.uuid4().hex[:8]}.log"
+        try:
+            with runtime_log.open("wb") as output:
+                proc = subprocess.Popen([str(gui), str(self.ctx.root)], cwd=str(self.ctx.root),
+                                        stdout=output, stderr=subprocess.STDOUT,
+                                        stdin=subprocess.DEVNULL)
+            time.sleep(1.0)
+            returncode = proc.poll()
+            if returncode is not None:
+                self.log.emit("FAIL", f"Cortex Desktop exited during startup (exit={returncode}); runtime log: {runtime_log}; UI not certified")
+                return 2
+        except OSError as exc:
+            self.log.emit("FAIL", f"Cortex Desktop process could not be started: {exc}; runtime log: {runtime_log}")
+            return 2
+        self.log.emit("INFO", f"Cortex Desktop process running (PID={proc.pid}); UI handshake not certified; log: {runtime_log}")
         return 0
 
     def startup(self) -> None:
@@ -1235,6 +1276,48 @@ class CortexPCC:
             elif choice == "6": self.diagnostics_menu()
 
 
+def run_universal_python_regressions(root: Path, runner: CommandRunner | None = None) -> int:
+    """Require both reusable PCC fixtures and Cortex integration tests.
+
+    This is a Full Gate stage: missing files must FAIL rather than silently skip.
+    """
+    tests = [
+        root / "tools/control/tests/test_cortex_pcc.py",
+        root / "tools/control/tests/test_universal_pcc_audit.py",
+        root / "tools/control/tests/test_cortex_upcc_a01_integration.py",
+        root / "tools/control/tests/test_universal_pcc_plan.py",
+        root / "tools/control/tests/test_cortex_upcc_a02_integration.py",
+    ]
+    missing = [str(p.relative_to(root)) for p in tests if not p.is_file()]
+    if missing:
+        print("[FAIL] Missing mandatory Python PCC tests: " + ", ".join(missing))
+        return 2
+    command = [*which_python(), "-B", "-m", "unittest", "-v", *map(str, tests)]
+    if runner:
+        result = runner.run(command, cwd=root, timeout=900, stream=True, phase="gate:python-pcc-tests")
+        if not result.ok:
+            return result.returncode if result.returncode != 0 else 2
+    else:
+        result = subprocess.run(command, cwd=str(root), check=False)
+        if result.returncode != 0:
+            return result.returncode
+    provider_tests = root / "tools/pcc/tests"
+    if provider_tests.is_dir():
+        if not list(provider_tests.glob("test_*.py")):
+            print("[FAIL] Universal Python PCC provider test suite is empty: " + str(provider_tests))
+            return 2
+        command = [*which_python(), "-B", "-m", "unittest", "discover", "-s", str(provider_tests), "-p", "test_*.py", "-v"]
+        environment = os.environ.copy()
+        provider_src = str(root / "tools/pcc/src")
+        environment["PYTHONPATH"] = provider_src + (os.pathsep + environment["PYTHONPATH"] if environment.get("PYTHONPATH") else "")
+        if runner:
+            result = runner.run(command, cwd=root, timeout=900, stream=True, phase="gate:universal-provider-tests", env=environment)
+            return result.returncode if not result.timed_out and not result.cancelled else 2
+        return subprocess.run(command, cwd=str(root), check=False, env=environment).returncode
+    print("[FAIL] Missing Universal Python PCC provider test directory: " + str(provider_tests))
+    return 2
+
+
 def run_self_tests(root: Path, runner: CommandRunner | None = None) -> int:
     test_file = root / "tools" / "control" / "tests" / "test_cortex_pcc.py"
     if not test_file.is_file():
@@ -1256,9 +1339,14 @@ def build_parser() -> argparse.ArgumentParser:
         "commit-green", "commit-push-green", "push", "build", "build-release",
         "launch-gui", "self-test", "doctor", "doctor-json",
         "root-hygiene", "root-hygiene-fix", "artifact-status",
-        "artifact-prune", "artifact-prune-apply", "verify-latest-debug", "source-rollup",
+        "artifact-prune", "artifact-prune-apply", "verify-latest-debug", "source-rollup", "universal-audit", "universal-plan",
     ])
     parser.add_argument("--root")
+    parser.add_argument("--scan-root", action="append", default=[], help="Additional roots for read-only PCC inventory")
+    parser.add_argument("--max-depth", type=int, default=5, help="Bounded inventory depth")
+    parser.add_argument("--gate-key", default="full", help="Requested gate for universal-plan; plan only, no execution")
+    parser.add_argument("--project-root", help="Other repository to inspect using universal-plan (read-only)")
+    parser.add_argument("--rust-consumer", action="store_true", help="Enforce typed Rust compatibility in universal-plan")
     parser.add_argument("--remote", default=DEFAULT_REMOTE)
     parser.add_argument("--message", default="")
     parser.add_argument("--yes", action="store_true", help="Do not prompt for explicit patch apply confirmation.")
@@ -1275,6 +1363,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     root = normalize_root(args.root)
     cmd = args.command
+    if cmd == "universal-plan":
+        # Independent read-only cross-project plan; no CortexPCC construction.
+        from UniversalPCCPlan import main as plan_main
+        target = normalize_root(args.project_root) if args.project_root else root
+        plan_args = ["--root", str(target), "--gate", args.gate_key]
+        if args.rust_consumer:
+            plan_args.append("--rust-consumer")
+        return plan_main(plan_args)
+    if cmd == "universal-audit":
+        # Must be handled before CortexPCC construction: an audit must not create
+        # session logs, perform startup hygiene or run any project command.
+        from UniversalPCCAudit import main as audit_main
+        audit_args = ["inventory", "--root", str(root), "--max-depth", str(args.max_depth)]
+        for scan_root in args.scan_root:
+            audit_args.extend(["--scan-root", scan_root])
+        return audit_main(audit_args)
     pcc = CortexPCC(root, remote=args.remote, quiet=(args.quiet or cmd == "status-json"))
     if cmd == "interactive": return pcc.interactive()
     if cmd == "status": return pcc.status()
