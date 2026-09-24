@@ -49,6 +49,16 @@ class AuditTests(unittest.TestCase):
         self.assertTrue(d['warnings'])
         self.assertFalse(d['commands'][0]['verified_executable'])
 
+    def test_legacy_risk_aliases_are_canonicalized_without_rewriting_source(self):
+        for declared, canonical in [('read', 'read_only'), ('write', 'local_mutation'), ('confirm', 'local_mutation')]:
+            c = contract(); c['commands'][0]['risk'] = declared
+            before = json.loads(json.dumps(c))
+            out = m.validate_contract(c)
+            self.assertEqual(out['status'], 'DECLARED')
+            self.assertEqual(out['commands'][0]['risk'], canonical)
+            self.assertTrue(any('legacy risk' in warning for warning in out['warnings']))
+            self.assertEqual(c, before)
+
     def test_unknown_risk_blocks_mutation(self):
         c = contract(); c['commands'][0]['risk'] = 'magic_admin'
         self.assertIn('unsupported risk', ' '.join(m.validate_contract(c)['errors']))

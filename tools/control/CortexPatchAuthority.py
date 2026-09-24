@@ -32,10 +32,8 @@ DENIED_TOP_LEVEL = {
 }
 TRANSPORT_NAMES = {"PATCH_MANIFEST.json", ".cortex-patch.json"}
 CONTROL_RE = re.compile(
-    r"^(?:tools/control/(?:ProjectControlCenter|InvokeRootPatchIntake|Cortex\.Console|"
-    r"Test-CortexQuickGate|Test-CortexControlContracts|New-CortexDebugBundle|"
-    r"GitSourceControl)\.ps1|tools/control/(?:CortexPCC|CortexPatchAuthority|CortexGitAuthority)\.py|"
-    r"PROJECT_CONTROL_CENTER\.cmd)$",
+    r"^(?:project\.control\.json|PROJECT_CONTROL_CENTER\.cmd|"
+    r"tools/(?:control|pcc)/[^/]+\.(?:py|ps1|psm1))$",
     re.IGNORECASE,
 )
 PATCH_NAME_RE = re.compile(r"(?:root[-_ ]?patch|rootpatch|incremental[-_ ]?patch|patch[-_ ]?update)", re.I)
@@ -569,26 +567,57 @@ def preimage_info(path: Path) -> dict[str, Any]:
     return {"exists": True, "bytes": path.stat().st_size, "sha256": sha256_file(path)}
 
 
-def check_preconditions(root: Path, validation: Validation) -> None:
+def precondition_issues(root: Path, validation: Validation) -> list[str]:
+    issues: list[str] = []
     for spec in validation.files:
         dest = local_path(root, spec.path)
-        assert_safe_ancestors(root, dest)
-        info = preimage_info(dest)
+        try:
+            assert_safe_ancestors(root, dest)
+            info = preimage_info(dest)
+        except Exception as exc:
+            issues.append(f"{spec.path}: {exc}")
+            continue
+
         if spec.must_exist is True and not info["exists"]:
-            raise PatchError(f"Preimage required but target is missing: {spec.path}")
+            issues.append(f"{spec.path}: required target is missing")
+            continue
         if spec.must_exist is False and info["exists"]:
-            raise PatchError(f"Preimage requires a new target but file already exists: {spec.path}")
-        if spec.before_sha256 is not None:
-            if not info["exists"] or info["sha256"] != spec.before_sha256:
-                raise PatchError(f"Preimage SHA-256 mismatch: {spec.path}")
-        if spec.before_size is not None:
-            if not info["exists"] or info["bytes"] != spec.before_size:
-                raise PatchError(f"Preimage byte-count mismatch: {spec.path}")
+            issues.append(
+                f"{spec.path}: expected a new target, but a file already exists "
+                f"(actual sha256={info['sha256']}, bytes={info['bytes']})"
+            )
+            continue
+        if spec.before_sha256 is not None and (not info["exists"] or info["sha256"] != spec.before_sha256):
+            issues.append(
+                f"{spec.path}: SHA-256 mismatch "
+                f"(expected {spec.before_sha256}, actual {info['sha256']})"
+            )
+        if spec.before_size is not None and (not info["exists"] or info["bytes"] != spec.before_size):
+            issues.append(
+                f"{spec.path}: byte-count mismatch "
+                f"(expected {spec.before_size}, actual {info['bytes']})"
+            )
+
     for rel in validation.remove:
         dest = local_path(root, rel)
-        assert_safe_ancestors(root, dest)
+        try:
+            assert_safe_ancestors(root, dest)
+        except Exception as exc:
+            issues.append(f"{rel}: {exc}")
+            continue
         if dest.exists() and not dest.is_file():
-            raise PatchError(f"Remove target is not a regular file: {rel}")
+            issues.append(f"{rel}: remove target is not a regular file")
+    return issues
+
+
+def check_preconditions(root: Path, validation: Validation) -> None:
+    issues = precondition_issues(root, validation)
+    if not issues:
+        return
+    detail = "\n".join(f"  - {issue}" for issue in issues)
+    raise PatchError(
+        f"Patch preflight found {len(issues)} preimage conflict(s); no source files were modified:\n{detail}"
+    )
 
 
 def extract_declared(validation: Validation, stage: Path) -> None:
@@ -645,6 +674,10 @@ def rollback(root: Path, backup_root: Path, created: Iterable[str], backed_up: I
 
 
 def apply_one(root: Path, validation: Validation) -> dict[str, Any]:
+    # Applicability is checked before transaction staging. A pure preimage conflict
+    # must not consume/archive the transport or claim that rollback was needed.
+    check_preconditions(root, validation)
+
     txid = f"PCCPATCH-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:10]}"
     control_root = root / ".project_control"
     stage = control_root / "patch-stage" / txid
@@ -672,7 +705,6 @@ def apply_one(root: Path, validation: Validation) -> dict[str, Any]:
     backed_up: list[str] = []
 
     try:
-        check_preconditions(root, validation)
         extract_declared(validation, stage)
 
         before_evidence: list[dict[str, Any]] = []

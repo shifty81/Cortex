@@ -41,6 +41,36 @@ class GitError(RuntimeError):
     pass
 
 
+def project_git_authority(root: Path) -> dict[str, object]:
+    path = root / "config" / "cortex" / "github_authority.v1.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception as exc:
+        raise GitError(f"Invalid GitHub authority file {path}: {exc}") from exc
+    if not isinstance(data, dict) or data.get("schema") != "cortex.github_authority.v1":
+        raise GitError(f"Unsupported GitHub authority schema in {path}")
+    return data
+
+
+def apply_project_git_defaults(root: Path) -> dict[str, object]:
+    authority = project_git_authority(root)
+    if not authority or not git_repo(root):
+        return authority
+    author = authority.get("author") if isinstance(authority.get("author"), dict) else {}
+    status = git_identity_status(root)
+    if not status.get("configured") and author:
+        name = str(author.get("name") or "").strip()
+        email = str(author.get("email") or "").strip()
+        if name and email:
+            clean_name, clean_email = validate_git_identity(name, email)
+            git(root, "config", "--local", "user.name", clean_name)
+            git(root, "config", "--local", "user.email", clean_email)
+            print(f"Git author identity configured from project authority: {clean_name} <{clean_email}>")
+    return authority
+
+
 def run(cmd: list[str], *, cwd: Path | None = None, check: bool = True, timeout: int = 180) -> subprocess.CompletedProcess[str]:
     cp = subprocess.run(
         cmd,
@@ -220,6 +250,11 @@ def setup_or_repair(root: Path, remote: str) -> int:
     if shutil.which("git") is None:
         raise GitError("Git was not found on PATH.")
 
+    authority = project_git_authority(root)
+    configured_remote = str(authority.get("remote") or "").strip() if authority else ""
+    if configured_remote:
+        remote = configured_remote
+
     before = snapshot(root)
     green_ok = False
     green_reason = "No GREEN marker"
@@ -246,6 +281,7 @@ def setup_or_repair(root: Path, remote: str) -> int:
         print(f"Local branch renamed: {branch} -> main")
 
     ensure_origin(root, remote)
+    apply_project_git_defaults(root)
     git(root, "fetch", "origin", "main", timeout=300)
 
     if git(root, "rev-parse", "--verify", "origin/main", check=False).returncode != 0:
@@ -306,6 +342,84 @@ def setup_or_repair(root: Path, remote: str) -> int:
 
 
 
+
+
+def git_identity_status(root: Path) -> dict[str, object]:
+    local_name = git_text(root, "config", "--local", "--get", "user.name") if git_repo(root) else ""
+    local_email = git_text(root, "config", "--local", "--get", "user.email") if git_repo(root) else ""
+    global_name = git_text(root, "config", "--global", "--get", "user.name")
+    global_email = git_text(root, "config", "--global", "--get", "user.email")
+    effective_name = local_name or global_name
+    effective_email = local_email or global_email
+    return {
+        "configured": bool(effective_name and effective_email),
+        "effectiveName": effective_name or None,
+        "effectiveEmail": effective_email or None,
+        "localName": local_name or None,
+        "localEmail": local_email or None,
+        "globalName": global_name or None,
+        "globalEmail": global_email or None,
+        "source": "local" if local_name and local_email else ("global" if global_name and global_email else "missing"),
+    }
+
+
+def validate_git_identity(name: str, email: str) -> tuple[str, str]:
+    clean_name = str(name or "").strip()
+    clean_email = str(email or "").strip()
+    if not clean_name:
+        raise GitError("Git author name cannot be empty.")
+    if "\n" in clean_name or "\r" in clean_name:
+        raise GitError("Git author name must be a single line.")
+    if not clean_email or "@" not in clean_email or clean_email.startswith("@") or clean_email.endswith("@"):
+        raise GitError("Git author email must be a valid non-empty email address.")
+    if any(ch in clean_email for ch in "\r\n \t"):
+        raise GitError("Git author email must not contain whitespace or line breaks.")
+    return clean_name, clean_email
+
+
+def set_git_identity(root: Path, name: str, email: str, scope: str = "local") -> int:
+    if not git_repo(root):
+        raise GitError("Cortex is not a Git repository yet. Run Git Setup first.")
+    clean_name, clean_email = validate_git_identity(name, email)
+    normalized_scope = str(scope or "local").strip().casefold()
+    if normalized_scope not in {"local", "global"}:
+        raise GitError("Git identity scope must be 'local' or 'global'.")
+    flag = "--global" if normalized_scope == "global" else "--local"
+    git(root, "config", flag, "user.name", clean_name)
+    git(root, "config", flag, "user.email", clean_email)
+    status = git_identity_status(root)
+    if status.get("effectiveName") != clean_name or status.get("effectiveEmail") != clean_email:
+        raise GitError("Git identity verification failed after configuration.")
+    print("GIT AUTHOR IDENTITY: PASS")
+    print(f" Scope : {normalized_scope}")
+    print(f" Name  : {clean_name}")
+    print(f" Email : {clean_email}")
+    return 0
+
+
+def show_git_identity(root: Path) -> int:
+    status = git_identity_status(root)
+    print("GIT AUTHOR IDENTITY")
+    print("===================")
+    print(f" Configured : {'YES' if status['configured'] else 'NO'}")
+    print(f" Source     : {status['source']}")
+    print(f" Name       : {status.get('effectiveName') or '<missing>'}")
+    print(f" Email      : {status.get('effectiveEmail') or '<missing>'}")
+    return 0 if status["configured"] else 2
+
+
+def require_git_identity(root: Path) -> dict[str, object]:
+    apply_project_git_defaults(root)
+    status = git_identity_status(root)
+    if not status.get("configured"):
+        raise GitError(
+            "Git author identity is not configured. Open Source Control -> Git Identity, "
+            "or run CortexPCC.py git-identity --git-name <name> --git-email <email> "
+            "--git-scope local|global before committing certified source."
+        )
+    return status
+
+
 def status_summary(root: Path) -> dict[str, object]:
     result: dict[str, object] = {
         "repository": str(root),
@@ -328,6 +442,10 @@ def status_summary(root: Path) -> dict[str, object]:
         "greenFingerprint": None,
         "greenPaths": None,
         "greenDetail": None,
+        "gitIdentityConfigured": False,
+        "gitIdentityName": None,
+        "gitIdentityEmail": None,
+        "gitIdentitySource": "missing",
     }
 
     if not result["gitReady"]:
@@ -374,6 +492,14 @@ def status_summary(root: Path) -> dict[str, object]:
         "staged": staged,
         "unstaged": unstaged,
         "untracked": untracked,
+    })
+
+    identity = git_identity_status(root)
+    result.update({
+        "gitIdentityConfigured": bool(identity.get("configured")),
+        "gitIdentityName": identity.get("effectiveName"),
+        "gitIdentityEmail": identity.get("effectiveEmail"),
+        "gitIdentitySource": identity.get("source"),
     })
 
     try:
@@ -466,6 +592,15 @@ def show_status(root: Path) -> int:
     print(f" Staged      : {staged}")
     print(f" Unstaged    : {unstaged}")
     print(f" Untracked   : {untracked}")
+
+    identity = git_identity_status(root)
+    print("")
+    print("GIT AUTHOR IDENTITY")
+    print("-------------------")
+    print(f" Configured  : {'YES' if identity['configured'] else 'NO'}")
+    print(f" Source      : {identity['source']}")
+    print(f" Name        : {identity.get('effectiveName') or '<missing>'}")
+    print(f" Email       : {identity.get('effectiveEmail') or '<missing>'}")
 
     print("")
     print("FULL GREEN SOURCE")
@@ -572,6 +707,9 @@ def commit_green(root: Path, message: str) -> int:
 
     if not ok:
         raise GitError(reason)
+
+    identity = require_git_identity(root)
+    print(f" Git author  : {identity.get('effectiveName')} <{identity.get('effectiveEmail')}> ({identity.get('source')})")
 
     stage_governed(root)
 
@@ -717,6 +855,7 @@ def manual_commit(root: Path, message: str) -> int:
         raise GitError("Cortex is not a Git repository yet.")
     if not message.strip():
         raise GitError("Manual commit message cannot be empty.")
+    require_git_identity(root)
     stage_governed(root)
     staged = git(root, "diff", "--cached", "--quiet", check=False)
     if staged.returncode == 0:
@@ -738,6 +877,8 @@ def main() -> int:
         "mark-green",
         "commit-green",
         "commit-push-green",
+        "identity-status",
+        "identity-set",
         "push",
         "fetch",
         "compare",
@@ -749,6 +890,9 @@ def main() -> int:
     parser.add_argument("--root", required=True)
     parser.add_argument("--remote", default=DEFAULT_REMOTE)
     parser.add_argument("--message", default="")
+    parser.add_argument("--name", default="")
+    parser.add_argument("--email", default="")
+    parser.add_argument("--scope", choices=["local", "global"], default="local")
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
@@ -769,6 +913,10 @@ def main() -> int:
         return commit_green(root, args.message or "Cortex GREEN checkpoint")
     if args.action == "commit-push-green":
         return commit_push_green(root, args.message or "Cortex GREEN checkpoint")
+    if args.action == "identity-status":
+        return show_git_identity(root)
+    if args.action == "identity-set":
+        return set_git_identity(root, args.name, args.email, args.scope)
     if args.action == "push":
         return push_main(root)
     if args.action == "fetch":

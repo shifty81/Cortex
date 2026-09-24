@@ -1,0 +1,36 @@
+{
+  "schema": "cortex.vault_hardening_checkpoint.v1",
+  "checkpoint": "R123",
+  "date": "2026-09-23",
+  "status": "source-validated-windows-certification-pending",
+  "implemented": [
+    "exclude_pcc_operational_state_from_project_mirrors",
+    "exclude_root_transport_archives_and_checksum_sidecars",
+    "reject_symlink_and_windows_reparse_traversal",
+    "rehash_existing_cas_object_before_reuse",
+    "full_gate_source_fingerprint_stability_around_mirror",
+    "full_gate_deep_cas_verification_before_green",
+    "vault_certification_requires_recorded_mirror_fingerprint_to_match_green_marker",
+    "desktop_launch_requires_pid_owned_visible_native_window",
+    "active_authority_docs_normalized_to_forge_cortex_vault_pcc_convergence"
+  ],
+  "explicitly_deferred": [
+    {
+      "item": "stable_project_identity_migration",
+      "reason": "current project key is path-derived; changing namespace identity requires alias/reconnect migration so existing Vault namespaces are never orphaned"
+    },
+    {
+      "item": "primary_vault_unavailable_policy",
+      "reason": "build fallback and certification authority must be separated before changing current D-drive fallback behavior"
+    },
+    {
+      "item": "cas_gc_global_maintenance_lock",
+      "reason": "GC remains explicit/manual; production cleanup should add a global Vault maintenance lock before broad machine cleanup"
+    },
+    {
+      "item": "fully_automated_provider_chat_runtime_certification",
+      "reason": "native visible-window startup is bounded now; provider/chat interaction remains separate target-machine acceptance evidence"
+    }
+  ],
+  "certification_limit": "Rust compilation and Windows runtime behavior were not available in the patch-authoring environment"
+}

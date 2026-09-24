@@ -1,8 +1,14 @@
-# N1 bounded implementation result
+# Historical N1 handoff — retained for provenance
 
-- **Source reference:** GitHub Cortex 5e5e113d6168acac721bb722d169be04b4ec1c3f; exact PCC Git blob `9c9f611cf70bbaaffc62b9375c0a05bebe11cc06`.
-- **Implemented here:** PID-bound visible Win32 window observation; fail-closed early-exit/timeout/error statuses; integration change for existing `launch_gui`; mandatory Full Gate Python test registration; safe external staging + source fingerprint/provenance; focused tests.
-- **Not installed:** This is not an overwrite-capable PCC `.patch` or a current local-source rollup. No user checkout was changed. No Windows launch/build or chat provider was certified.
-- **Next action for actual source:** run the existing Cortex source exporter; compare local source hash, contract and patch receipts; build a governed Cortex-root patch and run Windows Full Gate. If exact published PCC file is present, the stager creates reviewable files without writing into source.
-- **N2 code destination:** optional Cortex-owned `DesktopHost`/`DesktopWorker` presentation adapter consuming pinned `forge_gui_shell` through public APIs; retain original Win32 host, controller, conversation persistence, agents, PCC and model/provider paths.
-- **N2 acceptance:** real chat rendered in ForgeGUI with one original conversation ID and original controller, Windows compile/smoke, working send/stream/cancel/restart, independent ForgeGUI consumer gate, layout persistence/DPI and no fake controls.
+This file records an earlier bounded N1 desktop-startup experiment. It is **not current project authority**.
+
+The useful N1 requirement is retained in active source: Cortex Desktop startup must be verified against a visible native top-level window owned by the exact launched PID; process survival alone is not UI readiness, and visible-window readiness still does not prove provider/chat readiness.
+
+For current architecture, storage, PCC and certification direction, use:
+
+- `README_FIRST.md`
+- `README.md`
+- `docs/QUALITY_GATE_CONTRACT.md`
+- `docs/CURRENT_IMPLEMENTATION_AUDIT_RS293.md`
+
+Historical commit/blob references and staging instructions from the original N1 package remain available in archived handoff/source-rollup evidence rather than acting as live instructions here.

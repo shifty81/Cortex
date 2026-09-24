@@ -23,6 +23,7 @@ SKIP_DIRS = frozenset({'.git', '.cortex', 'target', 'node_modules', '.venv', 've
                        'out', '.next', '.cache', 'Library', 'Temp', 'obj', 'bin'})
 SUPPORTED_SCHEMA = frozenset({'forge.project.v1', 'cortex.v1'})
 RISK = frozenset({'read_only', 'local_mutation', 'external_mutation', 'destructive'})
+RISK_ALIASES = {'read': 'read_only', 'write': 'local_mutation', 'confirm': 'local_mutation'}
 RUST_ROLLBACK = frozenset({'none', 'snapshot', 'transactional', 'provider_owned'})
 KNOWN_LEGACY_ROLLBACK = frozenset({'git_or_snapshot', 'process_stop'})
 CANCEL = frozenset({'cooperative', 'bounded_kill', 'not_supported'})
@@ -123,9 +124,14 @@ def validate_contract(raw: dict[str, Any], *, rust_consumer: bool = True) -> dic
             errors.append(f'command {key}: missing executable/program')
         if 'args' in cmd and (not isinstance(cmd['args'], list) or any(not isinstance(arg, str) for arg in cmd['args'])):
             errors.append(f'command {key}: args must be an array of strings')
-        risk = cmd.get('risk', 'read_only')
+        declared_risk = cmd.get('risk', 'read_only')
+        risk = RISK_ALIASES.get(declared_risk, declared_risk)
+        if declared_risk in RISK_ALIASES:
+            warnings.append(
+                f"command {key}: legacy risk {declared_risk!r} interpreted as canonical {risk!r}; source not rewritten"
+            )
         if risk not in RISK:
-            errors.append(f'command {key}: unsupported risk {risk!r}; execution not authorized')
+            errors.append(f'command {key}: unsupported risk {declared_risk!r}; execution not authorized')
         cancel = cmd.get('cancellation', 'cooperative')
         if cancel not in CANCEL:
             errors.append(f'command {key}: unsupported cancellation {cancel!r}')

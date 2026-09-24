@@ -631,22 +631,10 @@ pub fn authorize_tool_attempt_for_workspace(
     }
 
     let mut progress = read_progress_state(root, &snapshot.execution_id)?;
-    let now = unix_ms();
 
-    if is_mutating_source_tool(tool) {
-        if progress.first_unverified_mutation_unix_ms == 0 {
-            // A real edit ends the exploration phase. The next source-cycle action
-            // must be compiler/quality verification, not another speculative edit.
-            progress.source_observations = 0;
-            progress.source_mutations = 0;
-            progress.repeated_signature = 0;
-            progress.last_signature_hash = 0;
-            progress.first_unverified_mutation_unix_ms = now;
-        }
-        progress.source_mutations = progress.source_mutations.saturating_add(1);
-        progress.last_semantic_progress_unix_ms = now;
-        update_progress_signature(&mut progress, tool, target);
-    } else if is_observation_tool(tool) {
+    // A tool attempt is not mutation evidence. Arm M11U2 only after the
+    // source tool reports a successful write from record_tool_result_for_workspace.
+    if is_observation_tool(tool) {
         // M11U2: observation is useful, but unbounded pre-edit browsing made the
         // local model burn minutes without reaching a compiler-informed action.
         progress.source_observations = progress.source_observations.saturating_add(1);
@@ -659,7 +647,7 @@ pub fn record_tool_result_for_workspace(
     workspace_root: impl AsRef<Path>,
     tool: &str,
     target: &str,
-    _tool_succeeded: bool,
+    tool_succeeded: bool,
 ) -> Result<(), String> {
     let root = workspace_root.as_ref();
     record_tool_for_workspace(root, tool, target, false)?;
@@ -668,6 +656,24 @@ pub fn record_tool_result_for_workspace(
     };
     if snapshot.phase.is_terminal() {
         return Ok(());
+    }
+
+    if is_mutating_source_tool(tool) && tool_succeeded {
+        let mut progress = read_progress_state(root, &snapshot.execution_id)?;
+        let now = unix_ms();
+        if progress.first_unverified_mutation_unix_ms == 0 {
+            // A successful edit ends the exploration phase. The next source-cycle
+            // action must be compiler/quality verification.
+            progress.source_observations = 0;
+            progress.source_mutations = 0;
+            progress.repeated_signature = 0;
+            progress.last_signature_hash = 0;
+            progress.first_unverified_mutation_unix_ms = now;
+        }
+        progress.source_mutations = progress.source_mutations.saturating_add(1);
+        progress.last_semantic_progress_unix_ms = now;
+        update_progress_signature(&mut progress, tool, target);
+        write_progress_state(root, &progress)?;
     }
 
     if is_verification_tool(tool) {
@@ -2106,6 +2112,7 @@ mod tests {
         let id = begin_execution(&root, "conversation-1", "repair", 8).unwrap();
 
         authorize_tool_attempt_for_workspace(&root, "source.write_text", "src/main.rs").unwrap();
+        record_tool_result_for_workspace(&root, "source.write_text", "src/main.rs", true).unwrap();
         let blocked =
             authorize_tool_attempt_for_workspace(&root, "source.read", "src/main.rs").unwrap_err();
         assert!(blocked.contains("mutation-to-validation barrier"));
@@ -2125,6 +2132,7 @@ mod tests {
         let id = begin_execution(&root, "conversation-1", "repair", 8).unwrap();
 
         authorize_tool_attempt_for_workspace(&root, "source.write_text", "src/main.rs").unwrap();
+        record_tool_result_for_workspace(&root, "source.write_text", "src/main.rs", true).unwrap();
         let blocked =
             authorize_tool_attempt_for_workspace(&root, "source.read", "src/different_target.rs")
                 .unwrap_err();
@@ -2144,11 +2152,30 @@ mod tests {
             authorize_tool_attempt_for_workspace(&root, "source.read", "Cargo.toml").unwrap();
         }
         authorize_tool_attempt_for_workspace(&root, "source.write_text", "src/main.rs").unwrap();
+        record_tool_result_for_workspace(&root, "source.write_text", "src/main.rs", true).unwrap();
         let blocked =
             authorize_tool_attempt_for_workspace(&root, "source.read", "src/main.rs").unwrap_err();
         assert!(blocked.contains("mutation-to-validation barrier"));
         record_tool_result_for_workspace(&root, "build.project_validate", "", false).unwrap();
         assert!(authorize_tool_attempt_for_workspace(&root, "source.read", "src/main.rs").is_ok());
+
+        cancel_active_execution_for_workspace(&root, "test complete").unwrap();
+        let _ = fs::remove_dir_all(root);
+        let _ = id;
+    }
+
+    #[test]
+    fn failed_mutation_attempt_does_not_arm_validation_barrier() {
+        let root = temp_root("m11u2-failed-mutation-is-not-mutation");
+        let id = begin_execution(&root, "conversation-1", "repair", 8).unwrap();
+
+        authorize_tool_attempt_for_workspace(&root, "source.write_text", ".cargo/config").unwrap();
+        record_tool_result_for_workspace(&root, "source.write_text", ".cargo/config", false)
+            .unwrap();
+
+        assert!(
+            authorize_tool_attempt_for_workspace(&root, "source.write_text", "src/main.rs").is_ok()
+        );
 
         cancel_active_execution_for_workspace(&root, "test complete").unwrap();
         let _ = fs::remove_dir_all(root);
@@ -2229,6 +2256,7 @@ mod tests {
         let id = begin_execution(&root, "conversation-1", "repair", 8).unwrap();
 
         authorize_tool_attempt_for_workspace(&root, "source.write_text", "src/main.rs").unwrap();
+        record_tool_result_for_workspace(&root, "source.write_text", "src/main.rs", true).unwrap();
         let blocked =
             authorize_tool_attempt_for_workspace(&root, "source.replace_text", "src/main.rs")
                 .unwrap_err();

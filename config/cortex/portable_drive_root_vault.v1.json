@@ -1,0 +1,6 @@
+{
+  "schema": "cortex.portable_drive_root_vault.v1",
+  "enabled": true,
+  "mode": "repository_drive_root",
+  "note": "Portable source distributions use the repository drive root as Vault authority unless CORTEX_VAULT_ROOT or PCC_VAULT_ROOT explicitly overrides it."
+}

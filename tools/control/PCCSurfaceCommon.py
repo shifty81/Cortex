@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -14,7 +15,7 @@ from typing import Any, Iterable, Sequence
 
 from PCCProjectDiscovery import discover_project_contract_data, discovery_summary
 
-SURFACE_VERSION = "PCC-SURFACE-0.4"
+SURFACE_VERSION = "PCC-SURFACE-0.5"
 
 
 class SurfaceError(RuntimeError):
@@ -41,6 +42,16 @@ class ContractCommand:
     category: str = ""
     mutates: bool = False
     requires_confirmation: bool = False
+
+
+@dataclass(frozen=True)
+class SurfaceCommand:
+    key: str
+    label: str
+    category: str
+    risk: str
+    source: str
+    program: str = ""
 
 
 @dataclass(frozen=True)
@@ -316,11 +327,15 @@ class BackendClient:
                 return str(self.script)
         discovery = self.contract.raw.get("_pccDiscovery") or {}
         source = str(discovery.get("source") or "auto-scan")
-        declared = str(discovery.get("provider") or "").strip()
+        declared = str(discovery.get("provider") or discovery.get("entrypoint") or "").strip()
         if not declared:
             control = self.contract.raw.get("root_control_center") or {}
-            declared = str(control.get("discoveredPowerShell") or control.get("launcher") or "project.control.json")
-        return f"Auto adapter ({source}) -> {declared or 'registered commands'}"
+            declared = str(control.get("native_entrypoint") or control.get("discoveredPowerShell") or control.get("launcher") or "project.control.json")
+        if source in {"native-project-pcc", "project-powershell-pcc"}:
+            return f"Native project PCC -> {declared or 'registered commands'}"
+        if source == "project.control.json":
+            return f"Project contract -> {declared or 'project.control.json'}"
+        return f"Fallback adapter ({source}) -> {declared or 'registered commands'}"
 
     def supports(self, command: str) -> bool:
         if self.provider_mode == "python":
@@ -394,10 +409,12 @@ class BackendClient:
         info.wShowWindow = int(getattr(subprocess, "SW_HIDE", 0))
         return info
 
-    def _embedded_env(self) -> dict[str, str]:
+    def _embedded_env(self, environment_root: Path | None = None) -> dict[str, str]:
         env = os.environ.copy()
+        effective_root = (environment_root or self.root).expanduser().resolve()
         env.pop("CORTEX_PCC_EMBEDDED_NO_CONSOLE", None)
         env["PCC_EMBEDDED_HIDDEN_CONSOLE"] = "1"
+        env.setdefault("CORTEX_RUNTIME_ROOT", str(Path(__file__).resolve().parents[2]))
         control_dir = str(Path(__file__).resolve().parent)
         current = str(env.get("PYTHONPATH") or "").strip()
         parts = [part for part in current.split(os.pathsep) if part] if current else []
@@ -405,6 +422,19 @@ class BackendClient:
         if os.path.normcase(os.path.abspath(control_dir)) not in normalized:
             parts.insert(0, control_dir)
         env["PYTHONPATH"] = os.pathsep.join(parts)
+        # The Cortex/Forge GUI is the universal front end, so every registered
+        # project's command inherits the same governed dependency-cache fabric.
+        # Project-specific build outputs remain namespaced by project key.
+        if os.environ.get("CORTEX_SHARED_DEPENDENCIES", "1").strip().casefold() not in {"0", "false", "off", "no"}:
+            try:
+                from PCCVaultStorage import dependency_environment, ensure_layout
+                ensure_layout(effective_root)
+                env.update(dependency_environment(effective_root))
+            except Exception:
+                # Adapter discovery/status must remain usable even if Vault is
+                # temporarily unavailable; each native PCC will report its own
+                # storage readiness when it runs.
+                pass
         return env
 
     def run(self, command: str, extra: Sequence[str] = (), *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
@@ -451,6 +481,180 @@ class BackendClient:
             startupinfo=self._embedded_startupinfo(),
             env=self._embedded_env(),
         )
+
+    def contract_argv(self, command: str, extra: Sequence[str] = ()) -> list[str]:
+        descriptor = next((item for item in self.contract.commands if item.key == command), None)
+        if descriptor is None:
+            raise SurfaceError(f"Project contract does not expose command: {command}")
+        if not descriptor.program.strip():
+            raise SurfaceError(f"Project contract command has no executable program: {command}")
+        args = [value.replace("{root}", str(self.root)) for value in descriptor.args]
+        return [descriptor.program, *args, *map(str, extra)]
+
+    def popen_contract(self, command: str, extra: Sequence[str] = ()) -> subprocess.Popen[str]:
+        direct = self.contract_argv(command, extra)
+        host = Path(__file__).resolve().parent / "PCCOperationHost.py"
+        argv = direct
+        if host.is_file():
+            argv = [
+                self._provider_python(), str(host),
+                "--root", str(self.root),
+                "--operation", command,
+                "--", *direct,
+            ]
+        return subprocess.Popen(
+            argv,
+            cwd=str(self.root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            creationflags=self._embedded_creationflags(process_group=True),
+            startupinfo=self._embedded_startupinfo(),
+            env=self._embedded_env(),
+        )
+
+    def popen_argv(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        environment_root: Path | None = None,
+    ) -> subprocess.Popen[str]:
+        if not argv:
+            raise SurfaceError("Cannot launch an empty project command.")
+        launch_root = (cwd or self.root).expanduser().resolve()
+        return subprocess.Popen(
+            list(argv),
+            cwd=str(launch_root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            creationflags=self._embedded_creationflags(process_group=True),
+            startupinfo=self._embedded_startupinfo(),
+            env=self._embedded_env(environment_root),
+        )
+
+    def popen_shell(self, command: str) -> subprocess.Popen[str]:
+        if os.name == "nt":
+            argv = ["cmd.exe", "/D", "/S", "/C", command]
+        else:
+            argv = ["sh", "-lc", command]
+        return self.popen_argv(argv)
+
+
+def _provider_parser_commands(root: Path) -> set[str]:
+    """Read Cortex's argparse choices without importing/executing project code."""
+    path = root / "tools" / "control" / "CortexPCC.py"
+    if not path.is_file():
+        return set()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+    except Exception:
+        return set()
+    candidates: list[set[str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg != "choices":
+                continue
+            try:
+                value = ast.literal_eval(keyword.value)
+            except Exception:
+                continue
+            if isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
+                choices = {str(item) for item in value}
+                if {"full", "quick", "status-json"}.issubset(choices):
+                    candidates.append(choices)
+    return max(candidates, key=len, default=set())
+
+
+def _surface_category(command: str) -> str:
+    key = command.casefold()
+    if key.startswith(("storage", "vault")):
+        return "storage"
+    if key.startswith("git") or key in {"commit-green", "commit-push-green", "push"}:
+        return "source-control"
+    if key.startswith("patch"):
+        return "updates"
+    if key in {"quick", "fast", "full"}:
+        return "gate"
+    if key.startswith("build") or key.startswith("forge-rust-build"):
+        return "build"
+    if key in {"launch-gui", "forge-rust-run"}:
+        return "run"
+    if key.startswith("forge-rust") or key == "format":
+        return "tooling"
+    if key.startswith(("doctor", "debug", "root-hygiene", "artifact", "verify-latest", "self-test")):
+        return "diagnostics"
+    if key.startswith(("universal", "forgepy", "contract", "source-rollup")):
+        return "tooling"
+    if key.startswith("status"):
+        return "project"
+    return "advanced"
+
+
+def _surface_risk(command: str) -> str:
+    key = command.casefold()
+    mutating_tokens = (
+        "apply", "prepare", "mirror", "stage", "restore", "purge", "prune-apply",
+        "commit", "push", "pull", "setup", "build", "launch", "format", "fix",
+    )
+    if any(token in key for token in mutating_tokens):
+        return "local_mutation"
+    return "read_only"
+
+
+def _surface_label(command: str) -> str:
+    special = {
+        "full": "Full Quality Gate / Certify GREEN",
+        "fast": "Fast Quality Gate",
+        "quick": "Quick Quality Gate",
+        "launch-gui": "Launch Project GUI",
+        "debug-bundle": "Create Debug Bundle",
+        "commit-green": "Commit Certified GREEN",
+        "commit-push-green": "Commit + Push Certified GREEN",
+        "git-identity": "Configure Git Identity",
+        "git-identity-status": "Git Identity Status",
+    }
+    return special.get(command, command.replace("-", " ").replace(".", " ").title())
+
+
+def command_catalog(contract: ProjectContract) -> list[SurfaceCommand]:
+    """Merge project-contract commands with discovered project-provider commands."""
+    rows: list[SurfaceCommand] = []
+    seen: set[str] = set()
+    for item in contract.commands:
+        seen.add(item.key.casefold())
+        rows.append(SurfaceCommand(
+            key=item.key,
+            label=item.label or item.key,
+            category=item.category or "advanced",
+            risk=item.risk or "unknown",
+            source="project_contract",
+            program=item.program,
+        ))
+    for key in sorted(_provider_parser_commands(contract.root)):
+        if key in {"interactive"} or key.casefold() in seen:
+            continue
+        rows.append(SurfaceCommand(
+            key=key,
+            label=_surface_label(key),
+            category=_surface_category(key),
+            risk=_surface_risk(key),
+            source="project_provider",
+            program="PCC",
+        ))
+    rows.sort(key=lambda item: (item.category.casefold(), item.label.casefold(), item.key.casefold()))
+    return rows
 
 
 def terminate_process_tree(proc: subprocess.Popen[Any]) -> None:

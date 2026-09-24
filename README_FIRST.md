@@ -1,55 +1,56 @@
-# Cortex — Intelligence Runtime Hosted by Forge
 
-Date: 2026-09-11  
-Committed baseline: `6d35ceea75dfa00bce392239fbce7a30eb2d9cc5` (RS03 GREEN)  
-Current development lane: Rust Forge cumulative candidate RS04–RS293.
+## Portable external-drive Vault setup
+
+For a laptop/external-drive setup, keep this source in a project folder such as `E:\\Cortex\\` and run `SETUP_EXTERNAL_DRIVE_VAULT_ROOT.cmd`. The setup binds the **drive root itself** (for example `E:\\`) as the machine Vault authority. See `docs/EXTERNAL_DRIVE_ROOT_VAULT.md`.
+
+# Forge + Cortex — Current Project Authority
+
+**Date:** 2026-09-23
 
 ## Product hierarchy
 
-- **Forge** is the user-facing universal workstation and project/build/control/tooling shell.
-- **Cortex** is the intelligence/runtime subsystem under Forge and remains independently testable/service-capable.
-- **Ember** is the game-authoring/editor system hosted by Forge and powered by Cortex.
+- **Forge** is the primary user-facing universal workstation, project manager and project-control shell.
+- **Cortex** is Forge's integrated intelligence/automation backend and remains independently testable/service-capable.
+- **Vault** is the shared storage, catalog, provenance and recovery subsystem used by the control plane.
+- **PCC capabilities** are universal project-control capabilities inside this same system, not a competing end-user product.
+- **Ember and other games/tools** remain independent managed projects that consume the universal contracts.
 
-The intended normal user experience is one Forge workstation with first-class Cortex and Ember workspaces, not three competing top-level control applications.
+The target is one cohesive application/repository direction for Forge + Cortex + Vault + PCC behavior while keeping hosted projects independently buildable and recoverable.
 
-## Cortex authority
+## Current authority boundary
 
-Cortex owns AI/agent orchestration, conversations, context/memory, providers/models, tools/permissions, jobs/tasks/activity, project intelligence, review intent/evidence, plugins/skills/protocol contracts and Cortex CLI/API/service behavior.
+The Python Forge/PCC lane remains production authority today. Rust Forge RS04–RS293 is a candidate lane and must pass local build/runtime/parity/takeover certification before replacing the production control plane.
 
-Cortex does not own competing universal implementations of Forge project operations, Artifact Central, universal patch intake, Forge Repository/Internal Git, GitHub source hosting, universal build orchestration or Ember editing.
+Cortex owns AI/agent orchestration, conversations, context/memory, providers/models, tools/permissions, jobs/activity, project intelligence, review evidence, plugins/skills/protocol contracts and Cortex CLI/API/service behavior.
 
-## Forge authority
+Forge/PCC owns universal project discovery/control, build/test/run/gate orchestration, update transactions, Vault/project mirrors, artifacts/provenance, source control, recovery and takeover certification.
 
-Forge owns project/fleet state, universal operations, build/test/run routing, update transactions, Artifact Central, GitHub/Internal Git, services, IDE, platform state, release/recovery and takeover certification.
+## Storage rule
 
-ForgePY remains production authority until Rust Forge passes explicit takeover certification. The committed source is GREEN through RS03; RS04–RS293 remains candidate until the local nested Forge gate and Cortex Full Gate pass.
+Use one governed Vault. Shared dependency/download caches are machine-wide; project build outputs remain safely namespaced; each registered project has a deduplicated content-addressed mirror. FULL GREEN requires a source-stable, deep-verified project mirror and a recovery certification tied to the GREEN source fingerprint.
 
-## Native IDE direction
+Do not silently delete legacy caches or recovery material. Cleanup remains explicit, planned, quarantined and reversible before purge.
 
-The Forge IDE is **native Rust**. WebView/Monaco is not required and is no longer the active architecture.
+## Current testing truth
 
-The current candidate includes:
+Python/PCC behavior can be certified in this source environment. Rust compilation, Windows GUI startup and real provider/chat behavior remain authoritative only when run on the Windows development machine.
 
-- native egui IDE workspace;
-- multi-tab text editing;
-- bounded undo/redo;
-- dirty/conflict state;
-- SHA-preimage guarded transactional saves;
-- project file listing/search;
-- language-tool discovery;
-- native stdio `Content-Length` JSON-RPC transport for LSP/DAP-style processes;
-- native terminal profile contracts.
+See `README.md`, `docs/QUALITY_GATE_CONTRACT.md`, `docs/CURRENT_IMPLEMENTATION_AUDIT_RS293.md`, and `products/forge-rust/docs/FORGEPY_PARITY_MATRIX.md`.
 
-Rope/tree-sitter-class editing, richer syntax presentation and full asynchronous LSP/DAP UI integration remain later hardening work after the first candidate build.
+## Portable first-run environment hydration
 
-## Current truth
+On a fresh Windows machine, Cortex no longer requires Python to be installed manually before the PCC can start. `PROJECT_CONTROL_CENTER.cmd` now runs a PowerShell bootstrap first and can hydrate shared Python, Git, Rust, rustfmt and clippy into the configured Vault.
 
-The Cortex native CLI and Desktop/controller stack are already implemented. Older documents stating that they are “not built yet” are stale historical material.
+For the external-drive-root layout, run `SETUP_EXTERNAL_DRIVE_VAULT_ROOT.cmd` once, then launch `PROJECT_CONTROL_CENTER.cmd`. You can also force the first hydration with `BOOTSTRAP_CORTEX_ENVIRONMENT.cmd`. If Windows C++/MSVC linker tooling is missing, run `HYDRATE_CORTEX_BUILD_TOOLS.cmd` once before Full Gate certification.
 
-See:
+Environment evidence is written to `artifacts/bootstrap/environment-health.json`; hydrated toolchains live under the Vault `shared/` namespace rather than inside every project. See `docs/CORTEX_ENVIRONMENT_HYDRATION.md`.
 
-- `docs/CURRENT_IMPLEMENTATION_AUDIT_RS293.md`;
-- `docs/QUALITY_GATE_CONTRACT.md`;
-- `docs/TARGET_ARCHITECTURE.md`;
-- `docs/FORGE_RUST_PARALLEL_LANE.md`;
-- `products/forge-rust/docs/RS04_RS293_CUMULATIVE_ROLLUP.md`.
+## Portable bootstrap recovery (R8A)
+
+Portable-drive builds carry `config/cortex/portable_drive_root_vault.v1.json`, so a repository at `E:\Cortex` automatically selects `E:\` as Vault authority unless `CORTEX_VAULT_ROOT` or `PCC_VAULT_ROOT` explicitly overrides it.
+
+If dependency hydration fails after Python has already installed, PCC should still launch and report the remaining build dependency as unhealthy. Rustup downloads are SHA-256 verified from Rust's official `.sha256` endpoint; stale or mismatched cached installers are deleted and retried up to three times.
+
+## Portable bootstrap recovery (R8B)
+
+R8B hardens the portable Windows bootstrap after real external-drive testing. Rust's official `.sha256` endpoint may be returned by Windows PowerShell as binary `application/octet-stream`; the bootstrap now decodes byte content before parsing the digest. Portable Python remains the full Windows distribution because the PCC GUI requires Tkinter. If Python 3.14.7 was already installed by an earlier Cortex bootstrap under the legacy AppData Vault or another registered per-user location, the installer may no-op instead of creating a second target directory. R8B discovers that complete runtime, migrates it into the active drive-root Vault, and validates both Python 3.11+ and Tkinter before marking launch readiness.

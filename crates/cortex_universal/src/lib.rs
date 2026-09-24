@@ -500,12 +500,25 @@ pub fn resolve_runtime_artifact(
             args: Vec::new(),
             cwd: profile.root.clone(),
             env: BTreeMap::new(),
-            expected_window: matches!(
-                profile.kind,
-                ProjectKind::Application | ProjectKind::SingleFile
-            ),
+            // A build artifact is not automatically a GUI application. Explicit
+            // project command profiles carry expected_window when runtime evidence
+            // requires a native window.
+            expected_window: false,
             evidence: "quality-gate expected artifact".into(),
         });
+    }
+
+    if profile.build_systems.contains(&BuildSystemKind::CMake) {
+        if let Some(program) = find_cmake_runtime_binary(&profile.root) {
+            return Some(RuntimeArtifact {
+                program,
+                args: Vec::new(),
+                cwd: profile.root.clone(),
+                env: BTreeMap::new(),
+                expected_window: false,
+                evidence: "discovered CMake build artifact".into(),
+            });
+        }
     }
 
     if profile.build_systems.contains(&BuildSystemKind::Python) {
@@ -533,6 +546,60 @@ pub fn resolve_runtime_artifact(
         }
     }
     None
+}
+
+fn find_cmake_runtime_binary(root: &Path) -> Option<PathBuf> {
+    let build_root = root.join(".cortex").join("build").join("cmake");
+    if !build_root.is_dir() {
+        return None;
+    }
+
+    let mut candidates = Vec::<PathBuf>::new();
+    let mut stack = vec![(build_root.clone(), 0usize)];
+    while let Some((directory, depth)) = stack.pop() {
+        if depth > 4 {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path
+                    .file_name()
+                    .and_then(OsStr::to_str)
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                if !matches!(
+                    name.as_str(),
+                    "cmakefiles" | "_deps" | "testing" | "compileridc" | "compileridcxx"
+                ) {
+                    stack.push((path, depth + 1));
+                }
+                continue;
+            }
+            #[cfg(windows)]
+            let executable = path
+                .extension()
+                .and_then(OsStr::to_str)
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"));
+            #[cfg(not(windows))]
+            let executable = path.extension().is_none();
+
+            if executable {
+                candidates.push(path);
+            }
+        }
+    }
+
+    candidates.sort_by_key(|path| {
+        (
+            path.components().count(),
+            path.to_string_lossy().to_ascii_lowercase(),
+        )
+    });
+    candidates.into_iter().next()
 }
 
 // -------------------------------------------------------------------------
@@ -1595,15 +1662,46 @@ fn cargo_quality_gate(
 }
 
 fn cargo_expected_artifact(profile: &ProjectProfile) -> Option<PathBuf> {
-    let name = profile.root.file_name()?.to_string_lossy();
+    let manifest = fs::read_to_string(profile.root.join("Cargo.toml")).ok();
+    let package_name = manifest
+        .as_deref()
+        .and_then(cargo_manifest_package_name)
+        .or_else(|| {
+            profile
+                .root
+                .file_name()
+                .map(|value| value.to_string_lossy().to_string())
+        })?;
     #[cfg(windows)]
     {
-        Some(PathBuf::from(format!("target/debug/{name}.exe")))
+        Some(PathBuf::from(format!("target/debug/{package_name}.exe")))
     }
     #[cfg(not(windows))]
     {
-        Some(PathBuf::from(format!("target/debug/{name}")))
+        Some(PathBuf::from(format!("target/debug/{package_name}")))
     }
+}
+
+fn cargo_manifest_package_name(manifest: &str) -> Option<String> {
+    let mut in_package = false;
+    for raw in manifest.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') {
+            in_package = line == "[package]";
+            continue;
+        }
+        if in_package {
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim() == "name" {
+                    let value = value.trim().trim_matches('"').trim_matches('\'');
+                    if !value.is_empty() {
+                        return Some(value.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 fn cmake_quality_gate(
@@ -2365,6 +2463,28 @@ mod tests {
             .build_systems
             .contains(&BuildSystemKind::DirectCompiler));
         assert_eq!(profile.kind, ProjectKind::SingleFile);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn cargo_runtime_artifact_uses_manifest_package_name_not_folder_name() {
+        let root = temp_project("cargo-artifact-name");
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"actual_app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+        let profile = detect_project_profile(&root);
+        let artifact = cargo_expected_artifact(&profile).unwrap();
+        let rendered = artifact.to_string_lossy().replace('\\', "/");
+        assert!(
+            rendered.ends_with("target/debug/actual_app")
+                || rendered.ends_with("target/debug/actual_app.exe")
+        );
+
         fs::remove_dir_all(root).ok();
     }
 

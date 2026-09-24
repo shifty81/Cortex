@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from UniversalPCCAudit import _read_manifest, validate_contract
+from UniversalPCCAudit import RISK_ALIASES, _read_manifest, validate_contract
 
 VERSION = 'UPCC-A02-0.1'
 
@@ -86,7 +86,7 @@ def inspect_gate(root: Path, key: str = 'full', *, rust_consumer: bool = False) 
             cwd_valid = False
         row = {
             'index': index + 1, 'command_key': command['key'], 'program': program,
-            'args': command.get('args', []), 'risk': command.get('risk', 'read_only'),
+            'args': command.get('args', []), 'risk': RISK_ALIASES.get(command.get('risk', 'read_only'), command.get('risk', 'read_only')),
             'rollback': command.get('rollback', 'none'), 'cancellation': command.get('cancellation', 'cooperative'),
             'resolved_executable': executable['path'], 'executable_status': executable['status'],
             'working_directory': str(working_dir), 'working_directory_exists': cwd_valid,

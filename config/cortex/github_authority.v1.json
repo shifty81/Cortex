@@ -1,0 +1,13 @@
+{
+  "schema": "cortex.github_authority.v1",
+  "repository": "shifty81/Cortex",
+  "remote": "https://github.com/shifty81/Cortex.git",
+  "defaultBranch": "main",
+  "author": {
+    "name": "shifty81",
+    "email": "50773914+shifty81@users.noreply.github.com",
+    "scope": "local"
+  },
+  "portableCredentials": false,
+  "note": "Repository identity travels with the project. GitHub credentials remain machine-scoped and are never stored in the portable Vault."
+}

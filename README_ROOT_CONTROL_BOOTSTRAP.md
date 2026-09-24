@@ -1,16 +1,15 @@
-# Cortex native root utility bridge — CTX-PROJOPS-02
+# Root Project Control bootstrap
 
-Cortex now owns the universal Project Control Center tooling spine. The historical standalone PowerShell UPCC is donor/migration evidence only.
+`PROJECT_CONTROL_CENTER.cmd` is the standard repository-root doorway into the current Forge/PCC control plane.
 
-`PROJECT_CONTROL_CENTER.cmd` remains the standard repository-root doorway. It launches the local root bridge, which prefers the built native Cortex GUI/CLI and falls back to a small build/recovery menu only when Cortex has not been built yet.
+## Current behavior
 
-## Normal use
+The bootstrap launches the project-owned Python PCC GUI/console authority. That authority provides project status, source gates, transactional patch intake, Git/recovery operations, Vault/shared-dependency controls, debug bundles, Rust Forge candidate routing and Cortex build/runtime commands.
 
-Run `PROJECT_CONTROL_CENTER.cmd`.
+The native `cortex_desktop` executable is a Cortex product/runtime surface launched from the control plane; it is not the universal project-control authority.
 
-- If `cortex_desktop.exe` exists, the native Cortex GUI opens with this repository selected.
-- `-Status` prefers `cortex.exe project status`.
-- `-FastGate` and `-FullGate` prefer native Cortex project gates.
-- Patch intake/debug-bundle/bootstrap build functions remain available for recovery before a native binary exists.
+## Storage behavior
 
-No `PCC_HOME`, separate Universal PCC folder, or external PCC runtime is required.
+PCC project commands receive the shared Vault dependency environment. Rust crate/git downloads are shared, Rust target output is project-namespaced, and registered project source can be mirrored into the global content-addressed Vault store. FULL GREEN requires a source-stable, deep-verified mirror before recovery certification.
+
+No external `PCC_HOME` or separate Universal PCC install is required for this repository. Historical standalone PCC implementations are donor/provenance material only.

@@ -21,6 +21,8 @@ import CortexPCC as pcc
 import CortexPatchAuthority as patch
 import CortexGitAuthority as git
 import CortexPCCMaintenance as maintenance
+import PCCProjectDiscovery as discovery
+from PCCSurfaceCommon import BackendClient, ProjectContract, command_catalog
 
 
 def sha(data: bytes) -> str:
@@ -109,8 +111,18 @@ class PCC60PassTests(TempRoot):
     # 05
     def test_05_command_runner_failure(self):
         log = pcc.SessionLog(self.root, quiet=True)
-        result = pcc.CommandRunner(log).run([sys.executable, "-c", "raise SystemExit(7)"], cwd=self.root, stream=False)
+        result = pcc.CommandRunner(log).run(
+            [sys.executable, "-c", "import sys; print('fmt-like-diff'); print('boom', file=sys.stderr); raise SystemExit(7)"],
+            cwd=self.root,
+            stream=False,
+            phase="test:failure",
+        )
         self.assertEqual(result.returncode, 7)
+        captures = list(log.command_output_dir.glob("*.txt"))
+        self.assertEqual(len(captures), 1)
+        captured = captures[0].read_text(encoding="utf-8")
+        self.assertIn("fmt-like-diff", captured)
+        self.assertIn("boom", captured)
 
     # 06
     def test_06_command_runner_timeout(self):
@@ -256,6 +268,42 @@ class PCC60PassTests(TempRoot):
         self.assertEqual(target.read_text(), "old")
 
     # 27
+    def test_26b_patch_preflight_reports_all_conflicts(self):
+        (self.root / "a.txt").write_text("actual-a")
+        (self.root / "b.txt").write_text("actual-b")
+        zp = make_patch(
+            self.root,
+            "TEST-026B",
+            {"a.txt": b"new-a", "b.txt": b"new-b"},
+            overrides={
+                "a.txt": {"beforeSha256": "0" * 64, "mustExist": True},
+                "b.txt": {"beforeSha256": "1" * 64, "mustExist": True},
+            },
+        )
+        validation = patch.validate_patch(zp)
+        with self.assertRaises(patch.PatchError) as caught:
+            patch.check_preconditions(self.root, validation)
+        message = str(caught.exception)
+        self.assertIn("2 preimage conflict(s)", message)
+        self.assertIn("a.txt", message)
+        self.assertIn("b.txt", message)
+
+    def test_26c_preflight_failure_preserves_pending_transport(self):
+        target = self.root / "a.txt"
+        target.write_text("actual")
+        zp = make_patch(
+            self.root,
+            "TEST-026C",
+            {"a.txt": b"new"},
+            overrides={"a.txt": {"beforeSha256": "0" * 64, "mustExist": True}},
+        )
+        sidecar = Path(str(zp) + ".sha256")
+        self.assertNotEqual(patch.do_apply(self.root), 0)
+        self.assertEqual(target.read_text(), "actual")
+        self.assertTrue(zp.is_file())
+        self.assertTrue(sidecar.is_file())
+        self.assertFalse((self.root / "artifacts" / "patches" / "failed").exists())
+
     def test_27_patch_replay_protection(self):
         make_patch(self.root, "TEST-027", {"a.txt": b"a"})
         self.assertEqual(patch.do_apply(self.root), 0)
@@ -266,8 +314,16 @@ class PCC60PassTests(TempRoot):
 
     # 28
     def test_28_patch_control_file_requires_restart(self):
-        zp = make_patch(self.root, "TEST-028", {"tools/control/CortexPCC.py": b"print('x')\n"})
-        self.assertTrue(patch.validate_patch(zp).restart_required)
+        for index, rel in enumerate((
+            "tools/control/CortexPCC.py",
+            "tools/control/PCCProjectDiscovery.py",
+            "tools/control/UniversalPCCAudit.py",
+            "project.control.json",
+        )):
+            zp = make_patch(self.root, f"TEST-028-{index}", {rel: b"x\n"})
+            self.assertTrue(patch.validate_patch(zp).restart_required, rel)
+            zp.unlink(missing_ok=True)
+            zp.with_suffix(zp.suffix + ".sha256").unlink(missing_ok=True)
 
     # 29
     def test_29_non_patch_zip_is_ignored(self):
@@ -480,14 +536,231 @@ class PCC60PassTests(TempRoot):
 
     # 59
     def test_59_parser_exposes_python_maintenance_commands(self):
-        for command in ("doctor","doctor-json","root-hygiene","root-hygiene-fix","artifact-prune","verify-latest-debug"):
+        for command in ("doctor","doctor-json","root-hygiene","root-hygiene-fix","artifact-prune","verify-latest-debug","format","storage-status","storage-prepare","storage-reclaim-plan","vault-mirror","vault-mirror-all","vault-verify"):
             self.assertEqual(pcc.build_parser().parse_args([command,"--root",str(self.root)]).command,command)
 
     # 60
     def test_60_pcc12_version_and_no_duplicate_fast_menu(self):
-        self.assertEqual(pcc.PCC_VERSION,"CTX-PCC-12.0")
+        self.assertEqual(pcc.PCC_VERSION,"CTX-PCC-12.3")
         source=(TOOLS/"CortexPCC.py").read_text(encoding="utf-8")
         self.assertEqual(source.count('print(" 21 Fast gate")'),1)
+
+    # 61
+    def test_61_gui_command_catalog_merges_contract_and_provider_commands(self):
+        repo_root = TOOLS.parents[1]
+        contract = ProjectContract.load(repo_root)
+        rows = command_catalog(contract)
+        keys = {(row.key, row.source) for row in rows}
+        self.assertIn(("fmt.check", "project_contract"), keys)
+        self.assertIn(("full", "project_provider"), keys)
+        self.assertIn(("vault-gc-plan", "project_provider"), keys)
+        self.assertGreaterEqual(len(rows), 70)
+
+    # 62
+    def test_62_registered_contract_command_resolves_direct_argv(self):
+        repo_root = TOOLS.parents[1]
+        backend = BackendClient(repo_root, ProjectContract.load(repo_root))
+        argv = backend.contract_argv("fmt.check")
+        self.assertEqual(argv[0], "cargo")
+        self.assertIn("fmt", argv)
+        self.assertIn("--check", argv)
+
+    # 63
+    def test_63_gui_has_console_composer_and_category_command_surfaces(self):
+        source=(TOOLS/"CortexPCCGui.py").read_text(encoding="utf-8")
+        for token in (
+            "console_input_var",
+            "_submit_console_input",
+            "_start_cortex_cli",
+            "_start_shell_command",
+            "Storage & Vault",
+            "Command Registry",
+            "_scrollable_page_body",
+            "_responsive_action_grid",
+            'GUI_VERSION = "PCC-GUI-0.11.6"',
+        ):
+            self.assertIn(token, source)
+
+
+    def test_63a_gui_scroll_surfaces_are_visible_and_keyboard_accessible(self):
+        source=(TOOLS/"CortexPCCGui.py").read_text(encoding="utf-8")
+        for token in (
+            "Dark.Vertical.TScrollbar",
+            "_dark_scrollbar",
+            "_scroll_active_page_key",
+            "_scroll_active_page_home_end",
+            'self.window.bind("<Prior>"',
+            'self.window.bind("<Next>"',
+            'self.window.bind("<Home>"',
+            'self.window.bind("<End>"',
+            'takefocus=True',
+        ):
+            self.assertIn(token, source)
+        self.assertGreaterEqual(source.count("self._dark_scrollbar("), 8)
+
+
+    def test_63b_desktop_registry_consumes_portable_vault_authority(self):
+        registry_source=(TOOLS.parents[1]/"crates/cortex_registry/src/lib.rs").read_text(encoding="utf-8")
+        desktop_source=(TOOLS.parents[1]/"crates/cortex_desktop_core/src/lib.rs").read_text(encoding="utf-8")
+        self.assertIn("CORTEX_VAULT_ROOT", registry_source)
+        self.assertIn("PCC_VAULT_ROOT", registry_source)
+        self.assertIn("portable_drive_root_vault.v1.json", registry_source)
+        self.assertEqual(desktop_source.count("ensure_library_root_for_workspace"), 2)
+
+
+
+    # 64
+    def test_64_discovery_normalizes_legacy_risk_aliases_without_writing_project(self):
+        contract={
+            "schema":"forge.project.v1",
+            "project":{"id":"fixture","name":"Fixture","kind":"test"},
+            "commands":[
+                {"key":"inspect","label":"Inspect","program":"tool","risk":"read"},
+                {"key":"build","label":"Build","program":"tool","risk":"write","mutates":True},
+            ],
+            "quality_gates":[],
+        }
+        path=self.root/"project.control.json"
+        path.write_text(json.dumps(contract),encoding="utf-8")
+        before=path.read_bytes()
+        normalized=discovery.discover_project_contract_data(self.root)
+        risks={item["key"]:item["risk"] for item in normalized["commands"]}
+        self.assertEqual(risks["inspect"],"read_only")
+        self.assertEqual(risks["build"],"local_mutation")
+        self.assertEqual(path.read_bytes(),before)
+
+    def test_61_quick_gate_has_explicit_windows_linker_preflight(self) -> None:
+        source = (TOOLS / "CortexPCC.py").read_text(encoding="utf-8")
+        self.assertIn("Windows linker toolchain", source)
+        self.assertIn("HYDRATE_CORTEX_BUILD_TOOLS.cmd", source)
+        self.assertIn("windows-linker-toolchain", source)
+
+
+
+    def test_65_native_project_pcc_outranks_generic_rust_adapter(self):
+        (self.root / "Cargo.toml").write_text('[workspace]\nmembers=[]\n', encoding="utf-8")
+        (self.root / "PCC.cmd").write_text('@echo off\npython ProjectControlCenter.py %*\n', encoding="utf-8")
+        (self.root / "ProjectControlCenter.py").write_text(
+            'commands = ["full", "build", "test", "run", "audit", "updates", "debug-bundle", "dx12"]\n',
+            encoding="utf-8",
+        )
+        manifest_dir = self.root / "project"
+        manifest_dir.mkdir()
+        (manifest_dir / "forgepy.project.json").write_text(
+            json.dumps({"project":{"id":"havenwild-bevy","name":"Havenwild Bevy","kind":"rust-workspace"},"runtime":"dx12"}),
+            encoding="utf-8",
+        )
+        data = discovery.discover_project_contract_data(self.root)
+        info = data["_pccDiscovery"]
+        self.assertEqual(info["source"], "native-project-pcc")
+        self.assertEqual(info["provider"], "PCC.cmd")
+        self.assertEqual(info["manifest"], "project/forgepy.project.json")
+        self.assertEqual(info["fallback"], "rust-workspace")
+        commands = {item["key"]: item for item in data["commands"]}
+        self.assertEqual(commands["gate.full"]["program"], "PCC.cmd")
+        self.assertEqual(commands["gate.full"]["args"], ["full"])
+        self.assertNotEqual(commands["gate.full"]["program"], "__pcc_internal__")
+        self.assertEqual(commands["run.runtime"]["args"], ["run", "dx12"])
+
+    def test_66_explicit_project_contract_outranks_native_pcc_and_generic_adapter(self):
+        (self.root / "Cargo.toml").write_text('[workspace]\nmembers=[]\n', encoding="utf-8")
+        (self.root / "PCC.cmd").write_text('@echo off\n', encoding="utf-8")
+        (self.root / "project.control.json").write_text(json.dumps({
+            "project":{"id":"fixture","name":"Fixture","kind":"rust-workspace"},
+            "commands":[{"key":"gate.full","label":"Authoritative Full","risk":"read_only","program":"custom-tool","args":["full"],"category":"gate"}],
+            "quality_gates":[{"key":"gate.full"}],
+        }), encoding="utf-8")
+        data = discovery.discover_project_contract_data(self.root)
+        self.assertEqual(data["_pccDiscovery"]["source"], "project.control.json")
+        self.assertEqual(len(data["commands"]), 1)
+        self.assertEqual(data["commands"][0]["program"], "custom-tool")
+
+    def test_67_native_project_pcc_summary_exposes_authority_manifest_entrypoint_and_fallback(self):
+        (self.root / "Cargo.toml").write_text('[workspace]\nmembers=[]\n', encoding="utf-8")
+        (self.root / "PCC.cmd").write_text('@echo off\n', encoding="utf-8")
+        (self.root / "project").mkdir()
+        (self.root / "project" / "forgepy.project.json").write_text('{}', encoding="utf-8")
+        summary = discovery.discovery_summary(self.root)
+        self.assertEqual(summary["authority"], "native-project-pcc")
+        self.assertEqual(summary["manifest"], "project/forgepy.project.json")
+        self.assertEqual(summary["entrypoint"], "PCC.cmd")
+        self.assertEqual(summary["fallback"], "rust-workspace")
+
+
+    def test_68_console_uses_cortex_runtime_authority_and_fail_closed_operation_keys(self):
+        source=(TOOLS/"CortexPCCGui.py").read_text(encoding="utf-8")
+        self.assertIn('GUI_VERSION = "PCC-GUI-0.11.6"', source)
+        self.assertIn('def _cortex_runtime_root', source)
+        self.assertIn('"--manifest-path", str(manifest)', source)
+        self.assertIn('environment_root=cortex_root', source)
+        self.assertIn('Project operation is not available for', source)
+        self.assertIn('re.fullmatch(r"[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)+", text)', source)
+
+    def test_69_universal_process_environment_exports_shared_python_authority(self):
+        storage_source=(TOOLS/"PCCVaultStorage.py").read_text(encoding="utf-8")
+        surface_source=(TOOLS/"PCCSurfaceCommon.py").read_text(encoding="utf-8")
+        for token in ("CORTEX_PYTHON_EXE", "PCC_VAULT_ROOT", "RUSTUP_HOME", 'toolchains / "python"'):
+            self.assertIn(token, storage_source)
+        self.assertIn("environment_root: Path | None = None", surface_source)
+        self.assertIn("dependency_environment(effective_root)", surface_source)
+
+
+    def test_70_git_identity_round_trip_and_status_summary(self):
+        subprocess.run(["git", "init", "-b", "main"], cwd=self.root, check=True, stdout=subprocess.DEVNULL)
+        self.assertEqual(git.set_git_identity(self.root, "Cortex Test", "cortex-test@example.invalid", "local"), 0)
+        status = git.git_identity_status(self.root)
+        self.assertTrue(status["configured"])
+        self.assertEqual(status["effectiveName"], "Cortex Test")
+        self.assertEqual(status["effectiveEmail"], "cortex-test@example.invalid")
+        summary = git.status_summary(self.root)
+        self.assertTrue(summary["gitIdentityConfigured"])
+        self.assertEqual(summary["gitIdentitySource"], "local")
+
+    def test_71_git_identity_validation_fails_closed(self):
+        with self.assertRaises(git.GitError):
+            git.validate_git_identity("", "user@example.invalid")
+        with self.assertRaises(git.GitError):
+            git.validate_git_identity("User", "not-an-email")
+        with self.assertRaises(git.GitError):
+            git.validate_git_identity("User\nInjected", "user@example.invalid")
+
+    def test_72_gui_exposes_first_class_git_identity_flow(self):
+        source=(TOOLS/"CortexPCCGui.py").read_text(encoding="utf-8")
+        for token in (
+            "Configure Git Identity",
+            "_configure_git_identity",
+            "_refresh_git_identity_panel",
+            "--git-name",
+            "--git-email",
+            "--git-scope",
+            'GUI_VERSION = "PCC-GUI-0.11.6"',
+        ):
+            self.assertIn(token, source)
+        pcc_source=(TOOLS/"CortexPCC.py").read_text(encoding="utf-8")
+        self.assertIn('"git-identity"', pcc_source)
+        self.assertIn('"git-identity-status"', pcc_source)
+
+
+
+    def test_73_project_github_authority_auto_configures_local_identity(self):
+        subprocess.run(["git", "init", "-b", "main"], cwd=self.root, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "config", "--local", "--unset-all", "user.name"], cwd=self.root, check=False)
+        subprocess.run(["git", "config", "--local", "--unset-all", "user.email"], cwd=self.root, check=False)
+        cfg = self.root / "config" / "cortex" / "github_authority.v1.json"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(json.dumps({
+            "schema":"cortex.github_authority.v1",
+            "remote":"https://github.com/shifty81/Cortex.git",
+            "author":{"name":"shifty81","email":"50773914+shifty81@users.noreply.github.com"}
+        }), encoding="utf-8")
+        authority = git.apply_project_git_defaults(self.root)
+        self.assertEqual(authority["remote"], "https://github.com/shifty81/Cortex.git")
+        status = git.git_identity_status(self.root)
+        self.assertTrue(status["configured"])
+        self.assertEqual(status["source"], "local")
+        self.assertEqual(status["effectiveName"], "shifty81")
+        self.assertEqual(status["effectiveEmail"], "50773914+shifty81@users.noreply.github.com")
+
 
 
 if __name__ == "__main__":

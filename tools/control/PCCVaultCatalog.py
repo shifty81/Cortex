@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from PCCStoragePaths import project_key as storage_project_key, resolve_vault_root
+
 CATALOG_VERSION = "PCC-VAULT-CATALOG-0.1"
 HASH_LIMIT = 64 * 1024 * 1024
 LARGE_FILE_BYTES = 25 * 1024 * 1024
@@ -26,6 +28,7 @@ CACHE_DIRS = {"cache", ".cache", "__pycache__", ".pytest_cache", ".mypy_cache", 
 DEPENDENCY_DIRS = {"node_modules", ".gradle", ".cargo", "packages", "deps", "dependencies"}
 VENDOR_DIRS = {"vendor", "third_party", "third-party", "extern", "external"}
 HISTORY_DIRS = {".git", ".hg", ".svn"}
+OPERATIONAL_DIRS = {".cortex", ".project_control", "artifacts", "logs", "updates", "handoffs"}
 ARCHIVE_DIRS = {"archive", "archives", "backup", "backups", "handoffs", "rollups"}
 REFERENCE_DIRS = {"legacy", "reference", "references", "donor", "donors", "examples", "samples"}
 ASSET_DIRS = {"assets", "asset", "content", "gamedata", "resources", "textures", "sprites", "audio", "models", "fonts"}
@@ -65,19 +68,11 @@ class FileRecord:
 
 
 def _data_root() -> Path:
-    override = os.environ.get("PCC_VAULT_ROOT")
-    if override:
-        return Path(override).expanduser().resolve()
-    if os.name == "nt":
-        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-        return base / "ProjectControlCenter" / "Vault"
-    base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-    return base / "project-control-center" / "vault"
+    return resolve_vault_root()
 
 
 def project_key(root: Path) -> str:
-    value = os.path.normcase(str(root.expanduser().resolve()))
-    return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()[:20]
+    return storage_project_key(root)
 
 
 def catalog_dir(root: Path) -> Path:
@@ -139,6 +134,8 @@ def classify_path(root: Path, path: Path, *, is_dir: bool = False) -> str:
 
     if any(part in HISTORY_DIRS for part in names) or leaf in HISTORY_DIRS:
         return "HISTORY"
+    if parts and parts[0] in OPERATIONAL_DIRS:
+        return "OPERATIONAL"
     if any(part in BUILD_DIRS for part in names) or leaf in BUILD_DIRS:
         return "BUILD_OUTPUT"
     if any(part in CACHE_DIRS for part in names) or leaf in CACHE_DIRS:
@@ -168,7 +165,7 @@ def classify_path(root: Path, path: Path, *, is_dir: bool = False) -> str:
 
 def _should_prune_dir(root: Path, path: Path) -> bool:
     classification = classify_path(root, path, is_dir=True)
-    return classification in {"HISTORY", "BUILD_OUTPUT", "CACHE", "DEPENDENCY"}
+    return classification in {"HISTORY", "OPERATIONAL", "BUILD_OUTPUT", "CACHE", "DEPENDENCY"}
 
 
 def _sha256(path: Path) -> str:
@@ -241,6 +238,8 @@ def scan_project(
             if cancelled and cancelled():
                 raise InterruptedError("Vault scan cancelled")
             path = current_path / name
+            if path.is_symlink():
+                continue
             try:
                 stat = path.stat()
                 if not path.is_file():

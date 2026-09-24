@@ -12,6 +12,10 @@ set "PCC_EXIT=1"
 set "PY_CMD="
 set "PYW_CMD="
 
+rem Pre-Python bootstrap: check/hydrate the shared Cortex environment first.
+call :bootstrap_environment
+if exist "%CORTEX_ROOT%\.cortex\bootstrap-env.cmd" call "%CORTEX_ROOT%\.cortex\bootstrap-env.cmd"
+
 call :resolve_python
 if errorlevel 1 goto :python_fail
 
@@ -55,7 +59,27 @@ goto :done
 set "PCC_EXIT=%ERRORLEVEL%"
 goto :done
 
+:bootstrap_environment
+if not exist "%CORTEX_ROOT%\scripts\Bootstrap-CortexEnvironment.ps1" exit /b 0
+where powershell.exe >nul 2>nul
+if errorlevel 1 (
+  echo [WARN] Windows PowerShell is unavailable; automatic Cortex dependency hydration cannot run.
+  exit /b 0
+)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%CORTEX_ROOT%\scripts\Bootstrap-CortexEnvironment.ps1" -Mode Startup
+if errorlevel 1 echo [WARN] Cortex environment bootstrap reported a launch blocker.
+exit /b 0
+
 :resolve_python
+if defined CORTEX_PYTHON_EXE if exist "%CORTEX_PYTHON_EXE%" (
+  "%CORTEX_PYTHON_EXE%" -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
+  if not errorlevel 1 (
+    set PY_CMD="%CORTEX_PYTHON_EXE%"
+    if defined CORTEX_PYTHONW_EXE if exist "%CORTEX_PYTHONW_EXE%" set PYW_CMD="%CORTEX_PYTHONW_EXE%"
+    exit /b 0
+  )
+)
+
 where py.exe >nul 2>nul
 if not errorlevel 1 (
   py.exe -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
@@ -80,7 +104,8 @@ if not errorlevel 1 (
 exit /b 1
 
 :python_fail
-echo [FAIL] Cortex Project Control Center requires Python 3.11 or newer.
+echo [FAIL] Cortex Project Control Center could not hydrate or locate Python 3.11 or newer.
+echo Run BOOTSTRAP_CORTEX_ENVIRONMENT.cmd and inspect artifacts\bootstrap\environment-health.json.
 set "PCC_EXIT=1"
 goto :done
 
@@ -88,7 +113,8 @@ goto :done
 if not "%PCC_EXIT%"=="0" (
   echo.
   echo Cortex Project Control Center exited with code %PCC_EXIT%.
-  echo Latest evidence: %CORTEX_ROOT%\artifacts\debug\LATEST_DEBUG_BUNDLE.txt
+  echo Environment evidence: %CORTEX_ROOT%\artifacts\bootstrap\environment-health.json
+  echo Latest debug evidence: %CORTEX_ROOT%\artifacts\debug\LATEST_DEBUG_BUNDLE.txt
   if exist "%CORTEX_ROOT%\artifacts\debug" start "" explorer.exe "%CORTEX_ROOT%\artifacts\debug"
   echo.
   pause

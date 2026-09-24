@@ -1,33 +1,38 @@
 {
-  "schema_version": 2,
-  "title": "Cortex Standalone Normalized Handoff",
-  "generated_local": "2026-09-08T00:00:00-04:00",
-  "status": "active-standalone-authority",
-  "purpose": "Post-separation Cortex project normalization, quality-gate cleanup, native CLI/Desktop continuation and Forge integration",
+  "schema_version": 3,
+  "title": "Forge + Cortex Unified Control Handoff",
+  "generated_local": "2026-09-23T12:00:00-04:00",
+  "status": "active-unified-authority",
+  "purpose": "Current Forge/Cortex/Vault/PCC convergence, shared storage, source certification and Rust Forge takeover work",
   "decisions": {
-    "cortex": "authoritative standalone project; no standalone-boundary enforcement",
-    "migration_gates": "historical evidence only; not active certification",
-    "hxx_r051": "historical milestone labels; retain useful behavior tests but remove literal-marker policy gates",
-    "forge": "universal project development/root-operations platform consumed by Cortex through typed contracts",
-    "open2d_ember": "optional managed-project integration/provider",
-    "havenwild": "optional managed-project integration/provider",
-    "external_tools": "independent versioned providers/plugins/Forge capabilities"
+    "forge": "primary user-facing workstation and universal project-control shell",
+    "cortex": "integrated intelligence and automation backend; independently testable/service-capable",
+    "pcc": "universal project-control spine within the Forge/Cortex system, not a competing end-user application",
+    "vault": "single governed machine storage/catalog/provenance authority with shared caches and deduplicated per-project mirrors",
+    "forgepy_python_pcc": "production control authority until explicit Rust Forge takeover certification",
+    "forge_rust": "candidate lane; compile/runtime/parity/takeover evidence required",
+    "managed_projects": "Ember, Havenwild and other projects remain independent and consume universal contracts"
   },
-  "active_gate": [
+  "active_source_gate": [
     "patch-intake",
-    "root-cleanliness",
+    "root-cleanliness-contract-sanity",
     "workspace-dependency-health",
+    "python-pcc-regressions",
     "fmt",
     "check",
     "test",
     "clippy",
     "build",
-    "cli-schema-contracts",
-    "provider-plugin-tool-contracts",
-    "transaction-recovery",
-    "desktop-runtime-smoke",
-    "forge-integration",
-    "artifacts-provenance"
+    "source-stable-vault-mirror",
+    "deep-cas-verification",
+    "green-source-marker",
+    "vault-recovery-certification"
+  ],
+  "runtime_acceptance": [
+    "windows-visible-native-window",
+    "real-provider-chat-stream",
+    "conversation-restart-recovery",
+    "agent-cancel-and-error-path-ui"
   ],
   "retired_gate_classes": [
     "standalone-boundary",

@@ -561,6 +561,13 @@ pub fn discover_cortex_home() -> Result<PathBuf, WorkspaceError> {
     if let Some(path) = std::env::var_os("CORTEX_HOME").filter(|path| !path.is_empty()) {
         return Ok(PathBuf::from(path));
     }
+    // A governed Vault root implies portable state unless an explicit CORTEX_HOME
+    // overrides it. This keeps registry/chat/task state on the removable project
+    // drive even when Cortex is launched by a surface that only propagated the
+    // Vault authority.
+    if let Some(path) = std::env::var_os("CORTEX_VAULT_ROOT").filter(|path| !path.is_empty()) {
+        return Ok(PathBuf::from(path).join(".cortex").join("home"));
+    }
     #[cfg(windows)]
     {
         if let Some(path) = std::env::var_os("LOCALAPPDATA") {

@@ -135,10 +135,10 @@ impl CortexLibraryLayout {
         let intake = root.join("Intake");
         let vault = root.join("Vault");
         let git = root.join("Git");
-        let cortex_data = root.join("Cortex");
+        let cortex_data = root.join(".cortex").join("data");
         Self {
             schema_version: 2,
-            projects: root.join("Projects"),
+            projects: root.join("Source"),
             vault_assets: vault.join("Assets"),
             vault_logic: vault.join("Logic"),
             vault_templates: vault.join("Templates"),
@@ -564,6 +564,11 @@ impl WorkspaceRegistry {
     }
 
     pub fn ensure_default_library_root(&self) -> Result<Option<CortexLibraryRoot>, String> {
+        if let Some(configured) = configured_vault_root_from_environment() {
+            self.provision_library_root(&configured)?;
+            return self.library_root();
+        }
+
         if let Some(existing) = self.library_root()? {
             let layout = CortexLibraryLayout::from_root(existing.root.clone());
             layout.ensure_directories()?;
@@ -581,6 +586,28 @@ impl WorkspaceRegistry {
         }
 
         Ok(None)
+    }
+
+    /// Resolve the storage authority for a concrete workspace before desktop
+    /// services, model hosts, or project tools are opened. Explicit machine
+    /// configuration wins; portable source distributions can then opt into the
+    /// repository drive root. Existing managed state is still protected by
+    /// `set_library_root` and will not be silently migrated.
+    pub fn ensure_library_root_for_workspace(
+        &self,
+        workspace_root: impl AsRef<Path>,
+    ) -> Result<Option<CortexLibraryRoot>, String> {
+        if let Some(configured) = configured_vault_root_from_environment() {
+            self.provision_library_root(&configured)?;
+            return self.library_root();
+        }
+
+        if let Some(portable) = portable_drive_root_for_workspace(workspace_root.as_ref())? {
+            self.provision_library_root(&portable)?;
+            return self.library_root();
+        }
+
+        self.ensure_default_library_root()
     }
 
     pub fn provision_library_root(
@@ -1923,6 +1950,12 @@ impl WorkspaceRegistry {
                 state.schema_version, REGISTRY_SCHEMA_VERSION
             ));
         }
+
+        #[cfg(windows)]
+        if rebase_portable_workspace_paths(&mut state, &self.home) {
+            self.save(&state)?;
+        }
+
         state
             .workspaces
             .sort_by_key(|workspace| Reverse(workspace.last_opened_unix_ms));
@@ -3296,6 +3329,170 @@ fn path_starts_with(path: &Path, root: &Path) -> bool {
     path == root || path.starts_with(root)
 }
 
+#[cfg(windows)]
+fn windows_path_relative_to_drive(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+
+    let mut saw_prefix = false;
+    let mut relative = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) => saw_prefix = true,
+            Component::RootDir | Component::CurDir => {}
+            Component::Normal(value) => relative.push(value),
+            Component::ParentDir => return None,
+        }
+    }
+    if saw_prefix && !relative.as_os_str().is_empty() {
+        Some(relative)
+    } else {
+        None
+    }
+}
+
+#[cfg(windows)]
+fn rebase_portable_workspace_paths(state: &mut WorkspaceRegistryState, home: &Path) -> bool {
+    let Some(vault_root) = configured_vault_root_from_environment() else {
+        return false;
+    };
+    let mut changed = false;
+    for workspace in &mut state.workspaces {
+        let expected_state_root = home.join("workspaces").join(&workspace.id);
+        if workspace.state_root != expected_state_root {
+            workspace.state_root = expected_state_root;
+            changed = true;
+        }
+
+        if workspace.root.exists() {
+            continue;
+        }
+        let Some(relative) = windows_path_relative_to_drive(&workspace.root) else {
+            continue;
+        };
+        let candidate = vault_root.join(relative);
+        if !candidate.is_dir() {
+            continue;
+        }
+
+        let previous = workspace.root.clone();
+        if !workspace.known_paths.iter().any(|path| path == &previous) {
+            workspace.known_paths.push(previous);
+        }
+        workspace.root = candidate.clone();
+        if let Ok(reopened) = Workspace::open(&candidate) {
+            workspace.profile = reopened.profile().clone();
+            workspace.fingerprint = workspace_fingerprint(&reopened);
+        } else {
+            workspace.profile.root = candidate.clone();
+        }
+        workspace.contract_path = if candidate.join("project.control.json").is_file() {
+            Some(candidate.join("project.control.json"))
+        } else {
+            None
+        };
+        changed = true;
+    }
+    changed
+}
+
+fn configured_vault_root_from_environment() -> Option<PathBuf> {
+    ["CORTEX_VAULT_ROOT", "PCC_VAULT_ROOT"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .map(PathBuf::from)
+        .find(|path| !path.as_os_str().is_empty())
+}
+
+fn portable_drive_root_policy_enabled(workspace_root: &Path) -> Result<bool, String> {
+    let path = workspace_root
+        .join("config")
+        .join("cortex")
+        .join("portable_drive_root_vault.v1.json");
+    if !path.is_file() {
+        return Ok(false);
+    }
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&path).map_err(|error| {
+        format!(
+            "failed to read Cortex portable Vault policy {}: {error}",
+            path.display()
+        )
+    })?)
+    .map_err(|error| {
+        format!(
+            "invalid Cortex portable Vault policy {}: {error}",
+            path.display()
+        )
+    })?;
+    let schema = value
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if schema != "cortex.portable_drive_root_vault.v1" {
+        return Err(format!(
+            "unsupported Cortex portable Vault policy schema in {}: {schema}",
+            path.display()
+        ));
+    }
+    let enabled = value
+        .get("enabled")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if !enabled {
+        return Ok(false);
+    }
+    let mode = value
+        .get("mode")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if mode != "repository_drive_root" {
+        return Err(format!(
+            "unsupported Cortex portable Vault policy mode in {}: {mode}",
+            path.display()
+        ));
+    }
+    Ok(true)
+}
+
+fn portable_drive_root_for_workspace(workspace_root: &Path) -> Result<Option<PathBuf>, String> {
+    if !portable_drive_root_policy_enabled(workspace_root)? {
+        return Ok(None);
+    }
+
+    #[cfg(windows)]
+    {
+        windows_drive_root(workspace_root)
+            .map(Some)
+            .ok_or_else(|| {
+                format!(
+                    "portable drive-root Vault policy is enabled but no Windows drive root could be derived from {}",
+                    workspace_root.display()
+                )
+            })
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(None)
+    }
+}
+
+#[cfg(windows)]
+fn windows_drive_root(path: &Path) -> Option<PathBuf> {
+    use std::path::{Component, Prefix};
+
+    for component in path.components() {
+        if let Component::Prefix(prefix) = component {
+            return match prefix.kind() {
+                Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
+                    Some(PathBuf::from(format!("{}:\\", char::from(letter))))
+                }
+                _ => None,
+            };
+        }
+    }
+    None
+}
+
 fn unix_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -3315,6 +3512,56 @@ mod tests {
         ));
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn portable_drive_root_policy_is_explicit_and_non_mutating() {
+        let base = temporary_root("portable-policy");
+        let policy_dir = base.join("config").join("cortex");
+        fs::create_dir_all(&policy_dir).unwrap();
+        fs::write(
+            policy_dir.join("portable_drive_root_vault.v1.json"),
+            r#"{
+  "schema": "cortex.portable_drive_root_vault.v1",
+  "enabled": true,
+  "mode": "repository_drive_root"
+}"#,
+        )
+        .unwrap();
+        assert!(portable_drive_root_policy_enabled(&base).unwrap());
+        assert!(!base.join("registry").exists());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn portable_drive_root_policy_rejects_unknown_mode() {
+        let base = temporary_root("portable-policy-bad-mode");
+        let policy_dir = base.join("config").join("cortex");
+        fs::create_dir_all(&policy_dir).unwrap();
+        fs::write(
+            policy_dir.join("portable_drive_root_vault.v1.json"),
+            r#"{
+  "schema": "cortex.portable_drive_root_vault.v1",
+  "enabled": true,
+  "mode": "some_other_mode"
+}"#,
+        )
+        .unwrap();
+        assert!(portable_drive_root_policy_enabled(&base).is_err());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_drive_root_handles_normal_and_verbatim_drive_paths() {
+        assert_eq!(
+            windows_drive_root(Path::new(r"E:\Cortex")),
+            Some(PathBuf::from(r"E:\"))
+        );
+        assert_eq!(
+            windows_drive_root(Path::new(r"\\?\E:\Cortex")),
+            Some(PathBuf::from(r"E:\"))
+        );
     }
 
     #[test]
@@ -3783,5 +4030,16 @@ mod tests {
     fn workspace_id_is_stable() {
         let path = Path::new("example/workspace");
         assert_eq!(workspace_id(path), workspace_id(path));
+    }
+
+    #[test]
+    fn drive_root_layout_keeps_source_and_state_separate() {
+        let base = temporary_root("portable-layout");
+        let layout = CortexLibraryLayout::from_root(base.clone());
+        assert_eq!(layout.projects, base.join("Source"));
+        assert_eq!(layout.models, base.join("Models"));
+        assert_eq!(layout.cortex_data, base.join(".cortex").join("data"));
+        assert_ne!(layout.cortex_data, base.join("Cortex"));
+        fs::remove_dir_all(base).ok();
     }
 }

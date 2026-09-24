@@ -1,0 +1,47 @@
+{
+  "schema": "cortex.storage_authority.v1",
+  "id": "CORTEX_VAULT_SHARED_DEPENDENCY_AUTHORITY_R121",
+  "status": "source-implemented-awaiting-windows-certification",
+  "authority": {
+    "vault_root": "resolved by PCCStoragePaths; environment override first, configured D:\\CortexLibrary when available, safe local fallback otherwise",
+    "project_mirror": "content-addressed incremental SHA-256 object store with per-project snapshot manifests",
+    "project_namespace": "Vault/projects/<project_key>",
+    "global_object_store": "Vault/objects/sha256",
+    "shared_dependency_root": "Vault/shared/dependencies",
+    "rust": {
+      "cargo_home": "shared across projects",
+      "target_dir": "project-namespaced under shared Vault build root to avoid executable collisions",
+      "sccache": "shared cross-project compiled cache when installed"
+    },
+    "other_ecosystems": [
+      "npm cache",
+      "pip cache",
+      "Gradle user home",
+      "NuGet packages",
+      "vcpkg downloads",
+      "vcpkg binary cache"
+    ]
+  },
+  "mirror_policy": {
+    "include": "durable project source, content, configuration, documentation, control metadata and artifacts",
+    "exclude_duplicate_trees": [
+      "build outputs",
+      "dependency trees",
+      "caches",
+      "VCS internals"
+    ],
+    "git_history": "Git bundle mirrored when repository is initialized",
+    "full_gate": "a Vault mirror snapshot is required before issuing the FULL GREEN source marker"
+  },
+  "safety": {
+    "legacy_cache_migration": "explicit only",
+    "legacy_cache_deletion": "never automatic",
+    "dependency_store_disable_override": "CORTEX_SHARED_DEPENDENCIES=0",
+    "network_required_for_mirroring": false
+  },
+  "certification": {
+    "python_control_plane": "must pass locally before handoff",
+    "cargo_windows_build": "not certified until user runs Windows FULL QUALITY GATE",
+    "runtime_gui": "not certified until user launches/tests GUI"
+  }
+}

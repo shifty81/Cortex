@@ -50,7 +50,7 @@
     },
     {
       "key": "pcc.selftest",
-      "label": "Universal Python PCC self-tests",
+      "label": "Cortex/PCC Python regression suite",
       "program": "python",
       "args": [
         "-B",
@@ -58,7 +58,7 @@
         "unittest",
         "discover",
         "-s",
-        "tools/pcc/tests",
+        "tools/control/tests",
         "-p",
         "test_*.py"
       ],
@@ -161,6 +161,34 @@
       "cancellation": "bounded_kill",
       "rollback": "none",
       "category": "test"
+    },
+    {
+      "key": "clippy.apply",
+      "label": "Apply machine-fixable Clippy repairs",
+      "program": "cargo",
+      "args": [
+        "clippy",
+        "--fix",
+        "--workspace",
+        "--all-targets",
+        "--allow-dirty",
+        "--allow-staged",
+        "--allow-no-vcs",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "risk": "local_mutation",
+      "side_effects": [
+        "source_files"
+      ],
+      "permissions": [
+        "workspace_write"
+      ],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "none",
+      "category": "tooling"
     },
     {
       "key": "build",
@@ -321,6 +349,184 @@
       "network_required": false,
       "cancellation": "bounded_kill",
       "rollback": "none"
+    },
+    {
+      "key": "storage.status",
+      "label": "Vault and shared dependency status",
+      "program": "python",
+      "args": [
+        "tools/control/CortexPCC.py",
+        "storage-status",
+        "--root",
+        "."
+      ],
+      "risk": "read_only",
+      "side_effects": [],
+      "permissions": [],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "none",
+      "category": "storage"
+    },
+    {
+      "key": "storage.prepare",
+      "label": "Prepare Vault and shared dependency paths",
+      "program": "python",
+      "args": [
+        "tools/control/CortexPCC.py",
+        "storage-prepare",
+        "--root",
+        "."
+      ],
+      "risk": "local_mutation",
+      "side_effects": [
+        "vault_directories"
+      ],
+      "permissions": [
+        "vault_write"
+      ],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "none",
+      "category": "storage"
+    },
+    {
+      "key": "vault.mirror",
+      "label": "Mirror current project into Vault",
+      "program": "python",
+      "args": [
+        "tools/control/CortexPCC.py",
+        "vault-mirror",
+        "--root",
+        "."
+      ],
+      "risk": "local_mutation",
+      "side_effects": [
+        "vault_objects",
+        "vault_snapshot",
+        "git_bundle_if_available"
+      ],
+      "permissions": [
+        "vault_write"
+      ],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "snapshot",
+      "category": "storage"
+    },
+    {
+      "key": "vault.verify",
+      "label": "Verify latest Vault project mirror",
+      "program": "python",
+      "args": [
+        "tools/control/CortexPCC.py",
+        "vault-verify",
+        "--root",
+        "."
+      ],
+      "risk": "read_only",
+      "side_effects": [],
+      "permissions": [],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "none",
+      "category": "diagnostics"
+    },
+    {
+      "key": "vault.mirror-all",
+      "label": "Mirror all registered projects into Vault",
+      "program": "python",
+      "args": [
+        "tools/control/CortexPCC.py",
+        "vault-mirror-all",
+        "--root",
+        "."
+      ],
+      "risk": "local_mutation",
+      "side_effects": [
+        "vault_objects",
+        "vault_snapshots",
+        "git_bundles_if_available"
+      ],
+      "permissions": [
+        "vault_write"
+      ],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "snapshot",
+      "category": "storage"
+    },
+    {
+      "key": "storage.reclaim-plan",
+      "label": "Dry-run shared-storage reclaim plan",
+      "program": "python",
+      "args": [
+        "tools/control/CortexPCC.py",
+        "storage-reclaim-plan-all",
+        "--root",
+        "."
+      ],
+      "risk": "read_only",
+      "side_effects": [],
+      "permissions": [],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "none",
+      "category": "storage"
+    },
+    {
+      "key": "storage.health",
+      "label": "Vault storage health and accounting",
+      "program": "python",
+      "args": [
+        "tools/control/CortexPCC.py",
+        "storage-health",
+        "--root",
+        "."
+      ],
+      "risk": "read_only",
+      "side_effects": [],
+      "permissions": [],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "none",
+      "category": "storage"
+    },
+    {
+      "key": "vault.retention-plan",
+      "label": "Plan Vault snapshot retention",
+      "program": "python",
+      "args": [
+        "tools/control/CortexPCC.py",
+        "vault-retention-plan",
+        "--root",
+        "."
+      ],
+      "risk": "read_only",
+      "side_effects": [],
+      "permissions": [],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "none",
+      "category": "storage"
+    },
+    {
+      "key": "vault.gc-plan",
+      "label": "Plan Vault CAS garbage collection",
+      "program": "python",
+      "args": [
+        "tools/control/CortexPCC.py",
+        "vault-gc-plan",
+        "--root",
+        "."
+      ],
+      "risk": "read_only",
+      "side_effects": [],
+      "permissions": [],
+      "network_required": false,
+      "cancellation": "bounded_kill",
+      "rollback": "none",
+      "category": "storage"
     }
   ],
   "quality_gates": [
@@ -334,7 +540,7 @@
     },
     {
       "key": "full",
-      "label": "Full Cortex quality gate",
+      "label": "Cortex portable source build/test gate (PCC full adds Vault + GREEN certification)",
       "stages": [
         "pcc.selftest",
         "cargo.metadata",

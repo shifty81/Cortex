@@ -7,7 +7,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-DISCOVERY_VERSION = "PCC-DISCOVERY-0.2"
+DISCOVERY_VERSION = "PCC-DISCOVERY-0.3"
+RISK_ALIASES = {
+    "read": "read_only",
+    "write": "local_mutation",
+    "confirm": "local_mutation",
+}
 
 
 def _safe_json(path: Path) -> dict[str, Any] | None:
@@ -21,12 +26,10 @@ def _safe_json(path: Path) -> dict[str, Any] | None:
 def _risk(item: dict[str, Any]) -> str:
     raw = str(item.get("risk") or "").strip()
     if raw:
-        return raw
-    if bool(item.get("requiresConfirmation")):
-        return "confirm"
-    if bool(item.get("mutates")):
-        return "write"
-    return "read"
+        return RISK_ALIASES.get(raw, raw)
+    if bool(item.get("requiresConfirmation")) or bool(item.get("mutates")):
+        return "local_mutation"
+    return "read_only"
 
 
 def _canonicalize_contract(root: Path, data: dict[str, Any]) -> dict[str, Any]:
@@ -178,6 +181,150 @@ def _action_category(key: str) -> str:
     return key.split(".", 1)[0] if "." in key else "project"
 
 
+
+_NATIVE_MANIFEST_CANDIDATES = (
+    Path("project/forgepy.project.json"),
+    Path("forgepy.project.json"),
+    Path("project/pcc.project.json"),
+)
+_NATIVE_ENTRYPOINT_CANDIDATES = (
+    Path("PCC.cmd"),
+    Path("PROJECT_CONTROL_CENTER.cmd"),
+    Path("ProjectControlCenter.cmd"),
+    Path("ProjectControlCenter.py"),
+    Path("ForgePY.py"),
+)
+
+
+def _flatten_strings(value: Any) -> list[str]:
+    out: list[str] = []
+    if isinstance(value, str):
+        out.append(value)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            out.append(str(key))
+            out.extend(_flatten_strings(item))
+    elif isinstance(value, list):
+        for item in value:
+            out.extend(_flatten_strings(item))
+    return out
+
+
+def _native_provider_text(root: Path, manifest: Path | None, entrypoint: Path | None) -> str:
+    chunks: list[str] = []
+    if manifest is not None:
+        data = _safe_json(manifest)
+        if data is not None:
+            chunks.extend(_flatten_strings(data))
+    for candidate in (entrypoint, root / "ProjectControlCenter.py", root / "ForgePY.py"):
+        if candidate is None or not candidate.is_file():
+            continue
+        try:
+            chunks.append(candidate.read_text(encoding="utf-8-sig", errors="replace")[:120000])
+        except OSError:
+            pass
+    return "\n".join(chunks).casefold()
+
+
+def _native_command_program(root: Path, entrypoint: Path) -> tuple[str, list[str]]:
+    rel = entrypoint.relative_to(root).as_posix()
+    if entrypoint.suffix.casefold() == ".py":
+        return "python", [rel]
+    return rel, []
+
+
+def _discover_native_project_pcc(root: Path) -> dict[str, Any] | None:
+    """Discover an existing project-owned PCC before synthesizing build-system commands.
+
+    Native project authority is intentionally bridged through the universal auto-adapter: the
+    project keeps ownership of its own PCC semantics while Cortex supplies process hosting,
+    shared dependency/cache environment, logging and GUI routing.  Discovery is read-only.
+    """
+    manifest: Path | None = None
+    for rel in _NATIVE_MANIFEST_CANDIDATES:
+        candidate = root / rel
+        if candidate.is_file():
+            manifest = candidate
+            break
+
+    entrypoint: Path | None = None
+    for rel in _NATIVE_ENTRYPOINT_CANDIDATES:
+        candidate = root / rel
+        if candidate.is_file():
+            entrypoint = candidate
+            break
+
+    # A manifest is authority evidence, but Cortex still needs an executable project-owned
+    # control entrypoint to route operations without inventing semantics.
+    if entrypoint is None:
+        return None
+
+    manifest_data = _safe_json(manifest) if manifest is not None else None
+    provider_text = _native_provider_text(root, manifest, entrypoint)
+    program, prefix = _native_command_program(root, entrypoint)
+
+    def native(key: str, label: str, args: list[str], *, category: str, mutates: bool = False, confirm: bool = False) -> dict[str, Any]:
+        return _command(key, label, program, [*prefix, *args], category=category, mutates=mutates, confirm=confirm)
+
+    # These are the stable project-PCC verbs used by Forge/PCC projects.  They are routed to
+    # the project's own entrypoint; Cortex does not replace them with cargo/cmake/npm gates.
+    commands = [
+        native("project.status", "Project PCC status", ["status"], category="project"),
+        native("gate.full", "Full project quality gate", ["full"], category="gate", mutates=True),
+        native("build.native", "Build through project PCC", ["build"], category="build", mutates=True),
+        native("test.native", "Test through project PCC", ["test"], category="test"),
+    ]
+
+    # Add conventional operations only when there is evidence for them, keeping discovery
+    # deterministic and avoiding unsupported commands on older project control centers.
+    if any(token in provider_text for token in ("quick", "fast-gate", "fast gate", "gate.fast")):
+        verb = "quick" if "quick" in provider_text else "fast"
+        commands.append(native("gate.fast", "Fast project gate", [verb], category="gate"))
+    if "audit" in provider_text:
+        commands.append(native("audit.project", "Project audit", ["audit"], category="audit"))
+    if "update" in provider_text or "patch" in provider_text:
+        commands.append(native("patch.apply", "Apply governed project updates", ["updates", "apply"], category="updates", mutates=True, confirm=True))
+    if any(token in provider_text for token in ("debug-bundle", "debug bundle", "diagnostics")):
+        debug_args = ["debug-bundle"] if "debug-bundle" in provider_text else ["diagnostics", "bundle"]
+        commands.append(native("diagnostics.bundle", "Create project debug bundle", debug_args, category="diagnostics"))
+    if "run" in provider_text:
+        run_args = ["run", "dx12"] if "dx12" in provider_text else ["run"]
+        commands.append(native("run.runtime", "Run project through native PCC", run_args, category="run", mutates=True))
+
+    project_name = root.name
+    project_id = root.name.lower().replace(" ", "-")
+    project_kind = _detect_kind(root)
+    if isinstance(manifest_data, dict):
+        project_obj = manifest_data.get("project") if isinstance(manifest_data.get("project"), dict) else {}
+        project_name = str(project_obj.get("name") or manifest_data.get("name") or project_name).strip()
+        project_id = str(project_obj.get("id") or manifest_data.get("id") or project_id).strip()
+        project_kind = str(project_obj.get("kind") or manifest_data.get("kind") or project_kind).strip()
+
+    manifest_rel = manifest.relative_to(root).as_posix() if manifest is not None else ""
+    entry_rel = entrypoint.relative_to(root).as_posix()
+    return {
+        "project": {"id": project_id, "name": project_name, "kind": project_kind},
+        "commands": commands,
+        "quality_gates": [{"key": item["key"]} for item in commands if str(item.get("key") or "").startswith("gate.")],
+        "root_control_center": {
+            "launcher": entry_rel if entrypoint.suffix.casefold() in {".cmd", ".bat"} else "",
+            "native_entrypoint": entry_rel,
+            "manifest": manifest_rel,
+        },
+        "stateDirectory": "",
+        "_pccDiscovery": {
+            "version": DISCOVERY_VERSION,
+            "source": "native-project-pcc",
+            "provider": entry_rel,
+            "manifest": manifest_rel,
+            "entrypoint": entry_rel,
+            "authority": "native-project-pcc",
+            "fallback": _detect_kind(root),
+            "explicitProvider": True,
+            "inferredCommands": 0,
+        },
+    }
+
 def _powershell_candidates(root: Path) -> list[Path]:
     candidates: list[Path] = []
     explicit = [
@@ -247,7 +394,7 @@ def _discover_from_powershell(root: Path) -> tuple[list[dict[str, Any]], str, st
             commands.append({
                 "key": key,
                 "label": action.replace("-", " ").title(),
-                "risk": "write" if mutates else "read",
+                "risk": "local_mutation" if mutates else "read_only",
                 "program": "powershell",
                 "args": args,
                 "category": _action_category(key),
@@ -276,7 +423,7 @@ def _command(key: str, label: str, program: str, args: list[str], *, category: s
     return {
         "key": key,
         "label": label,
-        "risk": risk or ("write" if mutates else "read"),
+        "risk": RISK_ALIASES.get(risk, risk) if risk else ("local_mutation" if mutates else "read_only"),
         "program": program,
         "args": [str(x) for x in args],
         "category": category or _action_category(key),
@@ -386,27 +533,60 @@ def _infer_project_name(root: Path, fallback: str) -> str:
 
 def discover_project_contract_data(root: Path) -> dict[str, Any]:
     root = root.expanduser().resolve()
+
+    # 1) Explicit typed/untyped project contract is always authoritative.
     contract_path = root / "project.control.json"
     if contract_path.is_file():
         data = _safe_json(contract_path)
         if data is not None:
             normalized = _canonicalize_contract(root, data)
-            inferred = _infer_generic_commands(root)
-            normalized["commands"] = _merge_commands(list(normalized.get("commands") or []), inferred)
-            if not normalized.get("quality_gates"):
-                normalized["quality_gates"] = [
-                    {"key": c["key"]} for c in normalized["commands"] if str(c.get("key") or "").startswith("gate.")
-                ]
-            discovery = normalized.setdefault("_pccDiscovery", {})
-            discovery["inferredCommands"] = len(inferred)
-            discovery["provider"] = str((normalized.get("root_control_center") or {}).get("machine_provider") or "project.control.json")
-            return normalized
+            commands = list(normalized.get("commands") or [])
+            if commands:
+                if not normalized.get("quality_gates"):
+                    normalized["quality_gates"] = [
+                        {"key": c["key"]} for c in commands if str(c.get("key") or "").startswith("gate.")
+                    ]
+                discovery = normalized.setdefault("_pccDiscovery", {})
+                discovery.update({
+                    "inferredCommands": 0,
+                    "authority": "project.control.json",
+                    "fallback": _detect_kind(root),
+                    "provider": str((normalized.get("root_control_center") or {}).get("machine_provider") or "project.control.json"),
+                })
+                return normalized
 
+    # 2/3) Existing Forge/PCC project authority outranks every build-system fallback.
+    native = _discover_native_project_pcc(root)
+    if native is not None:
+        return native
+
+    # 4) Existing project-local PowerShell control center outranks cargo/cmake/npm inference.
     commands, ps_script, launcher = _discover_from_powershell(root)
+    if commands:
+        kind = _detect_kind(root)
+        name = _infer_project_name(root, _discover_name(root, ps_script))
+        return {
+            "project": {"id": root.name.lower().replace(" ", "-"), "name": name, "kind": kind},
+            "commands": commands,
+            "quality_gates": [{"key": c["key"]} for c in commands if c["key"].startswith("gate.")],
+            "root_control_center": {"launcher": launcher, "discoveredPowerShell": ps_script},
+            "stateDirectory": "",
+            "_pccDiscovery": {
+                "version": DISCOVERY_VERSION,
+                "source": "project-powershell-pcc",
+                "provider": ps_script,
+                "entrypoint": ps_script,
+                "authority": "project-powershell-pcc",
+                "fallback": kind,
+                "explicitProvider": True,
+                "inferredCommands": 0,
+            },
+        }
+
+    # 5) Only projects with no existing control authority receive a build-system adapter.
     inferred = _infer_generic_commands(root)
-    commands = _merge_commands(commands, inferred)
     kind = _detect_kind(root)
-    name = _infer_project_name(root, _discover_name(root, ps_script))
+    name = _infer_project_name(root, root.name)
     markers = {
         "cargo": (root / "Cargo.toml").is_file(),
         "cmake": (root / "CMakeLists.txt").is_file() or (root / "engine" / "CMakeLists.txt").is_file(),
@@ -417,16 +597,18 @@ def discover_project_contract_data(root: Path) -> dict[str, Any]:
     }
     return {
         "project": {"id": root.name.lower().replace(" ", "-"), "name": name, "kind": kind},
-        "commands": commands,
-        "quality_gates": [{"key": c["key"]} for c in commands if c["key"].startswith("gate.")],
-        "root_control_center": {"launcher": launcher, "discoveredPowerShell": ps_script},
+        "commands": inferred,
+        "quality_gates": [{"key": c["key"]} for c in inferred if c["key"].startswith("gate.")],
+        "root_control_center": {"launcher": "", "discoveredPowerShell": ""},
         "stateDirectory": "",
         "_pccDiscovery": {
             "version": DISCOVERY_VERSION,
             "source": "filesystem-scan",
             "markers": markers,
-            "provider": ps_script or "generated-local-adapter",
-            "explicitProvider": bool(ps_script),
+            "provider": "generated-local-adapter",
+            "authority": "generated-build-system-adapter",
+            "fallback": kind,
+            "explicitProvider": False,
             "inferredCommands": len(inferred),
         },
     }
@@ -445,4 +627,8 @@ def discovery_summary(root: Path) -> dict[str, Any]:
         "commands": len(commands),
         "commandKeys": [str(x.get("key")) for x in commands if isinstance(x, dict) and x.get("key")],
         "markers": discovery.get("markers") or {},
+        "authority": discovery.get("authority") or discovery.get("source") or "unknown",
+        "manifest": discovery.get("manifest") or "",
+        "entrypoint": discovery.get("entrypoint") or discovery.get("provider") or "",
+        "fallback": discovery.get("fallback") or _detect_kind(root),
     }

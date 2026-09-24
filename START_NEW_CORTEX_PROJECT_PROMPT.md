@@ -1,16 +1,16 @@
-# Continue Cortex Standalone with this authority
+# Continue the unified Forge + Cortex project with this authority
 
-Cortex is already a standalone, project-agnostic AI/development/assistant platform. Separation is complete.
+Treat Forge, Cortex, Vault and universal PCC functionality as one converging product/control ecosystem.
 
-Do not add or repair standalone-boundary enforcement. Do not make Open2D, Ember, Havenwild, Forge, Project Control Center, Hxx or R051 ownership/marker rules part of normal Cortex certification.
+- Forge is the primary user-facing application/project-control shell.
+- Cortex is the integrated intelligence and automation backend, independently testable where useful.
+- Vault is the governed shared storage/catalog/provenance/recovery authority.
+- PCC behavior is the universal project-control spine exposed through Forge and the root bootstrap.
+- Ember, Havenwild and other projects remain independent managed projects/integrations.
+- ForgePY/Python PCC remains production authority until Rust Forge passes explicit takeover certification.
 
-Continue by:
-1. auditing the current standalone Cargo workspace and root utility for real health failures;
-2. removing obsolete `Standalone boundary` and Hxx/R051 policy-gate invocations from Full Quality/Fast Gate;
-3. preserving useful behavioral tests behind those historical milestones as ordinary Rust/CLI/integration tests;
-4. building the native Cortex CLI and GUI from generic Cortex authorities;
-5. consuming Forge for universal project operations through typed machine contracts;
-6. treating Open2D/Ember, Havenwild and other projects as optional integrations/providers;
-7. running standalone engineering certification before feature work.
+Do not reintroduce obsolete standalone-boundary, Hxx/R051 marker, Open2D ownership or separation gates as current product policy.
 
-Use transactional overwrite-capable root-drop patches for source changes and preserve build/test/debug evidence.
+Continue by preserving transactional patch/update safety, one authoritative control plane, shared dependency/cache paths, deduplicated project mirrors, explicit recovery evidence, project-local independent buildability and fail-closed certification.
+
+Use small overwrite-capable patches during active development and cumulative checkpoints when a whole-session/home-test handoff is needed. Never claim Rust/Windows/runtime GREEN without the corresponding local evidence.

@@ -1,0 +1,2644 @@
+{
+  "schema": "cortex.portable_source_checkpoint.v1",
+  "checkpoint": "R8-AUTO-HYDRATE-PORTABLE-DRIVE-ROOT-20260924",
+  "createdUtc": "2026-09-24T14:11:04.151056+00:00",
+  "lineage": [
+    "U01R1",
+    "FMTDIAG-R1",
+    "TODAY-R4A",
+    "TODAY-R6",
+    "TODAY-R7",
+    "R8-ENVIRONMENT-AUTO-HYDRATE"
+  ],
+  "vaultPolicy": {
+    "desktopDefault": "D:\\CortexLibrary",
+    "portableOverride": "CORTEX_VAULT_ROOT",
+    "externalDriveRootSupported": true,
+    "example": "E:\\",
+    "sharedToolchains": "<Vault>\\shared\\toolchains",
+    "sharedDependencies": "<Vault>\\shared\\dependencies"
+  },
+  "bootstrap": {
+    "prePythonLauncher": "scripts/Bootstrap-CortexEnvironment.ps1",
+    "automaticStartupCheck": true,
+    "automaticCoreHydration": [
+      "python>=3.11",
+      "git",
+      "rust stable",
+      "rustfmt",
+      "clippy"
+    ],
+    "largeBuildToolHydration": "HYDRATE_CORTEX_BUILD_TOOLS.cmd",
+    "healthEvidence": "artifacts/bootstrap/environment-health.json"
+  },
+  "validation": {
+    "pythonControlTests": "173/173 PASS",
+    "pccFoundationTests": "5/5 PASS",
+    "guiSelfTest": "PASS",
+    "typedContractAudit": "DECLARED / 0 errors",
+    "windowsBootstrapExecution": "REQUIRES WINDOWS TEST",
+    "windowsRustFullGate": "NOT YET CERTIFIED AFTER R7"
+  },
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 163,
+      "sha256": "1a20391bbc77236092f3b2099fdd4f3c0c14c002f2521c80c27499930c339623"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 1137,
+      "sha256": "8ead2f79347b0d7ab29f7ac32f5db2b99e086e0f6e0308b7a7c66c50137c5a11"
+    },
+    {
+      "path": "BOOTSTRAP_CORTEX_ENVIRONMENT.cmd",
+      "bytes": 908,
+      "sha256": "c17226ba601d1fac097ff70c2b3b69c82dd7b19360fe90228b533234f4549de3"
+    },
+    {
+      "path": "CORTEX_CUMULATIVE_UPDATE_MANIFEST.json",
+      "bytes": 67057,
+      "sha256": "8ec2a9930f5ffab05554469b76b5b23699526c071cdd6ed7d01c4407bb785b60"
+    },
+    {
+      "path": "Cargo.lock",
+      "bytes": 13302,
+      "sha256": "6833766ef81794ae976abcfabd8921787086324bab7d73d1ff1b4131f90dc581"
+    },
+    {
+      "path": "Cargo.toml",
+      "bytes": 1715,
+      "sha256": "1d9d151818f0634c9a993901f105c6c657d3c6040e2b40b4d5af77cdc47c9d00"
+    },
+    {
+      "path": "FILE_MANIFEST.json",
+      "bytes": 3822,
+      "sha256": "75c3709d735c33c2ad27f17897e9271fd005ec5490ecf090dbb7ad17bed80530"
+    },
+    {
+      "path": "HANDOFF_MANIFEST.json",
+      "bytes": 1722,
+      "sha256": "2a67cc83bdfa701f159a188ca3bd0038457699bcf86d73e85af0502bb3620494"
+    },
+    {
+      "path": "HYDRATE_CORTEX_BUILD_TOOLS.cmd",
+      "bytes": 996,
+      "sha256": "0d258bc1c2afad3970be6a7c39c4b0c3dfbc62f0dd426a88375dc7e4ceceeb82"
+    },
+    {
+      "path": "IMPORT_CORTEX_FROM_O2DF.cmd",
+      "bytes": 244,
+      "sha256": "2e8f72a68b10700917033bddf56b669da95fb04ff54a2a67e9fc213feb716f8e"
+    },
+    {
+      "path": "IMPORT_CORTEX_FROM_O2DF_APPLY.cmd",
+      "bytes": 851,
+      "sha256": "cc594b5a6cd96d2255721d9ec8da42fa87a70d9e5e3ba296e6c69b1bb648305a"
+    },
+    {
+      "path": "N1_HANDOFF.md",
+      "bytes": 838,
+      "sha256": "50c7005519627fd1b0ce9b5671cfb86c08c6ea14afdc6bf0ffaa74d90a0bfb09"
+    },
+    {
+      "path": "PROJECT_CONTROL_CENTER.cmd",
+      "bytes": 4047,
+      "sha256": "27cec1ed4090c17fc089b3c860fc7c10b570a8a21c6370ecd4a8528059529007"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3575,
+      "sha256": "324af5d809ce27877260d1a1316a9caad051ac0f736cd73d1407c1d5d55fbc51"
+    },
+    {
+      "path": "README_FIRST.md",
+      "bytes": 3564,
+      "sha256": "5e858687fabf7e87cb204ef54fa58806016fcc640a7be56dc6b013ee632f6210"
+    },
+    {
+      "path": "README_PATCH.txt",
+      "bytes": 642,
+      "sha256": "dee8c6e4c48b9fb2c4a0fd2b8f87e90bb3ee5c28f577966c26e77d0404457283"
+    },
+    {
+      "path": "README_ROOT_CONTROL_BOOTSTRAP.md",
+      "bytes": 1144,
+      "sha256": "fd6b7b7b97780aee37bed692f5d8d1ad9e30241c3151ae4289a667587cce511e"
+    },
+    {
+      "path": "RESET_VAULT_TO_DEFAULT.cmd",
+      "bytes": 330,
+      "sha256": "b7a68917e63537cff5fc6d531aa5ef013268bc8374da726216080e553b722a1d"
+    },
+    {
+      "path": "SETUP_EXTERNAL_DRIVE_VAULT_ROOT.cmd",
+      "bytes": 931,
+      "sha256": "f8234cd63753e83bd33496a955ea5d640e34d27fcd011292c33623c2cf3e59a0"
+    },
+    {
+      "path": "SOURCE_ROLLUP_MANIFEST.json",
+      "bytes": 91245,
+      "sha256": "127fd287f1c64d7f948601142f122dcdcba57ff419d0e141aa3ced3800d088f2"
+    },
+    {
+      "path": "START_NEW_CORTEX_PROJECT_PROMPT.md",
+      "bytes": 1319,
+      "sha256": "273c8885818b85c3bfccda24b5f632b3e50d350a9f2064ce227f18b868938bf4"
+    },
+    {
+      "path": "apps/cortex/Cargo.toml",
+      "bytes": 167,
+      "sha256": "0ce281e3233700bf2f9d519d7590acec3da8c1977ef3584a18e691556e07014d"
+    },
+    {
+      "path": "apps/cortex/src/main.rs",
+      "bytes": 44,
+      "sha256": "7a92fa7c878db1b7b2eace2fd0a4ddde03557c15642e9f51b1812b2909f2c7b7"
+    },
+    {
+      "path": "apps/cortex_desktop/Cargo.toml",
+      "bytes": 353,
+      "sha256": "dc6f194ca71ad4c952b65daaf79ec63fd856c002b72aa00fa9f77fb4bc2179bf"
+    },
+    {
+      "path": "apps/cortex_desktop/src/main.rs",
+      "bytes": 18580,
+      "sha256": "26e17a3e645eca1a47e632e3065702d8ae900b1c9df3a5dcf53830ea6dcbd5f8"
+    },
+    {
+      "path": "apps/cortex_model_host/Cargo.toml",
+      "bytes": 281,
+      "sha256": "82f0b06de208b1b74d0e44e348c34b0e2bcb386235f2dc2f03d6b26451cc7dd5"
+    },
+    {
+      "path": "apps/cortex_model_host/src/main.rs",
+      "bytes": 3524,
+      "sha256": "cc7e0e2ed69045b6f5c398e63aa858dfded27e6aef744adf8c71e684195cedb4"
+    },
+    {
+      "path": "config/cortex/CORTEX_AI_RUNTIME_PARITY_R051R16V6C3C7B.json",
+      "bytes": 1458,
+      "sha256": "c19e9e0889c3a18bcf5a32c52194033dc23c4b4b2be81dfe2924c86f69a3a86a"
+    },
+    {
+      "path": "config/cortex/CORTEX_ASYNC_CHAT_SCHEDULER_R051D9O.json",
+      "bytes": 847,
+      "sha256": "8374cde0ab49dc534c9b63764f84f09baf80ca179d3020753ce57be0d639b538"
+    },
+    {
+      "path": "config/cortex/CORTEX_ASYNC_STATIC_CERTIFICATION_SYNC_R051D9R1.json",
+      "bytes": 485,
+      "sha256": "48052d34dfd6cfa06b7e3280b9597f6404e24f0feff9b645dbc0b3c04e06e93c"
+    },
+    {
+      "path": "config/cortex/CORTEX_AUTHORITY_R051.json",
+      "bytes": 8688,
+      "sha256": "6dd498d2d070f8647937a6a7c31251cdc938d2e1cee773fb67fa9b25b89655e6"
+    },
+    {
+      "path": "config/cortex/CORTEX_BOUNDED_TOOL_LOOP_SYNTHESIS_R051D9D.json",
+      "bytes": 360,
+      "sha256": "b78b842a6f691434fc4f895dc174d2b8db9206c8afead2c8a2da136e90db15b4"
+    },
+    {
+      "path": "config/cortex/CORTEX_CARGO_WORKSPACE_MANIFEST_RECOVERY_R051D9L2A.json",
+      "bytes": 501,
+      "sha256": "fdcd9e085dc2947fe4bd542404e83815da4ead443469c2135c5d0efc94e16072"
+    },
+    {
+      "path": "config/cortex/CORTEX_CHATGPT_SURFACE_CLIPPY_HOTFIX_R051D9I1.json",
+      "bytes": 385,
+      "sha256": "1fab95f4b9b831ffa7c1038f5c4f4362255bd40d0455a02572da01f577360d0d"
+    },
+    {
+      "path": "config/cortex/CORTEX_CHATGPT_SURFACE_RESPONSIVE_WORKSPACE_R051D9I.json",
+      "bytes": 942,
+      "sha256": "9022fb46dd1b9eb43b113d302a6430ff75fb8ac83ef905ba81b69044368f1d72"
+    },
+    {
+      "path": "config/cortex/CORTEX_CHAT_BUBBLES_APPROVAL_RECOVERY_R051D9R7.json",
+      "bytes": 521,
+      "sha256": "03b8f53f41a62cf40bd4a3bc855a264c45e184f2552bf17cd863fd5c86aa1c73"
+    },
+    {
+      "path": "config/cortex/CORTEX_CHAT_WIDGET_VIRTUALIZATION_R051R16I.json",
+      "bytes": 559,
+      "sha256": "ac6b091002370cf8f0856a59ed071c091ed43d898325f8b770a0bdc23f002188"
+    },
+    {
+      "path": "config/cortex/CORTEX_CHECKPOINT_BUILD_LOCK_PREFLIGHT_R051D9A.json",
+      "bytes": 322,
+      "sha256": "e0658118231e90999333224b2798e9c21328bd20d46ab9233450a8e4d78741ff"
+    },
+    {
+      "path": "config/cortex/CORTEX_CODE_INTELLIGENCE_RECOVERY_R051R9Q.json",
+      "bytes": 417,
+      "sha256": "3658b149fb362c850743c772b00e5a4c07aae9e6a5e043e72ef1e5eaf81703cc"
+    },
+    {
+      "path": "config/cortex/CORTEX_COMMAND_PALETTE_MODEL_R051R16P.json",
+      "bytes": 289,
+      "sha256": "ae9eb987a43e1fd03082800cf3cda850f8b6767c8b905e6ce2d00dfe87eabe15"
+    },
+    {
+      "path": "config/cortex/CORTEX_CONTEXT_INDEX_R051D1.json",
+      "bytes": 842,
+      "sha256": "4bced26c9e277ac12fe8646a5c0bfd428d4fea4d38d3a4a0cfc630f5b1605f00"
+    },
+    {
+      "path": "config/cortex/CORTEX_CONTEXT_INDEX_R051D2.json",
+      "bytes": 530,
+      "sha256": "c0ba56c477b1f2949f699f3d249b46b2c6d6099c9da09f1513fed5f7c095e2cb"
+    },
+    {
+      "path": "config/cortex/CORTEX_CONTEXT_PANEL_WIDGET_MIGRATION_R051R16O.json",
+      "bytes": 299,
+      "sha256": "1d912333df6ee6d96f3517fda3490f70ecdfb43d71df24dd59b969202a094fbd"
+    },
+    {
+      "path": "config/cortex/CORTEX_CONTEXT_TEST_STATE_ISOLATION_R051D9R5.json",
+      "bytes": 643,
+      "sha256": "8c1ffe007fbd835f8404f51c1cc72ef0a915d8bb6ff5a9db9c31f577c161b579"
+    },
+    {
+      "path": "config/cortex/CORTEX_CONTROL_CENTER_DEFERRED_SELF_UPDATE_R051R16V5H.json",
+      "bytes": 467,
+      "sha256": "52708d356c56e48b375f0ccf92110899d2d5bacd688c119c7fc644dbff730a42"
+    },
+    {
+      "path": "config/cortex/CORTEX_CONTROL_CENTER_DIAGNOSTICS_SELF_UPDATE_R051R16V5F.json",
+      "bytes": 865,
+      "sha256": "4d1423be1a12b7406e338c6adbc086ab5ecce16ffe60ce14f908da163f4732cd"
+    },
+    {
+      "path": "config/cortex/CORTEX_CONTROL_CENTER_ROOT_RESIDUE_R051R16V5E.json",
+      "bytes": 448,
+      "sha256": "f864338b6c0884beea5cf96d48e16728076fad7cb76a31fd333f3a854e5779f2"
+    },
+    {
+      "path": "config/cortex/CORTEX_CONVERSATION_ID_DURABILITY_R051D9L2B.json",
+      "bytes": 584,
+      "sha256": "1e2d55c78347c93801caa27af326299e8673fb4c7bba69e5902d8a3a727a91c9"
+    },
+    {
+      "path": "config/cortex/CORTEX_CONVERSATION_NATIVE_AGENTS_RECOVERY_R051D9E1.json",
+      "bytes": 426,
+      "sha256": "11413e286ad88c867efea3c3aa9789e2f4cf86b2b448a0477ac6990c085ffcbc"
+    },
+    {
+      "path": "config/cortex/CORTEX_CONVERSATION_UX_SMART_HANDOFF_R051D9G.json",
+      "bytes": 619,
+      "sha256": "32da15e09e8319f2306fe536f9f4fc9a390cb32daeb574d9799981946f3e983a"
+    },
+    {
+      "path": "config/cortex/CORTEX_CUSTOM_CHAT_CLIPPY_CLEANUP_R051R16A.json",
+      "bytes": 277,
+      "sha256": "9d2ffeafcf5d13a541f87c1651f2f99a4fdd9cbbdd29e4a1ebcd1ef1f79127dd"
+    },
+    {
+      "path": "config/cortex/CORTEX_DESKTOP_ASYNC_R051D4.json",
+      "bytes": 691,
+      "sha256": "e921921337db543cf70dd377852604f4ab998104808e474cc6a4598b39330814"
+    },
+    {
+      "path": "config/cortex/CORTEX_DESKTOP_DAILY_USE_R051D7.json",
+      "bytes": 849,
+      "sha256": "a25e1a207ad7e6066a93937ef389eac6fc18772b9872a1ec3dcd43021b1b7da0"
+    },
+    {
+      "path": "config/cortex/CORTEX_DESKTOP_PROJECT_TREE_LIVE_PROVIDER_R051D9.json",
+      "bytes": 761,
+      "sha256": "4fa26cb2736f6c52f1f231305cb064e544768fd7d751c456250b30b67c50dbf3"
+    },
+    {
+      "path": "config/cortex/CORTEX_DESKTOP_PROTOCOL_PAIRING_DARK_THEME_R051D8.json",
+      "bytes": 667,
+      "sha256": "bdb434a7822895448f2ee1768d1b9a1df9e25b06313e527d50b32ec5cff56d21"
+    },
+    {
+      "path": "config/cortex/CORTEX_DESKTOP_RECOVERY_R051D9I4.json",
+      "bytes": 532,
+      "sha256": "f34e3111039a04dc74042e1491c8fe16833fbc5eee7f0b3919854bfe3fae3708"
+    },
+    {
+      "path": "config/cortex/CORTEX_DESKTOP_RUNTIME_R051D3.json",
+      "bytes": 608,
+      "sha256": "273ddfbb60311a6fd54e6c8faf75141c5d59bc7d25a59186637d16e132c53d79"
+    },
+    {
+      "path": "config/cortex/CORTEX_DESKTOP_STREAMING_R051D6.json",
+      "bytes": 874,
+      "sha256": "9c764381809b8ca8cd546993ef4bd453f264a6826b99ade78d8caa1b017af538"
+    },
+    {
+      "path": "config/cortex/CORTEX_DEVELOPER_ORCHESTRATOR_R051D9H.json",
+      "bytes": 588,
+      "sha256": "395b7d9297249e315eb586ef24a68d2f5fd2d2e857cfb1c8741c35ee0bdaefaf"
+    },
+    {
+      "path": "config/cortex/CORTEX_DRIVE_ECOSYSTEM_R051R16V6A.json",
+      "bytes": 685,
+      "sha256": "c290a0d286e51e951d037c94d91ca0fad468b41c09a86b2ef1435be891f81b0a"
+    },
+    {
+      "path": "config/cortex/CORTEX_FINAL_SYNTHESIS_TEST_SYNC_HOTFIX_R051D9D1.json",
+      "bytes": 245,
+      "sha256": "41f7a9d0be31324f6011e2bb729047070a5bf92f9834130d394fe8bc023bb8b9"
+    },
+    {
+      "path": "config/cortex/CORTEX_GUI_CONVERSATION_COMPILE_REPAIR_R051R16C.json",
+      "bytes": 282,
+      "sha256": "aea5402fe78e28e199fb4f4c073dffc5071cfdc38858d9d30730be78d49b53c5"
+    },
+    {
+      "path": "config/cortex/CORTEX_GUI_CONVERSATION_NORMALIZATION_R051R16B.json",
+      "bytes": 700,
+      "sha256": "e89ee5a8880147ff13b3dc4bad087c26bf26bd1f374c1d29064f0fd24328b11b"
+    },
+    {
+      "path": "config/cortex/CORTEX_HELLO3D_CERTIFICATION_H67G.json",
+      "bytes": 1268,
+      "sha256": "9c04051df6edb22d6d9aa03a6e256d21d8e8123932c17f2d8243f4d55de636e4"
+    },
+    {
+      "path": "config/cortex/CORTEX_INLINE_CHAT_FILE_BUBBLES_R051D9R.json",
+      "bytes": 913,
+      "sha256": "3edb384230ac3cbd5d158489d4d8a305ab905b5c5489092812263c6bf4e9a4d2"
+    },
+    {
+      "path": "config/cortex/CORTEX_INSPECTION_AUTHORITY_CLIPPY_HOTFIX_R051D9F1.json",
+      "bytes": 218,
+      "sha256": "c4834e5c3aed5552af77ea6a54a7f30708eff5e2a048c5e63b072baddcac9d50"
+    },
+    {
+      "path": "config/cortex/CORTEX_INTERNAL_GIT_PROJECT_OPERATIONS_R051D9Q.json",
+      "bytes": 827,
+      "sha256": "1d9ebeeab956d511bb96636fd681ecde986b5efe72187d05e946ed1d25fb7f98"
+    },
+    {
+      "path": "config/cortex/CORTEX_KEYBOARD_FOCUS_AUTHORITY_R051R16Q.json",
+      "bytes": 366,
+      "sha256": "9d5e5a47aa7d8dae835ab33d74ba066b74d845bb07c3c57e6e0b4f865f85249d"
+    },
+    {
+      "path": "config/cortex/CORTEX_LIBRARY_FILE_EXPLORER_R051R13.json",
+      "bytes": 441,
+      "sha256": "d67bc30c08987fe29e251cb4583ffade31b128b63e78a45b54a89693bb17e21a"
+    },
+    {
+      "path": "config/cortex/CORTEX_LIBRARY_INTAKE_SCANNER_R051D9P.json",
+      "bytes": 1027,
+      "sha256": "b412d358d27b2b8447c407ba5338703362866911cd707fe2a53342237f306632"
+    },
+    {
+      "path": "config/cortex/CORTEX_LIBRARY_MEMORY_DATABASE_R051R14.json",
+      "bytes": 497,
+      "sha256": "bae575942a9b8bf43acacb806ca9be9347d9613e78e657bf7fffb3c6663b9b2c"
+    },
+    {
+      "path": "config/cortex/CORTEX_LIBRARY_SERVICE_COORDINATION_R051D9N.json",
+      "bytes": 548,
+      "sha256": "7e0c104272b067af490294bd492fd8eb0df2b416ec7434703bdce6a0ebd552b2"
+    },
+    {
+      "path": "config/cortex/CORTEX_LIVE_CHAT_CERTIFICATION_R051R16V5I.json",
+      "bytes": 460,
+      "sha256": "a8e7b9608d257b95960b303699a0eab6fd128a423f069d0022d1fc5fffcff242"
+    },
+    {
+      "path": "config/cortex/CORTEX_LIVE_TELEMETRY_H67.json",
+      "bytes": 1184,
+      "sha256": "ce76169da5cae6c0c948a01cad0c474b63c5a56aab6fda5a61ddee5e8f83d195"
+    },
+    {
+      "path": "config/cortex/CORTEX_LMSTUDIO_EXPLICIT_WATCHDOG_MESSAGE_R051D9R6.json",
+      "bytes": 402,
+      "sha256": "d79addc47c29b09ef16eca8384983b9ab68eb53f1a39b531acde07c3a273f25b"
+    },
+    {
+      "path": "config/cortex/CORTEX_LMSTUDIO_LONG_INFERENCE_TIMEOUT_R051D9I3.json",
+      "bytes": 385,
+      "sha256": "fc85223182f0418aea996d408854e8255dbfb713d88786565ef80078087b8b0e"
+    },
+    {
+      "path": "config/cortex/CORTEX_LMSTUDIO_REASONING_POLICY_R051R16V5J.json",
+      "bytes": 869,
+      "sha256": "8ca5d60d5811e3f00daff56e677f3273a4980e9f08c7d566d38e9015989ba83f"
+    },
+    {
+      "path": "config/cortex/CORTEX_LMSTUDIO_RESPONSES_REASONING_R051R16V5K.json",
+      "bytes": 790,
+      "sha256": "fa285461d294e0406944f0017fc3f7592ac92c1113426544b6333099c55f702b"
+    },
+    {
+      "path": "config/cortex/CORTEX_LMSTUDIO_TOOL_SCHEMA_COMPAT_R051D9C.json",
+      "bytes": 347,
+      "sha256": "0d4b7b66cad749575952d6d288bc5c9ef7827bb97505017750a7376798b73fd5"
+    },
+    {
+      "path": "config/cortex/CORTEX_MACHINE_RESOURCE_AUTOMATION_R051R16.json",
+      "bytes": 927,
+      "sha256": "20e34517b34477fb29f642c2536c98a5112de6e5be64da494c5de89f735856ac"
+    },
+    {
+      "path": "config/cortex/CORTEX_NATIVE_CLIPPY_CLEANUP_R051D9R9.json",
+      "bytes": 306,
+      "sha256": "1d0bf6c005d42405c4c2afb3fbbf92cc1a85804a81ce02a5f3997f135e8901fe"
+    },
+    {
+      "path": "config/cortex/CORTEX_NATIVE_GUI_CLOSURE_R051R16V6B.json",
+      "bytes": 1111,
+      "sha256": "89951d4d167ab3adceaf468f2fd9d83cd6f2875a7b3edd8751c48ca5122a76d3"
+    },
+    {
+      "path": "config/cortex/CORTEX_NATIVE_MODELS_R051R16V6C3C7.json",
+      "bytes": 1121,
+      "sha256": "4809902bb347e3a31135e1c67774b86fae7285e223a0fc8bd3fbd12b2b25fc2e"
+    },
+    {
+      "path": "config/cortex/CORTEX_NATIVE_SHELL_R051D5.json",
+      "bytes": 644,
+      "sha256": "8b1b7e7b5375444344c52d5ed415efbdbe8c368ba90921b2221a5d833b6b1160"
+    },
+    {
+      "path": "config/cortex/CORTEX_NATIVE_UX_R051R16V6A.json",
+      "bytes": 666,
+      "sha256": "7b0f5996870cc0615feda926d150e381a97c85732c33e0e56727f601c4931f59"
+    },
+    {
+      "path": "config/cortex/CORTEX_NATIVE_WORKSPACE_SWITCH_ACTIVITY_LOGS_R051D9M.json",
+      "bytes": 886,
+      "sha256": "a5ee510b901ea4dada4380d754dd84710bcee823063b05c83f3b7b432eb09b13"
+    },
+    {
+      "path": "config/cortex/CORTEX_NORMALIZATION_CLOSURE_R051N9.json",
+      "bytes": 2292,
+      "sha256": "81ba3d51f10c2fa7efc83359f259e756a874fb1527d7db9ec5950397f5b776da"
+    },
+    {
+      "path": "config/cortex/CORTEX_OBSERVABILITY_MEMORY_R051R16V5D.json",
+      "bytes": 1984,
+      "sha256": "e1159b93a196b9366a28483b4f47dd21ef9d0947837ceeaddaf1e986ff0a590d"
+    },
+    {
+      "path": "config/cortex/CORTEX_PANEL_WIDGET_ACCEPTANCE_R051R16R.json",
+      "bytes": 415,
+      "sha256": "ef403ff654c9f600a6acaadbf56d8341afa0674f8b2928391a17759733814692"
+    },
+    {
+      "path": "config/cortex/CORTEX_PROJECT_CHAT_ISOLATION_R051D9L2.json",
+      "bytes": 832,
+      "sha256": "c02917632baffb3d6bd54e31bd7b3c29424ad76677911131347b5a5959041d0e"
+    },
+    {
+      "path": "config/cortex/CORTEX_PROJECT_INSPECTION_AUTHORITY_R051D9F.json",
+      "bytes": 442,
+      "sha256": "6815b75887a24f06022913a6144f156e90ab91026332720da3ee6f69c9fe1358"
+    },
+    {
+      "path": "config/cortex/CORTEX_PROJECT_NORMALIZATION_R051N0.json",
+      "bytes": 12536,
+      "sha256": "ad033b54d1e37067028b72401c8cced24f4fcafc604a81b893c1256e178f1da9"
+    },
+    {
+      "path": "config/cortex/CORTEX_PROJECT_RESIDENT_CHAT_R051D9J.json",
+      "bytes": 507,
+      "sha256": "4176d3a1e18d28ffce831a1571d173c717f6184c03bc787a574115cfb3362f4c"
+    },
+    {
+      "path": "config/cortex/CORTEX_PROTOCOL_HUB_R051R9P.json",
+      "bytes": 345,
+      "sha256": "300ee37f0fb2f35be9fc22a22f55b31a7c6550ee0885d67b5b114e0ce528a853"
+    },
+    {
+      "path": "config/cortex/CORTEX_PROVIDER_AUTO_RESUME_R051R16M.json",
+      "bytes": 464,
+      "sha256": "ba5d4893f436119c8f41ca628b3b6fdf9afc31586cd7821542258230fab55217"
+    },
+    {
+      "path": "config/cortex/CORTEX_PROVIDER_RECOVERY_AUTHORITY_R051R16L.json",
+      "bytes": 609,
+      "sha256": "8d07ca0ea88bd470d4852e2fe0961e79aefe31a065f2940f8cac6d45b4aa7025"
+    },
+    {
+      "path": "config/cortex/CORTEX_R16NR_CLIPPY_CLEANUP_R051R16R2.json",
+      "bytes": 454,
+      "sha256": "559ea04ded0a67f99fb82cf71092653ff800a14783926780341073e743bd34f2"
+    },
+    {
+      "path": "config/cortex/CORTEX_R16NR_COMPILE_REPAIR_R051R16R1.json",
+      "bytes": 485,
+      "sha256": "50d57033372811e7859f9409ec4384f3e37a02d0b4a3d36fbb2894798963bc55"
+    },
+    {
+      "path": "config/cortex/CORTEX_REAL_MESSAGE_CARD_RENDERER_R051R10.json",
+      "bytes": 421,
+      "sha256": "68def704e54caa282be7d4d0ba283ce4eaa743e7b68bff1f333697e624a2631b"
+    },
+    {
+      "path": "config/cortex/CORTEX_REGISTRY_CLIPPY_CLEANUP_R051D9R2.json",
+      "bytes": 197,
+      "sha256": "0840048cd015405653b5837a02c8176a10107468dc1676166f47c4e709ec8353"
+    },
+    {
+      "path": "config/cortex/CORTEX_RESPONSE_FEEDBACK_VERSIONING_R051R11.json",
+      "bytes": 403,
+      "sha256": "993269fdf618e04de1d151dbcfd84cb3962264673c5427a91689ebd09fc10d05"
+    },
+    {
+      "path": "config/cortex/CORTEX_RESPONSIVE_SHELL_CLIPPY_CLEANUP_R051R16F.json",
+      "bytes": 236,
+      "sha256": "b30d819a4f59689af0c7538bfc444954c0cc5add053c73ad113b86d01ea301f9"
+    },
+    {
+      "path": "config/cortex/CORTEX_RESPONSIVE_SHELL_TYPOGRAPHY_R051R16E.json",
+      "bytes": 641,
+      "sha256": "8042b43ef526cf4f9cb18b0ae8d94ef57a9f2564adad281eef92df2c0efc19a9"
+    },
+    {
+      "path": "config/cortex/CORTEX_RICHEDIT_STREAM_RENDER_FIX_R051D9I2.json",
+      "bytes": 457,
+      "sha256": "a8e3812fd8dcc69e57fafd0b9f42708a18b2c1710e880bc040da04dfeba8b8e9"
+    },
+    {
+      "path": "config/cortex/CORTEX_ROUTER_TEST_NORMALIZATION_R051R16D.json",
+      "bytes": 293,
+      "sha256": "95ed7cd270a2c2002b71d494eadccf22d1cfb7166090a7a8b73dc73dcbc42849"
+    },
+    {
+      "path": "config/cortex/CORTEX_SHELL_2_R051R12.json",
+      "bytes": 401,
+      "sha256": "851a3f53864178033cd89e3ec60458d6117967e284906d49d3bf018d45bc9123"
+    },
+    {
+      "path": "config/cortex/CORTEX_SHELL_WIDGET_MIGRATION_R051R16H.json",
+      "bytes": 577,
+      "sha256": "03cad2681b36f5889caf2cb9abb551ec859dfcd2a6afa389afbda55656685bdd"
+    },
+    {
+      "path": "config/cortex/CORTEX_SIDEBAR_WIDGET_MIGRATION_R051R16N.json",
+      "bytes": 269,
+      "sha256": "cb8f45ae9ea2e22c67fa3017e4c5db17efdb059bd0d2d14ae068c4c2e8c10cd3"
+    },
+    {
+      "path": "config/cortex/CORTEX_SKILLS_AUTOMATION_EVALS_R051R15.json",
+      "bytes": 690,
+      "sha256": "77b9fc18fbc46a147a3ccd5589060d0f69e6e546d7dc1606a02979dad1314e07"
+    },
+    {
+      "path": "config/cortex/CORTEX_SMOOTH_SCROLL_AUTHORITY_R051R16S.json",
+      "bytes": 691,
+      "sha256": "f38570077fae41ca8c72206c7310ee120c0c64ab4088fd7f0af2d4cfd8326b58"
+    },
+    {
+      "path": "config/cortex/CORTEX_STANDALONE_PROJECT_CREATION_R051D9L.json",
+      "bytes": 786,
+      "sha256": "ed8e7a6959f4d53c7f230c0c6c77da00c8b7c7b5989f5e57686a5e6ec7b6e00f"
+    },
+    {
+      "path": "config/cortex/CORTEX_STANDALONE_SECURITY_AUTHORITY_R051R9N.json",
+      "bytes": 457,
+      "sha256": "f7ff5c77234c793b651aa7a62ce8e0d2ce315e2b8ae22685fb9895b763e8e990"
+    },
+    {
+      "path": "config/cortex/CORTEX_TABBED_CONFIGURATION_PANEL_R051D9R8.json",
+      "bytes": 478,
+      "sha256": "bfc69bf91567c94dcd4b4a3246114091394e59aeb4be3f81e25e3bfd92ad7f22"
+    },
+    {
+      "path": "config/cortex/CORTEX_TOOL_MODEL_ROUTING_R051D9B.json",
+      "bytes": 546,
+      "sha256": "7d8d9f8bd344c2ff074d60056ee3648324635bbdfae02aaec2454b8469ae524c"
+    },
+    {
+      "path": "config/cortex/CORTEX_TOOL_SCHEMA_CLIPPY_HOTFIX_R051D9C1.json",
+      "bytes": 212,
+      "sha256": "c13ef4c7e244ad08ef7a8089353c66f06a99355e4745f3dd0868622f98179a27"
+    },
+    {
+      "path": "config/cortex/CORTEX_UI_RESPONSIVE_ACCEPTANCE_R051R16J.json",
+      "bytes": 1008,
+      "sha256": "26bc3534fe7e44d4b617253b04e688deffe877bc8cde8af14e66afaf6b65c9e8"
+    },
+    {
+      "path": "config/cortex/CORTEX_UI_WIDGET_CLIPPY_CLEANUP_R051R16K.json",
+      "bytes": 394,
+      "sha256": "8341299787825347d19df0b7bc031d24b97796448494a487122bd6fcc90c42c2"
+    },
+    {
+      "path": "config/cortex/CORTEX_UI_WIDGET_FOUNDATION_R051R16G.json",
+      "bytes": 938,
+      "sha256": "4402a9579678a359210828d31d25327513fd2df5d4ad8cbeac5b06e783465ccf"
+    },
+    {
+      "path": "config/cortex/CORTEX_UNBOUNDED_AGENT_PROGRESS_SYNC_R051D9R4.json",
+      "bytes": 362,
+      "sha256": "97a5e26d15bbc80020d55514abba6839f072677680eb4d611ea19021777db03e"
+    },
+    {
+      "path": "config/cortex/CORTEX_UNBOUNDED_LOCAL_INFERENCE_UI_DECOUPLING_R051D9R3.json",
+      "bytes": 928,
+      "sha256": "72780f89f34dfcf8427e3cb05e8e2522242aa73def22e0461f0bf497f1c5d5ec"
+    },
+    {
+      "path": "config/cortex/CORTEX_VAULT_HARDENING_R123.json",
+      "bytes": 1748,
+      "sha256": "3baf0ad46b338ab99f8c4355fc55cf1fcdc23c391e6cbcb8c570fbcd5d9468e3"
+    },
+    {
+      "path": "config/cortex/CORTEX_VAULT_SHARED_DEPENDENCY_AUTHORITY_R121.json",
+      "bytes": 1943,
+      "sha256": "198d62440fce1cc6e17525a01ba0bda3b35549337e1e264648f506fc8bc7b5a0"
+    },
+    {
+      "path": "config/cortex/CORTEX_VAULT_SHARED_DEPENDENCY_AUTHORITY_R122.json",
+      "bytes": 2633,
+      "sha256": "b15d401d8b5ab1b171125f359fb7f02b44c09aaee3d8673a591cd26d5e75d67a"
+    },
+    {
+      "path": "config/cortex/CORTEX_VERSION.json",
+      "bytes": 364,
+      "sha256": "75a04ed804f449d12c2ffc6cd4f31cc5898854fb3d450538015af8da5f4925af"
+    },
+    {
+      "path": "config/cortex/CORTEX_WORKBENCH_HOST_R051R16V.json",
+      "bytes": 456,
+      "sha256": "db2c82ba9dae80c7fe80df3dd0b5a266e2b8eab673b1e29db9ca3bec0f41c28d"
+    },
+    {
+      "path": "config/cortex/CORTEX_WORKSPACE_SERVICE_HANDOFF_R051D9L1.json",
+      "bytes": 814,
+      "sha256": "93fc129c01cd25c6881d3613ff52be88b45cd4423a3dfd9d7a0460c293329989"
+    },
+    {
+      "path": "config/cortex/comfyui/README.md",
+      "bytes": 648,
+      "sha256": "415a3bd07e58cb6e2a0c9ba883629046a4eb7f839ac4ed41874392777ea0a820"
+    },
+    {
+      "path": "config/cortex/comfyui/open2d_text_to_image_api_template.json",
+      "bytes": 1687,
+      "sha256": "bb182be892ae57c388b1e7f04a68d86fe8a322fe3f8f8f87d10f63a05b54bd2b"
+    },
+    {
+      "path": "config/cortex/execution_policy.v1.json",
+      "bytes": 5378,
+      "sha256": "5584d5cf06521e01fa37d85d777c76379cb9fa47e071bb7afcefdf965b2d8f38"
+    },
+    {
+      "path": "config/cortex/storage_policy.v1.json",
+      "bytes": 3654,
+      "sha256": "5ad9590ae2e60da53095e9c8ad1d167e7a1ec6a5a36754a7c82ee6ee4f4ff1ab"
+    },
+    {
+      "path": "config/cortex/universal_capabilities.v1.json",
+      "bytes": 2617,
+      "sha256": "d82df9396106967c0917d05c1988912147e8555e95d5ce2e405bf5440a36e480"
+    },
+    {
+      "path": "crates/cortex_activity/Cargo.toml",
+      "bytes": 168,
+      "sha256": "b097cfbbf9a14db43a2b4b6400cf10e6c695fafa65f48d3beac1299ff816b66e"
+    },
+    {
+      "path": "crates/cortex_activity/src/lib.rs",
+      "bytes": 213,
+      "sha256": "5f40d9c8e70f8f125cc1233b79403d8ebdf7edde3bcd28a0c447bacfdc7de838"
+    },
+    {
+      "path": "crates/cortex_adapter_git/Cargo.toml",
+      "bytes": 168,
+      "sha256": "f4fcc37a490ce37c516ac78619310340ab1ffc420fbe30b95e468a8dcaab8a9c"
+    },
+    {
+      "path": "crates/cortex_adapter_git/src/lib.rs",
+      "bytes": 11419,
+      "sha256": "6de48de11c6f2eadb78a039a78c79289a04375dde720bcec6df2b872b8006243"
+    },
+    {
+      "path": "crates/cortex_artifacts/Cargo.toml",
+      "bytes": 150,
+      "sha256": "4b623d6dd0c018429dc13be6f11d72914e3d0faf5df783fce3f282eca5c811e4"
+    },
+    {
+      "path": "crates/cortex_artifacts/src/lib.rs",
+      "bytes": 3373,
+      "sha256": "b7ff0688b85f3af25cbc22683814e84baaf0b3e212a1c49f3806f560f6db11f1"
+    },
+    {
+      "path": "crates/cortex_capture/Cargo.toml",
+      "bytes": 226,
+      "sha256": "4b6f62afde3465f07d0c8fb0b8f0141410ef72046b4edda002a81111b4a85591"
+    },
+    {
+      "path": "crates/cortex_capture/src/lib.rs",
+      "bytes": 6481,
+      "sha256": "bf0ae2ec87f7569cc583767dcf88256c77c873528071264793094bf0b7e149d9"
+    },
+    {
+      "path": "crates/cortex_cli/Cargo.toml",
+      "bytes": 1477,
+      "sha256": "cd51277ece1ee0bc7404b4127b17b3424902690c041956e741825e83a4cd3319"
+    },
+    {
+      "path": "crates/cortex_cli/src/lib.rs",
+      "bytes": 141983,
+      "sha256": "cd639ed2d80948ebb8401f4283f5532201f7509527e9a0e2769a2df170ffd767"
+    },
+    {
+      "path": "crates/cortex_client/Cargo.toml",
+      "bytes": 392,
+      "sha256": "004d9f1f0f263dcd1f894fc9a66b9b1756f189553e2d2536da69a791d756389a"
+    },
+    {
+      "path": "crates/cortex_client/src/lib.rs",
+      "bytes": 10443,
+      "sha256": "1efa19f7a0d11e9f9c602f1363ff7c2274f46eddccc494553dfe0c3d536d1962"
+    },
+    {
+      "path": "crates/cortex_context/Cargo.toml",
+      "bytes": 228,
+      "sha256": "705ee674f6e5d6aec314a81c3b2799ed50916745e787c13a887d564aa016069c"
+    },
+    {
+      "path": "crates/cortex_context/src/lib.rs",
+      "bytes": 18204,
+      "sha256": "5c7cd8ed58278d84cef74ce5fb77eb742342061d226af41ec9964cfeeea4697c"
+    },
+    {
+      "path": "crates/cortex_conversation/Cargo.toml",
+      "bytes": 233,
+      "sha256": "479123d97050987558f6cbc51d835147b6184cb22b7b699045bcd3bb97ebdb4a"
+    },
+    {
+      "path": "crates/cortex_conversation/src/lib.rs",
+      "bytes": 17004,
+      "sha256": "efcef770342ea205d9c1f242b23601b1ffd4a6eeea35c440deeb98d72e29051b"
+    },
+    {
+      "path": "crates/cortex_core/Cargo.toml",
+      "bytes": 223,
+      "sha256": "24c4347e68416103e6b7896bb24b7b96ada07479486669e24803cf61accca90f"
+    },
+    {
+      "path": "crates/cortex_core/src/lib.rs",
+      "bytes": 94985,
+      "sha256": "c95ea801bf838bbf6b4afa27cf5967c5e5fc51f2aaa712980cb371e54c1cc4be"
+    },
+    {
+      "path": "crates/cortex_desktop_core/Cargo.toml",
+      "bytes": 1357,
+      "sha256": "8085f3b60fc4af63f6f0242079d636f5c1500a84287e75378ccff6617d2aaf99"
+    },
+    {
+      "path": "crates/cortex_desktop_core/src/lib.rs",
+      "bytes": 342930,
+      "sha256": "1b26ed198e771b3947db0de097e37522f5135c9f2683bd287452ecef49203c35"
+    },
+    {
+      "path": "crates/cortex_desktop_native/Cargo.toml",
+      "bytes": 234,
+      "sha256": "d9f58ee203dc677cd7a945558e90f1e2c7c425192ed2c81070dd233b86c6a5ab"
+    },
+    {
+      "path": "crates/cortex_desktop_native/src/lib.rs",
+      "bytes": 239759,
+      "sha256": "7c60b31a1f0e7d04fb3cd0d9aa34f301964fbc427da74fb57e1767ece0f28263"
+    },
+    {
+      "path": "crates/cortex_desktop_native/src/ui.rs",
+      "bytes": 62026,
+      "sha256": "941ac6a30ce27cc1314d30393d345c2882d725a29b8e110bc70eb150b6279733"
+    },
+    {
+      "path": "crates/cortex_desktop_native/src/ui_action.rs",
+      "bytes": 1682,
+      "sha256": "3493b0e790192b698a265e4506c2a2dd3da7792a30281636782c7283474c5023"
+    },
+    {
+      "path": "crates/cortex_development/Cargo.toml",
+      "bytes": 232,
+      "sha256": "7b112478b5415d5ffa1ca5f49c4308eafad36978f286650066222b4fba474704"
+    },
+    {
+      "path": "crates/cortex_development/src/lib.rs",
+      "bytes": 40978,
+      "sha256": "290293631e7719b7ed115bd9681434769d469036c936ec4d24ecf3cddc071d97"
+    },
+    {
+      "path": "crates/cortex_discovery/Cargo.toml",
+      "bytes": 373,
+      "sha256": "4e24f4cab2a207de412657483d4e00981607fa1b762424233e44d3cab7cec661"
+    },
+    {
+      "path": "crates/cortex_discovery/src/lib.rs",
+      "bytes": 27742,
+      "sha256": "e68228737f4e06966691eb5fed0918cf96563aba4144e78aa8a6b24d36a9628a"
+    },
+    {
+      "path": "crates/cortex_execution/Cargo.toml",
+      "bytes": 178,
+      "sha256": "67ba20f181fa69fa409e01b99801846795b5e11617f6c0023bea5651616f7546"
+    },
+    {
+      "path": "crates/cortex_execution/src/lib.rs",
+      "bytes": 50654,
+      "sha256": "9b2b076d54f762570d1b011c26f304dcde07ad0c7fff53ab0b4e740cdf1a65cb"
+    },
+    {
+      "path": "crates/cortex_execution/src/spine.rs",
+      "bytes": 80502,
+      "sha256": "ca260a20ec6d08f72a324a7360139c722457b35249da9ac39c02412844f8b6c7"
+    },
+    {
+      "path": "crates/cortex_http/Cargo.toml",
+      "bytes": 150,
+      "sha256": "3b334c863a8fa317e18a34acc769d471a47b6aa7fd830c0992c53c5ccee62c3f"
+    },
+    {
+      "path": "crates/cortex_http/src/lib.rs",
+      "bytes": 23638,
+      "sha256": "fae3f384791ebebad787a2c51149582e22dc6a962da685ccd3bf598a3c347124"
+    },
+    {
+      "path": "crates/cortex_image/Cargo.toml",
+      "bytes": 224,
+      "sha256": "c7668e77aaa3e9ea23d2813976cc62aeda8310a5cfc55bee2e61c9d9a2163b71"
+    },
+    {
+      "path": "crates/cortex_image/src/lib.rs",
+      "bytes": 4659,
+      "sha256": "a8bea47198ec11a449321e897f1ba4da2553076bcd00c8073935dd2f400c782d"
+    },
+    {
+      "path": "crates/cortex_jobs/Cargo.toml",
+      "bytes": 225,
+      "sha256": "e1b4e3a422bc606b9b0d498cedca2417822bdaf63163ddc5d921d2118dd72eef"
+    },
+    {
+      "path": "crates/cortex_jobs/src/lib.rs",
+      "bytes": 14757,
+      "sha256": "6d8b8414c3b750c8cc3963361a959f137daf4cfb3c99bb7e77c217c1465b8704"
+    },
+    {
+      "path": "crates/cortex_model_host/Cargo.toml",
+      "bytes": 321,
+      "sha256": "020c5604ea9ddaf9998465c632868d644c30670812a13e28c1eda2ad9fe88693"
+    },
+    {
+      "path": "crates/cortex_model_host/src/lib.rs",
+      "bytes": 48559,
+      "sha256": "3984133a650ed9c653db7e8753aad340286ec62c358bed013c440f0e8645397c"
+    },
+    {
+      "path": "crates/cortex_observability/Cargo.toml",
+      "bytes": 232,
+      "sha256": "e9a01f5983a1c0e1bc9dbde8b3db1ca59323473ae5c64db6eb52daf942da6542"
+    },
+    {
+      "path": "crates/cortex_observability/src/lib.rs",
+      "bytes": 23162,
+      "sha256": "f31bda1090efa31fa7d413f8a85b3a86277789b9ec4fce32d06dbdfe2f9409fe"
+    },
+    {
+      "path": "crates/cortex_pcc/Cargo.toml",
+      "bytes": 172,
+      "sha256": "7dfc8b4a8de4342d3c1272e0e5d1c4f26a4090f457ec74bb362a9422d25c1eb6"
+    },
+    {
+      "path": "crates/cortex_pcc/src/lib.rs",
+      "bytes": 7991,
+      "sha256": "7ce4a83481232ed31965f99cd801d0e5c9e2ef8fff8fc3ce383d764b354446ad"
+    },
+    {
+      "path": "crates/cortex_permissions/Cargo.toml",
+      "bytes": 180,
+      "sha256": "3c2e2d9e28bc72fd04ef66dc0f64b441f625a28a0879772dff5f0c57f7c13996"
+    },
+    {
+      "path": "crates/cortex_permissions/src/lib.rs",
+      "bytes": 11635,
+      "sha256": "9121196be3cc6c9a82fa6092ca6649e6368d99c1d2413cdb4e621e926ce7a400"
+    },
+    {
+      "path": "crates/cortex_plugin/Cargo.toml",
+      "bytes": 219,
+      "sha256": "e7d48dc77d7b98fabf2e2ab78f1fb2b2f97e1eaf11fc496eb876e816f516faf3"
+    },
+    {
+      "path": "crates/cortex_plugin/src/lib.rs",
+      "bytes": 7583,
+      "sha256": "09507d2715fca7d8e5a6c04abc92ffe1147c92e65c23e7cd443c38faaa0b3dc0"
+    },
+    {
+      "path": "crates/cortex_process/Cargo.toml",
+      "bytes": 228,
+      "sha256": "dae4b9bfb25a3f2c0d49ef6c1de642295002232057f21978986bb39e7e059795"
+    },
+    {
+      "path": "crates/cortex_process/src/lib.rs",
+      "bytes": 30567,
+      "sha256": "774c65d72d9c33ee76e611c67dac45b42ccc030719ea78b9998b6dae7df42fb8"
+    },
+    {
+      "path": "crates/cortex_project/Cargo.toml",
+      "bytes": 176,
+      "sha256": "892bb727013a894af832fdfe4f9f22e125fe38e2795b5638b677965e2709132e"
+    },
+    {
+      "path": "crates/cortex_project/src/lib.rs",
+      "bytes": 29185,
+      "sha256": "2559c0cab59be7d539efd6455a4dbcaf58af709601658222fb6bed596adbee79"
+    },
+    {
+      "path": "crates/cortex_project_ops/Cargo.toml",
+      "bytes": 342,
+      "sha256": "343492bbbcdda33002ae165d28b9a56eed07fd6b4b31673cff0b67ca8cd62549"
+    },
+    {
+      "path": "crates/cortex_project_ops/src/lib.rs",
+      "bytes": 25326,
+      "sha256": "60ac6dfcfb43b4bef3e0e62fc4c5979dc3175679c7c7838c171f2d7605aef1e6"
+    },
+    {
+      "path": "crates/cortex_project_ops/src/transaction_flow.rs",
+      "bytes": 32979,
+      "sha256": "e205390435a59eba586c377fe002c6f12d8758f37275a5d9d909f2d47a2be68a"
+    },
+    {
+      "path": "crates/cortex_project_registry/Cargo.toml",
+      "bytes": 283,
+      "sha256": "09b79c679f1b9a3c0fdbea357c1162cf017afa8f2c6ef59895873c5e22b77b2b"
+    },
+    {
+      "path": "crates/cortex_project_registry/src/lib.rs",
+      "bytes": 19900,
+      "sha256": "80e36ea70033e008d7300018d5f62381f62588ead7471d8ab214e930ee324c85"
+    },
+    {
+      "path": "crates/cortex_protocol/Cargo.toml",
+      "bytes": 177,
+      "sha256": "874185ec9a21b9bef22361ca0715e636a9bc8fd2e9f2f2657b601ba1de1f2d91"
+    },
+    {
+      "path": "crates/cortex_protocol/src/lib.rs",
+      "bytes": 9593,
+      "sha256": "2ad868727ca03d1614d24eb5f995479277de0a85b5abed9c41ff92a25a735163"
+    },
+    {
+      "path": "crates/cortex_provider/Cargo.toml",
+      "bytes": 149,
+      "sha256": "2969717b642f65e36921db7124447d8ebdef766d61fa8f614fd4480b2d172f3a"
+    },
+    {
+      "path": "crates/cortex_provider/src/lib.rs",
+      "bytes": 1100,
+      "sha256": "3db38103e8869b196d4e91ca7680e5d9a8e33bfcc157994fcde69f0239847206"
+    },
+    {
+      "path": "crates/cortex_provider_comfyui/Cargo.toml",
+      "bytes": 254,
+      "sha256": "9ecaaa724b999bff0a9e029fc2e252d06d725b2c102b054a9e78719c7bf9bbdc"
+    },
+    {
+      "path": "crates/cortex_provider_comfyui/src/lib.rs",
+      "bytes": 10403,
+      "sha256": "aa0f66fed32f45cca2af24b6ce77b339d3a220a7c9174dfb751ca9e35ce9ab11"
+    },
+    {
+      "path": "crates/cortex_provider_lmstudio/Cargo.toml",
+      "bytes": 255,
+      "sha256": "d86b40aa8a6461b14099794addd446b198cf5ed7aef946f91df57f043598fae7"
+    },
+    {
+      "path": "crates/cortex_provider_lmstudio/src/lib.rs",
+      "bytes": 54725,
+      "sha256": "1a8dadf2f75ec1514489745009b717a5b7d71f601bdd671762c8eb736dd65470"
+    },
+    {
+      "path": "crates/cortex_provider_native/Cargo.toml",
+      "bytes": 321,
+      "sha256": "b02598d5d1ddff5f893383622bd437c0ded71efe9322105858cf92cba2b41521"
+    },
+    {
+      "path": "crates/cortex_provider_native/src/lib.rs",
+      "bytes": 8563,
+      "sha256": "c417235c7d7f1a15928359a4950694875a556aeb9e0000bab2b6f49dc7696430"
+    },
+    {
+      "path": "crates/cortex_provider_router/Cargo.toml",
+      "bytes": 343,
+      "sha256": "2ee9efa6d8a529a5282c8cf3255fed7d0f70484564097e9dd54074916b4dfea3"
+    },
+    {
+      "path": "crates/cortex_provider_router/src/lib.rs",
+      "bytes": 7019,
+      "sha256": "9c7eeda831f35564538927076359061fae043e776d505bfa279f5611f1895d82"
+    },
+    {
+      "path": "crates/cortex_registry/Cargo.toml",
+      "bytes": 277,
+      "sha256": "d8cc91c0d5ad4eff0ae74d7e6147a30372987b1fc06cc7e35eb12b7f7843fd82"
+    },
+    {
+      "path": "crates/cortex_registry/src/lib.rs",
+      "bytes": 137203,
+      "sha256": "5d20746e199b4e3717e281325ef4ca99779426dd3ffbb27f5d847f2b20e1e47b"
+    },
+    {
+      "path": "crates/cortex_review/Cargo.toml",
+      "bytes": 329,
+      "sha256": "e0c38341a38bb6a680dbe34e357072646046f4f21ef4800a8e413e7ad82d3cc9"
+    },
+    {
+      "path": "crates/cortex_review/src/lib.rs",
+      "bytes": 5145,
+      "sha256": "7200143510081571ce8967c8256d169ff8f6d7684bcab9c497c3c546d969ac5e"
+    },
+    {
+      "path": "crates/cortex_rpc/Cargo.toml",
+      "bytes": 199,
+      "sha256": "99ea9f77fb1fec0202b2ce1c6e8e3d055eac7fd40bcbcd381b2c65ed607348ca"
+    },
+    {
+      "path": "crates/cortex_rpc/src/lib.rs",
+      "bytes": 12024,
+      "sha256": "17cc26e1f9b928eb09f059b49c78e0a3e890cba449125384c3722a81e71ea1cb"
+    },
+    {
+      "path": "crates/cortex_service/Cargo.toml",
+      "bytes": 176,
+      "sha256": "ba918be73212f1e70583918a5c11d7bd931220bad44b5b7269f9df1c0b077426"
+    },
+    {
+      "path": "crates/cortex_service/src/lib.rs",
+      "bytes": 14237,
+      "sha256": "93740b63d898827cadbe1522fdd2a60587a59de8ab4e08b538bce0ee193871a3"
+    },
+    {
+      "path": "crates/cortex_session/Cargo.toml",
+      "bytes": 176,
+      "sha256": "db6e037028122041b36bcb36fa39a0e42fb0ae77abfffc40885321571131a35f"
+    },
+    {
+      "path": "crates/cortex_session/src/lib.rs",
+      "bytes": 3336,
+      "sha256": "75d63270b2fb1925988d803c557053faebc7c1209694e7ff8c408dbb90a9d948"
+    },
+    {
+      "path": "crates/cortex_settings/Cargo.toml",
+      "bytes": 177,
+      "sha256": "289685834899316a7ee69d40f6bde38c374b856534c639be9fcb0b08e5b9926e"
+    },
+    {
+      "path": "crates/cortex_settings/src/lib.rs",
+      "bytes": 6605,
+      "sha256": "b3d7d349c649aa658d8f3dd12b85ac0a477a63264e8484ddc969d8b8b38fde2a"
+    },
+    {
+      "path": "crates/cortex_task/Cargo.toml",
+      "bytes": 164,
+      "sha256": "d309864678cf7f66097db7de0b1788243911cad4235bed48e57477bcaad069b2"
+    },
+    {
+      "path": "crates/cortex_task/src/lib.rs",
+      "bytes": 127,
+      "sha256": "9e75e20eb9ff36015f16506b163d14677d13844fb3dddf203ab7bd59118a5e0c"
+    },
+    {
+      "path": "crates/cortex_toolchain/Cargo.toml",
+      "bytes": 178,
+      "sha256": "f7a41c035f7996221e0ce0d31fabe446ab7f37302661f1b6000035fd72483b0a"
+    },
+    {
+      "path": "crates/cortex_toolchain/src/lib.rs",
+      "bytes": 7095,
+      "sha256": "03aeec9c59557ecb71d0be5eb303524bff7beedc0e65c282fd40c71288cdfbd7"
+    },
+    {
+      "path": "crates/cortex_tools/Cargo.toml",
+      "bytes": 1133,
+      "sha256": "d7794affe0fad87fce297f0cf12d6586b6c317107ea9136d21bbac9b34414bb0"
+    },
+    {
+      "path": "crates/cortex_tools/src/lib.rs",
+      "bytes": 295412,
+      "sha256": "3230ef55da1043a5840fa6964c40dd110e0ca134c34a499b815d5002e61bc404"
+    },
+    {
+      "path": "crates/cortex_transactions/Cargo.toml",
+      "bytes": 181,
+      "sha256": "ecab5e73d0636d4a76f0f82543f558987124b32b3c04549e1e0d148dfda0237d"
+    },
+    {
+      "path": "crates/cortex_transactions/src/lib.rs",
+      "bytes": 29321,
+      "sha256": "cd1bb39dc0f38bf64f2f9a10b7a474e95d8c955d1b23a04d8d3a09264849aefd"
+    },
+    {
+      "path": "crates/cortex_transactions/tests/h67f_contextual_replace.rs",
+      "bytes": 2657,
+      "sha256": "b2051acee462c6f53a186724fad540d57e909b1c863f664ee31e1836a4810339"
+    },
+    {
+      "path": "crates/cortex_universal/Cargo.toml",
+      "bytes": 190,
+      "sha256": "82a0ade401ae7ec88694068a2bcb284a6d283cc7dfc0c25b3fad42884b27c0dd"
+    },
+    {
+      "path": "crates/cortex_universal/src/lib.rs",
+      "bytes": 83791,
+      "sha256": "65d3cca96d2e0b4f694083709d2e5443cab4d53ccf2a3e9aa56ea467d55c29bc"
+    },
+    {
+      "path": "crates/cortex_vault/Cargo.toml",
+      "bytes": 208,
+      "sha256": "3da3d6b70c594b2755cf0b04ccc298df16ec7481a7a52769d35cb3886d57e56f"
+    },
+    {
+      "path": "crates/cortex_vault/src/lib.rs",
+      "bytes": 40852,
+      "sha256": "8c3f184244627effa4e252553f546f0a19335f2c33876807ebd9c1b407dfc1c7"
+    },
+    {
+      "path": "crates/cortex_web/Cargo.toml",
+      "bytes": 243,
+      "sha256": "33a55baa1d6de26f67c31e60ad70d4d77be934785b9c197c848bb2c8d32e9e05"
+    },
+    {
+      "path": "crates/cortex_web/src/lib.rs",
+      "bytes": 9817,
+      "sha256": "db5375ba597afcbe1c38d6c04ed14aef2ee712119263451324c49510b67842ea"
+    },
+    {
+      "path": "crates/cortex_workspace/Cargo.toml",
+      "bytes": 178,
+      "sha256": "9d86a3cb255f9fca083f258c7fdef3627c4a3e8c91052d97246cadffbff72980"
+    },
+    {
+      "path": "crates/cortex_workspace/src/lib.rs",
+      "bytes": 36504,
+      "sha256": "39fa34e2772c93503a3d1055d95b24126407812967ba9947ce8d486954d6f6f8"
+    },
+    {
+      "path": "docs/CORTEX_C0_C1_R4.md",
+      "bytes": 1119,
+      "sha256": "46a8ad1bb860935a1dcdbcd0acbbd15111ecd965ed56cbe0094c90fadd08216b"
+    },
+    {
+      "path": "docs/CORTEX_CLI_V2_SPEC.md",
+      "bytes": 4779,
+      "sha256": "a986c3491635cdbe9618cb4f044d92ad963251956f4e6ea7ff8db7326b5060e2"
+    },
+    {
+      "path": "docs/CORTEX_DESKTOP_GUI_V2_SPEC.md",
+      "bytes": 4833,
+      "sha256": "489fee018019cea5e39b5273d681b3335f90b03bf5d8f99fd0255696d0f5c27a"
+    },
+    {
+      "path": "docs/CORTEX_ENVIRONMENT_HYDRATION.md",
+      "bytes": 2094,
+      "sha256": "81c5e7cef60f8421663761850a5a67a2084ea54422dd41f801a7a540935bd5e7"
+    },
+    {
+      "path": "docs/CORTEX_GITHUB_ADOPTION_R3.md",
+      "bytes": 2566,
+      "sha256": "47bc8ed07f3cb14df9b7367a837aceec8498faaf63d7a26e2949743a2a96091c"
+    },
+    {
+      "path": "docs/CORTEX_PCC_PYTHON_40_PASS.md",
+      "bytes": 3662,
+      "sha256": "8d6190bd350b5347aab052c90fc6a1d04681c1682aa1e0b405884f8a1c182f45"
+    },
+    {
+      "path": "docs/CORTEX_PCC_PYTHON_60_PASS.md",
+      "bytes": 3948,
+      "sha256": "a8b335e230184e4b3e05fccaf1c20bd5bc838fe6f43ff8605a9e11505e5b8176"
+    },
+    {
+      "path": "docs/CORTEX_PCC_V1.md",
+      "bytes": 4086,
+      "sha256": "bafc1cbe9f2249b7616397318272e8fa349c8ebd739ec4425889605cb0164225"
+    },
+    {
+      "path": "docs/CORTEX_ROOT_CONTROL_CENTER_GIT_BASELINE.md",
+      "bytes": 3991,
+      "sha256": "92d8950adfe081283c007532883ef3d7718bb93850d45029bddc3da9004cff37"
+    },
+    {
+      "path": "docs/CORTEX_ROOT_PROJECT_CONTROL_CENTER.md",
+      "bytes": 1668,
+      "sha256": "35101c305157a1e704be54fba300a0f3449b22a52cec2512a95ab208d6ec4a9b"
+    },
+    {
+      "path": "docs/CURRENT_AUDIT.md",
+      "bytes": 2993,
+      "sha256": "2098babaec5e86d2ca0d8945d88e6e21d14f293da6abbce21626976a2952c7a7"
+    },
+    {
+      "path": "docs/CURRENT_IMPLEMENTATION_AUDIT_RS193.md",
+      "bytes": 4877,
+      "sha256": "19cbc2c40c34e7f4bbe3fb27d5f37127f442296cbc72dc05d3c882585b9df73a"
+    },
+    {
+      "path": "docs/CURRENT_IMPLEMENTATION_AUDIT_RS293.md",
+      "bytes": 4468,
+      "sha256": "97073f76d966f6b4feb8d973771f44e6b99ea275bccd22935d40ac337f82ef7f"
+    },
+    {
+      "path": "docs/EXTERNAL_DRIVE_ROOT_VAULT.md",
+      "bytes": 1700,
+      "sha256": "81fd554f38c719318005353fe295bc0b0cade48aa1822b56ac3f80e71d18c3e4"
+    },
+    {
+      "path": "docs/FORGE_RUST_PARALLEL_LANE.md",
+      "bytes": 1665,
+      "sha256": "0f1c7ded05a4b033a897d243155bad07a2d5bd10274ba779688da1aedfe1ce2d"
+    },
+    {
+      "path": "docs/MIGRATION_MATRIX.md",
+      "bytes": 511,
+      "sha256": "99d8e0942ae0191f75b17208233015d6f1c545a93c426f334b5b769498df71e3"
+    },
+    {
+      "path": "docs/NORMALIZATION_ACTION_MATRIX.md",
+      "bytes": 1776,
+      "sha256": "607b048c0a36b602604dad4a6f4d9950fa67b54e8ca3d29bb59876b99e62d128"
+    },
+    {
+      "path": "docs/PCC_COMMAND_SURFACE_R5.md",
+      "bytes": 2893,
+      "sha256": "0ffd30312abd09a9177060a39d26a7154468fd3bd30ce8ef67c5079e2cb40cfc"
+    },
+    {
+      "path": "docs/PLUGIN_ADAPTER_SDK_V2_SPEC.md",
+      "bytes": 3242,
+      "sha256": "bab13551edffa6d2d5db5e6742066266dcb89196bdab8a9c77fb21a917d8c375"
+    },
+    {
+      "path": "docs/QUALITY_GATE_CONTRACT.md",
+      "bytes": 3787,
+      "sha256": "4b487cfc77f8896e7d534a13447e935f739bd81eaacc984645e844ff59dc9cde"
+    },
+    {
+      "path": "docs/STANDALONE_ROADMAP.md",
+      "bytes": 3478,
+      "sha256": "3cc5095a0d164752c8bbbf22e23fa1b75259a1dfdc6129931f6b5d36bf84177d"
+    },
+    {
+      "path": "docs/STANDARDS_AND_VERSIONING.md",
+      "bytes": 1917,
+      "sha256": "21f220ba79056892d98f694ed013e95468b12bc2160db6667ceae54ace178f7b"
+    },
+    {
+      "path": "docs/TARGET_ARCHITECTURE.md",
+      "bytes": 3543,
+      "sha256": "f7a9c196c332e05ea93df4a4b492abe8773fd414dd32021bcd73ff4b7383a7a9"
+    },
+    {
+      "path": "docs/UNIVERSAL_PCC_ROOT_CLI_STANDARD.md",
+      "bytes": 3911,
+      "sha256": "86d6a437dfa9f00b51cdf430d8729fd5c4821d340e2efd9b9ab28c0d54ba4306"
+    },
+    {
+      "path": "docs/ai/CORTEX_AGENT_ARCHITECTURE.md",
+      "bytes": 4872,
+      "sha256": "0ca04495d83048cd9b74e202a0b5f63d26e81d7e28c1bb5ea15d9ddbc62534ee"
+    },
+    {
+      "path": "docs/architecture/CORTEX_AI_RUNTIME_LMSTUDIO_PARITY_AND_WEB_IMAGE.md",
+      "bytes": 2988,
+      "sha256": "e645f8fd3462e2947d9154335390aaf7c21359dedc393f9ed4f24452bfb7306d"
+    },
+    {
+      "path": "docs/architecture/CORTEX_AUTHORITY_NORMALIZATION_R051.md",
+      "bytes": 2762,
+      "sha256": "0bd27f9cd732eec526dbe64fbdabd1e9f5b1f0fb61ab6a5da7cda835d9103e58"
+    },
+    {
+      "path": "docs/architecture/CORTEX_COMMAND_EVENT_JOB_CONTRACT.md",
+      "bytes": 1117,
+      "sha256": "21e632618573cb639a62f6b9455985990ec8647255a9dba993f4658a1aafe5dd"
+    },
+    {
+      "path": "docs/architecture/CORTEX_CRATE_OWNERSHIP_MATRIX.md",
+      "bytes": 2907,
+      "sha256": "d9d4a0f7ce259f4ad8418793eb246a807cd08a6ad73ef08d2c5a7f0db0eacafd"
+    },
+    {
+      "path": "docs/architecture/CORTEX_DATA_LIFECYCLE.md",
+      "bytes": 756,
+      "sha256": "3c5ff7b5d9c0a73563caa780892e807b6335b69855b2439e23a56d4837fa7645"
+    },
+    {
+      "path": "docs/architecture/CORTEX_DRIVE_PROJECT_ECOSYSTEM.md",
+      "bytes": 3683,
+      "sha256": "13ea9d5ab0bf05f56bbe92738a45feb73c438e2dfe6e2af86fb650c5a2daa7fc"
+    },
+    {
+      "path": "docs/architecture/CORTEX_GIT_SAFETY_REF_CONTRACT.md",
+      "bytes": 564,
+      "sha256": "5f31c0b694b5ce4d0b805d6fdb42b236db073526f7d28c1973203dc919281069"
+    },
+    {
+      "path": "docs/architecture/CORTEX_LEARNING_LAB_ARCHITECTURE.md",
+      "bytes": 1437,
+      "sha256": "38602070f9aaef146c22368806baf43787f184068935b8f29d40778ce0c46ce6"
+    },
+    {
+      "path": "docs/architecture/CORTEX_NATIVE_DESKTOP_UX_R16V6.md",
+      "bytes": 3750,
+      "sha256": "f816e4e41b9905303d2808e91269888895d4131da25f3d76a4a08ce252dd5daf"
+    },
+    {
+      "path": "docs/architecture/CORTEX_NATIVE_MODELS.md",
+      "bytes": 2469,
+      "sha256": "50a15cfb267f78ea07bfe698847845cf7ec92a4e403767ec6f5b91ad2f0726fb"
+    },
+    {
+      "path": "docs/architecture/CORTEX_PORTABLE_STORAGE_AUTHORITY.md",
+      "bytes": 2125,
+      "sha256": "7cbd69e6327cd7b2dd9312a5f93e66a0858e1677594aaeb11999f8ab9569ef10"
+    },
+    {
+      "path": "docs/architecture/CORTEX_PROJECT_IDENTITY_GIT_VAULT_OBSERVABILITY.md",
+      "bytes": 3418,
+      "sha256": "c1faa0888e540ffad38f8a218af981bdc8fd8d803a0643d5698059780f9f583d"
+    },
+    {
+      "path": "docs/architecture/CORTEX_PROJECT_PASSPORT_V1.md",
+      "bytes": 1039,
+      "sha256": "53ab5f4924f6415e08f4a198cc0729d174a6e6ff7d15b3199c223aad3dfa567b"
+    },
+    {
+      "path": "docs/architecture/CORTEX_PROJECT_WIDE_CONSOLIDATION.md",
+      "bytes": 1321,
+      "sha256": "61164b48e71f405713b3a4f1af9b27267451e7de219368973461206296f90419"
+    },
+    {
+      "path": "docs/architecture/CORTEX_PROJECT_WIDE_NORMALIZATION_R051N0.md",
+      "bytes": 5490,
+      "sha256": "eecdc04dd53998288200e8efe0cf8f5f3e1354eee552f9b237e5e9007d527627"
+    },
+    {
+      "path": "docs/architecture/CORTEX_R051H1_DIRECT_CLOSURE_AND_SOURCE_REFRESH.md",
+      "bytes": 1814,
+      "sha256": "ec1398569fc540327dabbefd0ea5e478b3f1aef5cab9af8f567c4f330ca8c24a"
+    },
+    {
+      "path": "docs/architecture/CORTEX_R051N1_GENERIC_WIRE_AUTHORITIES.md",
+      "bytes": 2128,
+      "sha256": "16daad19dece79fd486de2f2aa772bf1902a7f02a7b6305d95e212c338b74594"
+    },
+    {
+      "path": "docs/architecture/CORTEX_R051N2A_GENERIC_CORE_TOOLS_AUTHORITY.md",
+      "bytes": 1446,
+      "sha256": "d46590f893eced0ac0955e53c1a1257b98ee6a741246ebf04b302aa4eee538f4"
+    },
+    {
+      "path": "docs/architecture/CORTEX_R051N2B_OPEN2D_TOOL_EXTENSION_EXTRACTION.md",
+      "bytes": 262,
+      "sha256": "6433ced43db9846e714b89546ec2082a9a31c560a98a8419174f7f54bdcdd10a"
+    },
+    {
+      "path": "docs/architecture/CORTEX_R051N3_WORKSPACE_ID_GLOBAL_STATE.md",
+      "bytes": 529,
+      "sha256": "64f6c5ab7c4928973a99606f41a838db1ceffe54c685b0d2e333350da95d8c38"
+    },
+    {
+      "path": "docs/architecture/CORTEX_R051N4_JOBS_EVENT_STREAM.md",
+      "bytes": 281,
+      "sha256": "2e3ae77727e87f96928196a1d32ec586833741bb929935801a934fd5f5316602"
+    },
+    {
+      "path": "docs/architecture/CORTEX_R051N5_CONTEXT_VAULT_MEMORY_SPLIT.md",
+      "bytes": 295,
+      "sha256": "0160ec5534eeaf82db76b7f29504c3d5e9f8ae591504245edd0f3163e9fd5b8c"
+    },
+    {
+      "path": "docs/architecture/CORTEX_R051N6_PERMISSIONS_TRANSACTIONS.md",
+      "bytes": 280,
+      "sha256": "e50332ef997dabbe4d2e8bd0bc4ea584eff84f5bf853401633eb89a08b4dcd59"
+    },
+    {
+      "path": "docs/architecture/CORTEX_R051N7_PROVIDERS_PROCESS_IMAGE_CAPTURE.md",
+      "bytes": 267,
+      "sha256": "9d682032d3228e8e89ec55d0953cef49c925912d42a2cef27843368723be6eb3"
+    },
+    {
+      "path": "docs/architecture/CORTEX_R051N8_SURFACE_CONVERGENCE.md",
+      "bytes": 285,
+      "sha256": "9c152684899275964fbcfde6ad682584da24f52639bb6478bd6356b0cb74156a"
+    },
+    {
+      "path": "docs/architecture/CORTEX_R051N9_NORMALIZATION_CLOSURE.md",
+      "bytes": 1884,
+      "sha256": "6b647b41e4c40a72ccf886bb67cc5e5b16e4523308c70716f2dd3c5dda5200de"
+    },
+    {
+      "path": "docs/architecture/CORTEX_REPOSITORIES_VAULT_GIT_ARCHITECTURE.md",
+      "bytes": 12815,
+      "sha256": "5aeedf8a0da31333ac398ac424a5f17f090d99fa34be239785c309e7525eef4c"
+    },
+    {
+      "path": "docs/architecture/CORTEX_SINGLE_OWNER_RULES.md",
+      "bytes": 1266,
+      "sha256": "376f18de22f3bc6544f00feb877827422094f9f76ee914a5400f2e9d492662dc"
+    },
+    {
+      "path": "docs/architecture/CORTEX_VAULT_POINTER_V1.md",
+      "bytes": 512,
+      "sha256": "109e7860962269c6c4ba0454df4c5893178371e734186b54629936913b274e9d"
+    },
+    {
+      "path": "docs/consolidation/CORTEX_U01_UNIVERSAL_PROJECT_INTENT_RUNTIME_20260923.md",
+      "bytes": 2179,
+      "sha256": "92965db4c8175adac71959b13451ca6396ea3841685ee9cb71a9e2fc8b0cc12c"
+    },
+    {
+      "path": "docs/cortex/ai/CTX_AI_PCC_01R1_PCC_VERTICAL_SLICE.md",
+      "bytes": 1902,
+      "sha256": "c5d1dbda006aa27517765f11441f2fa0ecfaa897cc7ade395679a94a39a7088e"
+    },
+    {
+      "path": "docs/cortex/projops/CTX_PROJOPS_01_UPCC_ABSORPTION.md",
+      "bytes": 1733,
+      "sha256": "98c36207829b8a79f21fb116af52f1f0893295ed3e93063749eee3c5aa49c28e"
+    },
+    {
+      "path": "docs/cortex/projops/CTX_PROJOPS_02R1_BOUNDARY_REPAIR.md",
+      "bytes": 2010,
+      "sha256": "92b9809519a321d818138bba6ae86201869468b262ba3e910107f5d70a099891"
+    },
+    {
+      "path": "docs/cortex/projops/CTX_PROJOPS_02R2_ROOT_PATCH_INTAKE_REPAIR.md",
+      "bytes": 2269,
+      "sha256": "422e6d591ef1f8cd883d77b3ae9e55616c49e70a4b0df31dd5c59d3f3a66219e"
+    },
+    {
+      "path": "docs/cortex/projops/CTX_PROJOPS_02_IMPLEMENTATION.md",
+      "bytes": 1089,
+      "sha256": "eb3bb19d5fbed04630e1b202e62ddcad17a2dbddce3664ee10cd0c27381531a0"
+    },
+    {
+      "path": "docs/cortex/projops/CTX_PROJOPS_ROADMAP.md",
+      "bytes": 2638,
+      "sha256": "8ca7ee848ddd95878e70959cb03cd9a3bc17886991202b5cafaecf5e7da0a6ae"
+    },
+    {
+      "path": "docs/cortex/projops/UPCC_DONOR_EVIDENCE_INDEX.md",
+      "bytes": 2053,
+      "sha256": "7df8eaa987c07ccfc122ddabe22f536294693869ddb8f77047af37e02f1aedb1"
+    },
+    {
+      "path": "docs/cortex/projops/UPCC_FEATURE_PARITY_MATRIX.md",
+      "bytes": 2152,
+      "sha256": "3b1e840666ea1b093347d595804b76276a604db9d7ecabce5f37058b17e82eef"
+    },
+    {
+      "path": "docs/cortex/root/CTX_ROOT_09B_09K_10PASS.md",
+      "bytes": 3182,
+      "sha256": "1cdb2424baec957313a73fde5a940f35e4773c701774fd833bba7fcbc5bfc50f"
+    },
+    {
+      "path": "docs/cortex/root/CTX_ROOT_09KR1_HAVENWILD_MENU_NORMALIZATION.md",
+      "bytes": 947,
+      "sha256": "738a311524aebc776edb25a93add1c52b1206d9a630e0a34c111871e25b45531"
+    },
+    {
+      "path": "docs/gui/CORTEX_STANDALONE_GUI_NORMALIZATION.md",
+      "bytes": 22716,
+      "sha256": "c173e143e8dc78a787bf712479878ffd4922a118d9ed362be0adc77a0d186aff"
+    },
+    {
+      "path": "docs/history/legacy-separation/MIGRATION_MATRIX_20260907.md",
+      "bytes": 2346,
+      "sha256": "44caf724963ba1da50a529b4a66ff667568167fd4fadbe6c7cf399a0bc84c1c2"
+    },
+    {
+      "path": "docs/patch/CTX-NORM-02_POST_SEPARATION_AUTHORITY_AND_GATE_REPAIR.md",
+      "bytes": 1296,
+      "sha256": "1166a09a14282f177492640ac105d29493ae8f2ff8a84b8dd885e8cd0ca8e11e"
+    },
+    {
+      "path": "docs/pcc/UPCC_A01_INVENTORY_PREFLIGHT.md",
+      "bytes": 4372,
+      "sha256": "6be2cb993b023dbd7930ebbacaea7549f1e622f4f6a2ffcd1bee94cac97fa2e1"
+    },
+    {
+      "path": "docs/pcc/UPCC_A02_CUMULATIVE_GATE_AND_PLAN.md",
+      "bytes": 6586,
+      "sha256": "3491d40ce0e4773228ffbe69ec126065500768dda55b8e5f78177004e36ce10f"
+    },
+    {
+      "path": "docs/pcc/UPCC_A03_CUMULATIVE_RESTART_HANDOFF.md",
+      "bytes": 2464,
+      "sha256": "38a84cb5274c12d765cda503f80b4c467fe69049e7acfe926596acc6258ecacf"
+    },
+    {
+      "path": "docs/pcc/UPCC_A04_FORGEPY_PARITY_FOUNDATION.md",
+      "bytes": 9793,
+      "sha256": "5e45a59e9ca2dda55293f47ce1b83bb8b73189946121b6583cb0e8e9cb8f86c6"
+    },
+    {
+      "path": "docs/pcc/UPCC_A05_CORTEX_ONLINE_CONTRACT_REPAIR.md",
+      "bytes": 3342,
+      "sha256": "62a85071cb0743b2960754b2268477c9ad2a3bedb3d737eac14a1e36595e171b"
+    },
+    {
+      "path": "docs/pcc/UPCC_CONSOLIDATION_SOURCE_AUDIT.md",
+      "bytes": 18192,
+      "sha256": "be40542d47cc9ee43a3020406c1ef8343b4d03419369722587e3c2f3e9086afb"
+    },
+    {
+      "path": "docs/recovery/SOURCE03R2_PCC_SOURCE_EXPORT.md",
+      "bytes": 1585,
+      "sha256": "40c30d11e5ca197508aa40c3bc24d8559d0f90214255fd6ab506e53d5ff23d8f"
+    },
+    {
+      "path": "docs/recovery/SOURCE03R3_PCC_SELFTEST_FIX.md",
+      "bytes": 723,
+      "sha256": "dbda91eaa37639b2a44329d0f713fef81765ef34bb6a1c550f058c2223fdcdfd"
+    },
+    {
+      "path": "docs/recovery/SOURCE_ROLLUP_COMPARISON.md",
+      "bytes": 3869,
+      "sha256": "447c2c82e1215724a4c7021bb2488636d6c563a92008c9588a8323ac13a4b582"
+    },
+    {
+      "path": "docs/recovery/SOURCE_ROLLUP_RECOVERY.md",
+      "bytes": 3361,
+      "sha256": "eba43da428bec68c57f386592b870b5eb53bc87d085207a331e01b189243cd50"
+    },
+    {
+      "path": "extensions/cortex-vscode/README.md",
+      "bytes": 355,
+      "sha256": "80f7952ab6de822f26ad632ce0ab3dc1d12a464cb3b1f7bd1ff9a7619619a14e"
+    },
+    {
+      "path": "extensions/cortex-vscode/package-lock.json",
+      "bytes": 1842,
+      "sha256": "6271e2ed29d80682864b1ea18cbab02ce8e8ed1d857117f0006cc3ee252b9cba"
+    },
+    {
+      "path": "extensions/cortex-vscode/package.json",
+      "bytes": 1560,
+      "sha256": "d68aeb081b03af1bd28a5f1792ab9ed31a31a9c97b8e2958a1b966e62f726e83"
+    },
+    {
+      "path": "extensions/cortex-vscode/src/extension.ts",
+      "bytes": 10016,
+      "sha256": "0e10d235fbc373de6003f5ebcd74008e09be009da309e8ebcc271fb4a014511e"
+    },
+    {
+      "path": "migration/open2d_adapter/crates/cortex_adapter_open2d/Cargo.toml",
+      "bytes": 487,
+      "sha256": "2c31c0af08234d0d357b6ace8e3228d06379b83954a92ab9e4e17565c183ebec"
+    },
+    {
+      "path": "migration/open2d_adapter/crates/cortex_adapter_open2d/src/lib.rs",
+      "bytes": 10170,
+      "sha256": "f286372637e7717d66fe06fe544c3c6df657168ee4214dc42450711c9a8e4a6c"
+    },
+    {
+      "path": "migration/open2d_reference/apps/open2d_cortex/Cargo.toml",
+      "bytes": 174,
+      "sha256": "061982409e8d31ebf100c89664770d5c0772da3d9c07a05cfa193be89beb7be6"
+    },
+    {
+      "path": "migration/open2d_reference/apps/open2d_cortex/src/main.rs",
+      "bytes": 44,
+      "sha256": "7a92fa7c878db1b7b2eace2fd0a4ddde03557c15642e9f51b1812b2909f2c7b7"
+    },
+    {
+      "path": "migration/open2d_reference/crates/cortex_adapter_open2d/Cargo.toml",
+      "bytes": 487,
+      "sha256": "2c31c0af08234d0d357b6ace8e3228d06379b83954a92ab9e4e17565c183ebec"
+    },
+    {
+      "path": "migration/open2d_reference/crates/cortex_adapter_open2d/src/lib.rs",
+      "bytes": 10170,
+      "sha256": "f286372637e7717d66fe06fe544c3c6df657168ee4214dc42450711c9a8e4a6c"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_capture/Cargo.toml",
+      "bytes": 180,
+      "sha256": "2ef0511126956f34165f3620d513ceade514e5fef2d3a8113b9335755879f365"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_capture/src/lib.rs",
+      "bytes": 99,
+      "sha256": "de4b28e6911f608c1c44cf48c72a90aef012215ee94c59d46d18670b791e5f4a"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_core/Cargo.toml",
+      "bytes": 171,
+      "sha256": "990d9645768116165460dc2b8174ee4ed45b501fe3cbce754ea663189dd4360e"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_core/src/lib.rs",
+      "bytes": 147,
+      "sha256": "fcac9823c07a1d325ac9eaa4307da9cac193938b16b42d59b5bde2baaf17978a"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_http/Cargo.toml",
+      "bytes": 171,
+      "sha256": "be936bd638a2ce609cc2930dcfb48a92fc133db895f50b3521cffc32b1c8b369"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_http/src/lib.rs",
+      "bytes": 147,
+      "sha256": "19d301d4e2e23f54b87fa5e203554eb2ef677f200ad7b77e29cf985cb0bde0d5"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_image/Cargo.toml",
+      "bytes": 174,
+      "sha256": "32d0511572f755ad4f2c03993395a7d6a610ad5dc5ba2e3afe7f1d7082fa29d4"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_image/src/lib.rs",
+      "bytes": 95,
+      "sha256": "e8d77bc9b0ebb3c2ff6937f11af5464edcea0bc4929a391dbe3b5a0765b1951a"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_memory/Cargo.toml",
+      "bytes": 175,
+      "sha256": "ca38f7d62d0a829514a502e666856f6c99d4c7d3c5700cc20f063d43a2f29ee6"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_memory/src/lib.rs",
+      "bytes": 130,
+      "sha256": "85bd92f4aac0abb5b8d6474325a77c27e43d373a04e9fa22f5ba5a29a28d4f74"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_process/Cargo.toml",
+      "bytes": 180,
+      "sha256": "dae545d9df540d127c50de6231adb11adecd6e4cd3ce1568b87dd494e27434e1"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_process/src/lib.rs",
+      "bytes": 99,
+      "sha256": "dba1998a9e998c3910a565c57b60e09556d7196193fec0f5a20e82123e0ff324"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_protocol/Cargo.toml",
+      "bytes": 183,
+      "sha256": "7048261876c641d400a20bb5c32d9ec9c38dc1dad785748742cf43492f3bdba7"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_protocol/src/lib.rs",
+      "bytes": 159,
+      "sha256": "14f2f79dd3914b14b7fcc73580afe220eb6aa62aa88ce24a87bd91af8d8062da"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_provider_comfyui/Cargo.toml",
+      "bytes": 207,
+      "sha256": "d2796f0e3e245908a45d0c7a54206c0e91b633d52780ff2900a5cc44118353d3"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_provider_comfyui/src/lib.rs",
+      "bytes": 117,
+      "sha256": "21e5f3df042ded1e9f193c8933fe9e57d63bdd0353be4dc4dccf9e6bb609f1f3"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_provider_lmstudio/Cargo.toml",
+      "bytes": 210,
+      "sha256": "971b77d522d9c9df9aad094982ce99ecb247e343919f7c5a4e076d7dac419544"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_provider_lmstudio/src/lib.rs",
+      "bytes": 119,
+      "sha256": "564fd76f1b384181a21cd8bb18f133183daf43131e684e679ca4dac226941062"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_rpc/Cargo.toml",
+      "bytes": 168,
+      "sha256": "f597bc17687fd2b82ef350a2652de4b54bc4d01f9c75f1ca8b8fb9cf48d52d22"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_rpc/src/lib.rs",
+      "bytes": 144,
+      "sha256": "1046aca1cbe04a51340808a3e926ac4606bf603fffe1753baffb3d1693c8639c"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_tools/Cargo.toml",
+      "bytes": 174,
+      "sha256": "9ea6114ee9bbc85ae00fc9e84bae02c85669f9606860262af8a31292816eae85"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_tools/src/lib.rs",
+      "bytes": 150,
+      "sha256": "131a1fe5c8b19e42ae742a4aaf895f5bf3dcaf6c3b452009512e24f0249203d6"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_workspace/Cargo.toml",
+      "bytes": 186,
+      "sha256": "278c5a96784af4951acebdd418374e60298ac68a0575ee44b412887b16fb038f"
+    },
+    {
+      "path": "migration/open2d_reference/crates/open2d_cortex_workspace/src/lib.rs",
+      "bytes": 161,
+      "sha256": "62e432ce4948c0ba778c45a4df3d8b30c5df1c8701adf1ee0e0c06a53baf6ee2"
+    },
+    {
+      "path": "migration/original-Cargo.lock",
+      "bytes": 13389,
+      "sha256": "0d0051d6b2634f7d8e0593126963176ed29c5195075a328050c336ec0545cea7"
+    },
+    {
+      "path": "migration/original-Cargo.toml",
+      "bytes": 2634,
+      "sha256": "70408d4d19ff16bbdc64bc35fe872b4980903be0a7e0943705296f9ba4970ab3"
+    },
+    {
+      "path": "migration/source_tests/fixtures/cortex_hello3d_acceptance/ACCEPTANCE_PROMPT.txt",
+      "bytes": 1233,
+      "sha256": "6676cbcc7a22692c0f77a79e3a67ae2ac57f9a271e0022b3a6a46b3af9846f94"
+    },
+    {
+      "path": "migration/source_tests/fixtures/cortex_universal_acceptance/README.md",
+      "bytes": 589,
+      "sha256": "ad97bdff3e03c3ee370d8d929dd652f270ec8132805ae0775e36e73b58061cf5"
+    },
+    {
+      "path": "migration/source_tests/fixtures/cortex_universal_acceptance/cpp_window/ACCEPTANCE_PROMPT.txt",
+      "bytes": 387,
+      "sha256": "7c18e740d88f8234b4c2e0824ad9b2d00f9ea2739045bbf9b78c7d6b72281f33"
+    },
+    {
+      "path": "migration/source_tests/fixtures/cortex_universal_acceptance/image_reference/ACCEPTANCE_PROMPT.txt",
+      "bytes": 324,
+      "sha256": "84caad1a3e369c3177604cad4dce88a8adee2509bfadd85d5234e4bfca0a3809"
+    },
+    {
+      "path": "migration/source_tests/fixtures/cortex_universal_acceptance/rust_api_mismatch/ACCEPTANCE_PROMPT.txt",
+      "bytes": 352,
+      "sha256": "7637ad49cac17fc6d1ec7ed5d5f0eabb9dbac352dbb2b868e0785871a774cb5d"
+    },
+    {
+      "path": "migration/upcc_v0_6_3/DONOR_PROVENANCE.json",
+      "bytes": 662,
+      "sha256": "623d53fa2a1f3394a6e87f3d3c07782b4b29e7fd02ddde3d6ed4ecda0e5e272a"
+    },
+    {
+      "path": "migration/upcc_v0_6_3/EXPECTED_RELEASE.json",
+      "bytes": 526,
+      "sha256": "ddced293aa339491844425cb4257189f3e999034724b6dcb7d54736fbf3e7415"
+    },
+    {
+      "path": "migration/upcc_v0_6_3/README.md",
+      "bytes": 788,
+      "sha256": "aec4c3fbbde08a0dc89b02887b5470235427404618feec5ac323d76b3592a21a"
+    },
+    {
+      "path": "products/forge-rust/Cargo.toml",
+      "bytes": 1059,
+      "sha256": "0a6bdc63db7dd25a9a16d856f351dc3f262b3c4ee7f05042a3d3d4fdc3411803"
+    },
+    {
+      "path": "products/forge-rust/README.md",
+      "bytes": 2713,
+      "sha256": "34d578ee2ecb0cc7f87dbc5f505dbdd99b822027e034139c13c08ab254ccebc9"
+    },
+    {
+      "path": "products/forge-rust/apps/forge-rs/Cargo.toml",
+      "bytes": 824,
+      "sha256": "5170d6120fa55b342de1ba250fe4584bd1fb0cd392b491a0d2d25718f202f67a"
+    },
+    {
+      "path": "products/forge-rust/apps/forge-rs/src/main.rs",
+      "bytes": 33739,
+      "sha256": "eaab643080bdf673bfca6589d51f73acc875b5eb4ff2f89433d15888647d2cdc"
+    },
+    {
+      "path": "products/forge-rust/apps/forge-rs/src/main_forge_host.rs",
+      "bytes": 121989,
+      "sha256": "e1192e7985cc2ff2dd30860037c06ac410cd6db6086dd7823a8749ef7cb3379f"
+    },
+    {
+      "path": "products/forge-rust/crates/cortex-bridge/Cargo.toml",
+      "bytes": 433,
+      "sha256": "f4b058635d6ae7a18d5b75cb1721e57a7138557b0a9fd1619833fce47db37c7c"
+    },
+    {
+      "path": "products/forge-rust/crates/cortex-bridge/src/lib.rs",
+      "bytes": 29720,
+      "sha256": "fab9a018feee3f9935eea6c1cff4a750f3e408cacc83022080906e45a2e846d2"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-artifacts/Cargo.toml",
+      "bytes": 255,
+      "sha256": "6fe04c410d2056aeb16c2f2d4f949c60ca62bea7daeab9ceed955e1bfcb47295"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-artifacts/src/lib.rs",
+      "bytes": 9067,
+      "sha256": "840075e7fcb9e937545c8ced6dc47bdb04cb4dd415dba862b96b2ac455405da4"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-certify/Cargo.toml",
+      "bytes": 273,
+      "sha256": "ad15949bf8bbea8f69df9dac37ba55c4fb32ad041165c662c1cb33fc600bdc15"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-certify/src/lib.rs",
+      "bytes": 5029,
+      "sha256": "da328daaa6d61b5264eb32facf2ca49b595a90e1cab1d14f42d0119320001a2d"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-contracts/Cargo.toml",
+      "bytes": 260,
+      "sha256": "8861c62d6463f2ebb92480680db6019ba9886ce8089ad7d06f8c09cd849876ef"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-contracts/src/lib.rs",
+      "bytes": 19014,
+      "sha256": "7565d93562eb0b5d4f191305aeb94a212d74317881a2ec0817b214cefe4b5251"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-core/Cargo.toml",
+      "bytes": 300,
+      "sha256": "6afde2d543f6fb05d58cd8d9939fb9fa59e5d88e468ad642406d6ada5e7f68cd"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-core/src/lib.rs",
+      "bytes": 3252,
+      "sha256": "54dce40da2d1eaa6b7b7ff0bf377e48a07ae65bf142926780c4214eaf49c5224"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-diagnostics/Cargo.toml",
+      "bytes": 365,
+      "sha256": "b9d1512196cacee629bfc1fd98c51e190ce1868bf95ec5e9109272dac6a94589"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-diagnostics/src/lib.rs",
+      "bytes": 3760,
+      "sha256": "87053631ce6f9151b6f0420445c140a206b7332a104a9a57fa603f041491b5ea"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-ember/Cargo.toml",
+      "bytes": 229,
+      "sha256": "f97a5abe4322770c5031598039cddf5cb3d4e6a830af4725bca1a4dea2ce7a90"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-ember/src/lib.rs",
+      "bytes": 4541,
+      "sha256": "f14d92d361dcf67b11a76d96be7c0514123eb802e8e0bbe79859411f393cc3cf"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-ide/Cargo.toml",
+      "bytes": 297,
+      "sha256": "acdb2351ba6335cdc1a0c72e90d4e66093309a4b591d34f4c45c25c5c7fee795"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-ide/src/lib.rs",
+      "bytes": 30064,
+      "sha256": "988c349567e784469857c9bb8ec53f9f47081ccccc52924c6ce82f701c255b12"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-intake/Cargo.toml",
+      "bytes": 446,
+      "sha256": "d4c7664bbdc9f8229d8227e215a02d7faf11a3b93864ff849814d7fbe9f44a26"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-intake/src/lib.rs",
+      "bytes": 6671,
+      "sha256": "9df49fa879b3288faa59a972a8644bb675e2f9933be56abd1ecd805c119e1c51"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-platform/Cargo.toml",
+      "bytes": 232,
+      "sha256": "4186939e2fd613e3b7f2ba034d5bc6b863c36300b0e738cf47ad629dea56e347"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-platform/src/lib.rs",
+      "bytes": 6769,
+      "sha256": "b680f8e13ca4ab014fe31a2c8c3b34baa9530aa416267c5eded6eda512cf287b"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-process/Cargo.toml",
+      "bytes": 231,
+      "sha256": "f53de736573ad8ef832bc5e3cf44e158993857b3cbf07498b49850f97c9a26f6"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-process/src/lib.rs",
+      "bytes": 25622,
+      "sha256": "1d869328ec9e459128a96e108f80835abf1c892d57cd1144ba8108d2d5ff6fba"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-protocol/Cargo.toml",
+      "bytes": 232,
+      "sha256": "a78c1c1c89df4a2735687465253dad9ea92aaef9df5d0833d8945fcc487d8d8f"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-protocol/src/lib.rs",
+      "bytes": 7710,
+      "sha256": "560a210f5cc05e53b2a4ce465342e0d6de18647529b21ed579757d7a2bbbc4d2"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-release/Cargo.toml",
+      "bytes": 253,
+      "sha256": "5dbf45284d00517880f79b309068e70af32b27661a7e3743faa6d9d0b02f2975"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-release/src/lib.rs",
+      "bytes": 10169,
+      "sha256": "0dfb6d8c92be71bee41cde834d85fe56b900dbe65a8c391cd7e8b8d62fd0e647"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-scheduler/Cargo.toml",
+      "bytes": 361,
+      "sha256": "61eccec23a635e11f3df39ac187b77a410ba4b8a1d087cf30930ee7eaa2f78c5"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-scheduler/src/lib.rs",
+      "bytes": 11638,
+      "sha256": "623eff7f03a08d666b32354c1e3d77137d3722da9078d27637c07642ad5aaf10"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-services/Cargo.toml",
+      "bytes": 274,
+      "sha256": "d4adffdbd06ed1a0c5744994949fc5aa633552a41ff35bea9d81bf8ef13f1a41"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-services/src/lib.rs",
+      "bytes": 5718,
+      "sha256": "b7bc4938ad3ef1ca21ac68ec145f19baa270ecccbf6db04f311a7388b45f0cee"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-state/Cargo.toml",
+      "bytes": 229,
+      "sha256": "96fb13e2da4036ebfc64e063b5c0b981984c89411acb489460d9fa46c4b3a65c"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-state/src/lib.rs",
+      "bytes": 40685,
+      "sha256": "1ff07862037603edfeb2d4e453c4608f07ce92fe2f59300614ecde3f235a5f70"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-toolchain/Cargo.toml",
+      "bytes": 233,
+      "sha256": "c22e4ca4342e213d6b22a1ed6eeb9703ba86001dc8e64a3fdc3825f4e64732ea"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-toolchain/src/lib.rs",
+      "bytes": 5673,
+      "sha256": "7ad2ea8b9d6052c75fcf3c8f9d2630e5a7571e7cc339171521eb4089494bc25c"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-update/Cargo.toml",
+      "bytes": 273,
+      "sha256": "5222b151b8affb4796c735fd812eddfaa16e0e7e1169c2b71b6ee42ecb2b8480"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-update/src/lib.rs",
+      "bytes": 21372,
+      "sha256": "2b8d2792121eb094345990e0e59c5bb613a7f34adcc48bfe2766eb5637b28447"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-vcs/Cargo.toml",
+      "bytes": 227,
+      "sha256": "37ba0537f5384e4a33fb484db25dd06e124f9b2a4531a22b67540d2f94697f93"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-vcs/src/lib.rs",
+      "bytes": 14747,
+      "sha256": "a1fa5e249b7347c287dc1266f01f69164b58e5cffcc89b7abdfb8b941e4d901d"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-watch/Cargo.toml",
+      "bytes": 229,
+      "sha256": "bc40d2ec56b612dc7022ed9a8eeff356c42952fd60e6e8c01507868e1b0393c8"
+    },
+    {
+      "path": "products/forge-rust/crates/forge-watch/src/lib.rs",
+      "bytes": 8070,
+      "sha256": "a351c76b2efc148cead26d39bc1169ac3a2e5a982d91904ed553e951d314417d"
+    },
+    {
+      "path": "products/forge-rust/docs/FORGEPY_PARITY_MATRIX.md",
+      "bytes": 2936,
+      "sha256": "3d29da07a8feed8d94f68086089c098505e3198e1e47ea46cbd9e50c45d50447"
+    },
+    {
+      "path": "products/forge-rust/docs/FR01_SCOPE.md",
+      "bytes": 1325,
+      "sha256": "53a5547418d21dbde3b36950ab449608fcffaa1187e1740bc05f83615ce95ee8"
+    },
+    {
+      "path": "products/forge-rust/docs/FR02_SCOPE.md",
+      "bytes": 1630,
+      "sha256": "6d5bb177ef6a20ac46f9247d1b904b38cca5fb98d96eb7b33268cad2bf80ac29"
+    },
+    {
+      "path": "products/forge-rust/docs/FR03_SCOPE.md",
+      "bytes": 2708,
+      "sha256": "9230323ddfced177b6a32dd37a384d0836658b743677d1289149d9a8f1807c1c"
+    },
+    {
+      "path": "products/forge-rust/docs/NATIVE_IDE_ARCHITECTURE.md",
+      "bytes": 1789,
+      "sha256": "a3b6328b060488737a0b1c4c104479124f60c11500ac3f5d640c4c906d99db56"
+    },
+    {
+      "path": "products/forge-rust/docs/RS04_RS193_CUMULATIVE_ROLLUP.md",
+      "bytes": 1330,
+      "sha256": "d8d0a2362a468ff53d7868b36f6492d1be789ff0df568be5b76814a34fb68c41"
+    },
+    {
+      "path": "products/forge-rust/docs/RS04_RS293_CUMULATIVE_ROLLUP.md",
+      "bytes": 1248,
+      "sha256": "c273e97900780314efa8acd7eeb82bae675967965b673b2c813ef79a56c2e309"
+    },
+    {
+      "path": "products/forge-rust/docs/RS193_BUILD_HANDOFF.md",
+      "bytes": 2327,
+      "sha256": "dd7e47b42de34c2d1beafe61cc926d4d4a1da29e3eb1545958eaadda87718cbc"
+    },
+    {
+      "path": "products/forge-rust/docs/RS194_RS293_100_PASS_RUN.md",
+      "bytes": 6245,
+      "sha256": "a0c38bc7c4fcef9ff78d60f2f053c8f68027c4c1fac70d709b330fed7174836d"
+    },
+    {
+      "path": "products/forge-rust/docs/RS293_BUILD_HANDOFF.md",
+      "bytes": 2002,
+      "sha256": "aef1be3c4738c7031545a39d0b247afdd973ac665521effa0fa018444aa03151"
+    },
+    {
+      "path": "products/forge-rust/docs/RS94_RS193_100_PASS_RUN.md",
+      "bytes": 8760,
+      "sha256": "eac42b0c41ba4bd22b34f1202967b075fe17423ab3f6dfe6ce23e75402470584"
+    },
+    {
+      "path": "project.control.json",
+      "bytes": 14652,
+      "sha256": "eda1c467713ba128cc58900efd90cfa84cd6d710865d0c0c37bb70042a7ea806"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "bytes": 86,
+      "sha256": "3e18e70208ee460635e239a91c142cf67371feafb718b05617ff06f388bf96df"
+    },
+    {
+      "path": "schemas/cortex_activity.v1.json",
+      "bytes": 483,
+      "sha256": "7665f5e258a67ebd63b5e0f845f667ff54587a4c4733d46b2db15c12c40a89b4"
+    },
+    {
+      "path": "schemas/cortex_artifacts.v1.json",
+      "bytes": 695,
+      "sha256": "075e1f9be457222bfb2522dd4953580911d5153fde33f485ea2391195aeba446"
+    },
+    {
+      "path": "schemas/cortex_authority_registry.schema.json",
+      "bytes": 1043,
+      "sha256": "0b0df0472f3aa56fd40c34e0330fc49d68ade7f30d7e497d5ef9721952d7da45"
+    },
+    {
+      "path": "schemas/cortex_chat_certification.v1.json",
+      "bytes": 933,
+      "sha256": "b01e90069cb7073b8ae3fdcc55417f1eb13d25717765981e67f743be2258c483"
+    },
+    {
+      "path": "schemas/cortex_cli_event.v2.proposed.json",
+      "bytes": 1719,
+      "sha256": "6333ed05dc4547eaca3f7a8e354e7d92a855ed22906c93b0a84128e699262f94"
+    },
+    {
+      "path": "schemas/cortex_cli_events.v1.json",
+      "bytes": 619,
+      "sha256": "53c34ef2d889dae04a3a3673121c3d85177450941e64c64e39ff1a3d1887f2c8"
+    },
+    {
+      "path": "schemas/cortex_context.v1.json",
+      "bytes": 1071,
+      "sha256": "766c92182fd6fb0c0ff49a869df53b87dad833cd8e84008a0521dc0a362c7b14"
+    },
+    {
+      "path": "schemas/cortex_desktop_certification.v1.json",
+      "bytes": 981,
+      "sha256": "2eb56681426918a9ecea35e1df73ef9a86ac6d2cbf308082ac354bf6ce283670"
+    },
+    {
+      "path": "schemas/cortex_desktop_state.v1.json",
+      "bytes": 585,
+      "sha256": "912a35d6a6860f44d95ec08976406f63eaba491f184f960e04d4f6a4c89531d0"
+    },
+    {
+      "path": "schemas/cortex_desktop_state.v2.json",
+      "bytes": 719,
+      "sha256": "0a62eecdc56ce111e1e871b8f6743c77b5814d85194666b51de2eb61a1598c88"
+    },
+    {
+      "path": "schemas/cortex_drive_catalog.v1.json",
+      "bytes": 1551,
+      "sha256": "ec7c711d308adee8ab9ea43446bbcd09b6683292b494b3dcdccad9dde294b831"
+    },
+    {
+      "path": "schemas/cortex_execution_transcript.v1.json",
+      "bytes": 2064,
+      "sha256": "50f049d3a02d96ba7a6c780c16ea6b0964b40401815c4a15d30f97d3ab94dfe2"
+    },
+    {
+      "path": "schemas/cortex_health_snapshot.v1.json",
+      "bytes": 958,
+      "sha256": "0c8f31e344005d0e3408587be62020e4b6177d12a605fef6277ae9b845c4f906"
+    },
+    {
+      "path": "schemas/cortex_incident.v1.json",
+      "bytes": 1156,
+      "sha256": "bd62421ec7a90e31394550eedef78828f27d4c0ad8c3ba8722efb249004e9610"
+    },
+    {
+      "path": "schemas/cortex_intake_item.v1.json",
+      "bytes": 1216,
+      "sha256": "fa0be3c86204a917b95c60f8b877b3e071f78002253803a361f53f052fd4f3f7"
+    },
+    {
+      "path": "schemas/cortex_jobs.v1.json",
+      "bytes": 980,
+      "sha256": "c1cc94054984d31d860e77d27a29ab9f337668c1d37c62224d04cb1eefcd6ae7"
+    },
+    {
+      "path": "schemas/cortex_migration_plan.v1.json",
+      "bytes": 1076,
+      "sha256": "31a88c217afdeabd3e9881acb9a58073402c3db9548f76d6610c55fd4990c164"
+    },
+    {
+      "path": "schemas/cortex_permissions.v1.json",
+      "bytes": 343,
+      "sha256": "1473e4a554f0657e97d8307896768c91bf0f98e5f45e617f8e48578284c16bdd"
+    },
+    {
+      "path": "schemas/cortex_permissions.v2.json",
+      "bytes": 716,
+      "sha256": "c690c12ce57b19202e192122271990a4ec150e622f0e54dcca0e12d21a8c5f94"
+    },
+    {
+      "path": "schemas/cortex_plugin_manifest.v1.json",
+      "bytes": 623,
+      "sha256": "f26f229870c850b8cd411bbea21d0b0c05643703d03dc7063c81d97ec8509505"
+    },
+    {
+      "path": "schemas/cortex_plugin_manifest.v2.proposed.json",
+      "bytes": 3614,
+      "sha256": "8c547acac6247904617da3c45fd6d860844220835940be6910ad61f0a56ef319"
+    },
+    {
+      "path": "schemas/cortex_project_event.v1.json",
+      "bytes": 1554,
+      "sha256": "97bc42653fa65dfe3137f82291cf98b46ecef8da8e2ec2f713b2fb99ac5a160d"
+    },
+    {
+      "path": "schemas/cortex_provider.v1.json",
+      "bytes": 615,
+      "sha256": "977524134bd5f3d1069dfcca317db10eb2fcbb53e0ef71e91c5ad7faa5bc294f"
+    },
+    {
+      "path": "schemas/cortex_registry.v2.json",
+      "bytes": 692,
+      "sha256": "8777d432f8a1ee3424c82e2891b0fcd0851dfa582081482d67cd3a4901fb3a6b"
+    },
+    {
+      "path": "schemas/cortex_review.v1.json",
+      "bytes": 459,
+      "sha256": "b4323c3d9c289c9121a84425f0af14352eb94a9cdcbc4398b6ea9705c036c5da"
+    },
+    {
+      "path": "schemas/cortex_settings.v1.json",
+      "bytes": 1083,
+      "sha256": "cb70eab20e05a9338c207baeb76f8d17163d4393e3543984a6ecad8316364582"
+    },
+    {
+      "path": "schemas/cortex_stream.v1.json",
+      "bytes": 665,
+      "sha256": "4ddbbb42ce5fc5e661345555ec8d426fafa0dddb26c8b994ab731fae70152a8e"
+    },
+    {
+      "path": "schemas/cortex_task.v1.json",
+      "bytes": 537,
+      "sha256": "6fb7eb69dae2d2c66e922da4a5154c62ebd64829c98553eb55be6ef58d2a0082"
+    },
+    {
+      "path": "schemas/cortex_tool_provider.v1.proposed.json",
+      "bytes": 1815,
+      "sha256": "3097a71e9e0a1dea8205705ab4760289f9e1360cccf838e6174b6f137e98af68"
+    },
+    {
+      "path": "schemas/cortex_tools.v1.json",
+      "bytes": 4525,
+      "sha256": "3e03ebba87d113191e1e8c710159ea80a92643c5b7453c1d940e4c49db98a9ee"
+    },
+    {
+      "path": "schemas/cortex_transactions.v1.json",
+      "bytes": 446,
+      "sha256": "6099d7a98a8ab9d3fd9d70640bcd9fe2a839646b82df1697119d24b6ffbdbe04"
+    },
+    {
+      "path": "schemas/cortex_universal.v1.json",
+      "bytes": 2712,
+      "sha256": "fa84cb3d2d869128923d7f7bd7cde25836ea99c0883a5cd212039ba7d853a307"
+    },
+    {
+      "path": "schemas/cortex_vector_candidate.v1.json",
+      "bytes": 791,
+      "sha256": "7ba5610cdfadf2cf13745dab02f921bb41e66a459d8b7ad7c39dc22842dce12d"
+    },
+    {
+      "path": "schemas/pcc_command.v1.json",
+      "bytes": 822,
+      "sha256": "6c03ac416a1efb8d7085d0da738b07ed4ee3885fffe5a0e387561b70fad74365"
+    },
+    {
+      "path": "schemas/project.control.v1.proposed.json",
+      "bytes": 2421,
+      "sha256": "5e72666449315d732716c45924b2dc18427a527213897eb5e4592e77dc48aba4"
+    },
+    {
+      "path": "schemas/upcc_donor_manifest.schema.json",
+      "bytes": 1013,
+      "sha256": "209d7bfdce5cd1d8f14d22d68398d97ac9cbf439524f1d15fb5472436d40bd4b"
+    },
+    {
+      "path": "scripts/Bootstrap-CortexEnvironment.ps1",
+      "bytes": 18118,
+      "sha256": "daf206f8c7aa90d07f5c2c69f72b4424bb4f357590eee22a6138391d847e2794"
+    },
+    {
+      "path": "scripts/Capture-CortexWindow.ps1",
+      "bytes": 1874,
+      "sha256": "58c27b4c6fa1c269a882880bfed056d51e2539f26f9805691a331f6ef98652d7"
+    },
+    {
+      "path": "scripts/Clear-CortexVaultRootOverride.ps1",
+      "bytes": 617,
+      "sha256": "8b5bb7d4fad98af81f6d441b36219b2f07972d25348f6f0a9f5824b7fe837aeb"
+    },
+    {
+      "path": "scripts/Export-CortexStandaloneSeed.ps1",
+      "bytes": 293,
+      "sha256": "99600bfb4204390d96798e5b00640079866b5c419585093b119c2f8c729ee05c"
+    },
+    {
+      "path": "scripts/Import-CortexStandaloneFromO2DF.ps1",
+      "bytes": 11942,
+      "sha256": "753543a6450edd85d57f0a09f8fc3c4b14dad445106f4cb207a48c40aa9e058b"
+    },
+    {
+      "path": "scripts/Import-UpccDonor.ps1",
+      "bytes": 3736,
+      "sha256": "5ce5feb92b214924d2e53f4f1ca74fe38abb725b8655f62805496e93acbbdb31"
+    },
+    {
+      "path": "scripts/Initialize-CortexGit.ps1",
+      "bytes": 3185,
+      "sha256": "294bfe6b0c5d5c81a28090299f2dbe215aca7037e68c914e5c4cdfc672beb817"
+    },
+    {
+      "path": "scripts/Inspect-CortexWindow.ps1",
+      "bytes": 1715,
+      "sha256": "bf111762ddae8082a87c82b2422b34931d6ea40bf4fb850183668bb8983c4e1b"
+    },
+    {
+      "path": "scripts/Set-CortexVaultDriveRoot.ps1",
+      "bytes": 2383,
+      "sha256": "83f5135ed7b3227d2d4b4c9ef6915da7c94ded168b3f60c8fc2dd0220561f0f8"
+    },
+    {
+      "path": "scripts/Test-CortexStandaloneBoundary.ps1",
+      "bytes": 206,
+      "sha256": "36f878e456fc95fc42ce0674eb665c10413b403b9a264a62aa1bf219fc3bc6a1"
+    },
+    {
+      "path": "scripts/history/Export-CortexStandaloneSeed_20260907.ps1",
+      "bytes": 8725,
+      "sha256": "268075c5d3b404503a3e59982b9ae9e9c2b4cf66386b93dfe8f67e044f4e4cec"
+    },
+    {
+      "path": "scripts/validate_upcc_donor.py",
+      "bytes": 2889,
+      "sha256": "d8e3e48e6b8a6e4cede0bf2be5c49fa14a8fef30e0615a922144b2481675ec1b"
+    },
+    {
+      "path": "stage_candidate.py",
+      "bytes": 8504,
+      "sha256": "1d643bef0beef29a54319fe833a7856f38fa8791594e229915abc0c3b327fd20"
+    },
+    {
+      "path": "templates/cortex.integration.json",
+      "bytes": 343,
+      "sha256": "9751d0e0ef6e9280e4f3227759be1d310677757ab61b4e73ca0c313fb6ec1543"
+    },
+    {
+      "path": "templates/project.control.json",
+      "bytes": 1031,
+      "sha256": "8bcd807cc92b11c71cdb17f12545fa6ec6ca386cba81d03984647d628a81c661"
+    },
+    {
+      "path": "templates/root-control/PROJECT_CONTROL_CENTER.cmd",
+      "bytes": 1292,
+      "sha256": "38afdc4e5e8e639af58d4d9715463340f7db6edd2628b8c1efd4a4c87098e6d3"
+    },
+    {
+      "path": "templates/root-control/README.md",
+      "bytes": 449,
+      "sha256": "43e8a4d33a8536b344c08651939cfc2a207c18145c2abab0e668722c332b92e5"
+    },
+    {
+      "path": "test_stage_candidate.py",
+      "bytes": 3197,
+      "sha256": "9171f1b26e1226bf9f4d914d91dadbcb39f64f6c2a5692f3d1745b3e2d5b5699"
+    },
+    {
+      "path": "tools/control/Cortex.Console.ps1",
+      "bytes": 2547,
+      "sha256": "6ad52bf1ecb4281874ff4bb9dcc4266b868f0376268412e35a2f5ff7bedbe33a"
+    },
+    {
+      "path": "tools/control/Cortex.ProjectAdapter.ps1",
+      "bytes": 1464,
+      "sha256": "ab6066c0d80afce9d1f0d95482549b1905dd47be3c04983561e78480147949e1"
+    },
+    {
+      "path": "tools/control/CortexContractMigration.py",
+      "bytes": 9463,
+      "sha256": "fd3f9010b63d4563070b5eb086f231ab6027b31d083f555932ab269cc63c4f61"
+    },
+    {
+      "path": "tools/control/CortexDesktopReadiness.py",
+      "bytes": 4546,
+      "sha256": "3f6db694b231ac162581805121ce7acbb5f86f23a395219830d31c8084e07694"
+    },
+    {
+      "path": "tools/control/CortexGitAuthority.py",
+      "bytes": 27306,
+      "sha256": "775e6b60cd5d13d87e5f2cf8535d6ec4419c244dfc75ad9e53657083c2dacf83"
+    },
+    {
+      "path": "tools/control/CortexPCC.py",
+      "bytes": 92548,
+      "sha256": "8da3cbaeeaa938364d77c92887385368517efd3baf2c4d2273dbafd0e43ac461"
+    },
+    {
+      "path": "tools/control/CortexPCCConsole.py",
+      "bytes": 17656,
+      "sha256": "cdc88d7178cb8998ba035219de09af24a52521271fb3c20795f3f5a1fe401926"
+    },
+    {
+      "path": "tools/control/CortexPCCGui.py",
+      "bytes": 124127,
+      "sha256": "e5fceef06d17c6ef287132d8de1a49b284c5138d0cada6b028a30e55286ebaa6"
+    },
+    {
+      "path": "tools/control/CortexPCCMaintenance.py",
+      "bytes": 16673,
+      "sha256": "d7a32f2c5fc2ccf1d98c930b799a0e6b85fa6a4d653a18fe8585da02d8f2a11d"
+    },
+    {
+      "path": "tools/control/CortexPatchAuthority.py",
+      "bytes": 47103,
+      "sha256": "fd922ec07f913a334e19a69233ed7e0412d83ff87a740602ad066f6b5a246012"
+    },
+    {
+      "path": "tools/control/CortexSourceCompare.py",
+      "bytes": 8573,
+      "sha256": "18b4ab6fb21dab6264906ca1fabe8d94607d4d409e5f41f5e9786542df3d8a7c"
+    },
+    {
+      "path": "tools/control/CortexSourceRollup.py",
+      "bytes": 16436,
+      "sha256": "8b61d054c0e7c212a3ee847ece520439e1880fb62481df996b2989d739b9ddc1"
+    },
+    {
+      "path": "tools/control/ForgePYParity.py",
+      "bytes": 8698,
+      "sha256": "03662ba1eed9347f5d0fa64e267dc66e3b9eb662d13900f25f72ff95824d488e"
+    },
+    {
+      "path": "tools/control/GitSourceControl.ps1",
+      "bytes": 3420,
+      "sha256": "bb5f633cf84c44103702c675f4663af3a5dec98a92475a5a974e9a7413e9d3aa"
+    },
+    {
+      "path": "tools/control/Invoke-CortexArtifactMaintenance.ps1",
+      "bytes": 3818,
+      "sha256": "d42581a36bd60fc0ae2207fb075ad630c846fef2a4b7edacc28b90d99db4b278"
+    },
+    {
+      "path": "tools/control/Invoke-UniversalPCC.ps1",
+      "bytes": 724,
+      "sha256": "9d07133f68cfcdb1487b53eb132034d7cf0a64ce5e005a5aa38013ab4046ec4e"
+    },
+    {
+      "path": "tools/control/InvokeRootPatchIntake.ps1",
+      "bytes": 2764,
+      "sha256": "81572fa1cee88e2fee672d3ab76e4a5a4e9f4a20e93930d5f3f0b710329bca21"
+    },
+    {
+      "path": "tools/control/New-CortexDebugBundle.ps1",
+      "bytes": 944,
+      "sha256": "3527aef225bcbbb61727e466330c88ad0aa7ed28c519b9f85c1d7b33f33c9f0b"
+    },
+    {
+      "path": "tools/control/NewDebugBundle.ps1",
+      "bytes": 313,
+      "sha256": "b14b46a5b22c80b93e0c8e0b5d3e7020c85ea64c201ecbf1dd949c601694530a"
+    },
+    {
+      "path": "tools/control/PCCAutoAdapter.py",
+      "bytes": 17371,
+      "sha256": "ae517324253fc5c08471965953b586bac047a7d40d961bbb90015145f4e59ed2"
+    },
+    {
+      "path": "tools/control/PCCOperationHost.py",
+      "bytes": 2710,
+      "sha256": "f6054b570ef49e2eacff9acadee2e558faee04016a09af3cbf29398c20a35704"
+    },
+    {
+      "path": "tools/control/PCCProjectDiscovery.py",
+      "bytes": 19394,
+      "sha256": "b6411979ed0d0ed7a017c2a353e43428cdeb40204e19b19ed94f851b2a7b6224"
+    },
+    {
+      "path": "tools/control/PCCRepoHygiene.py",
+      "bytes": 11787,
+      "sha256": "0bc732ce7eb8ef0b31480a15c748b004498d5c6fc74ce2b7f9d511e98d6e77dc"
+    },
+    {
+      "path": "tools/control/PCCStoragePaths.py",
+      "bytes": 3786,
+      "sha256": "8382b23cbcb0bfb8269b08cd42ae0f48ad4b49f4c08319780e3a798b5ea1b374"
+    },
+    {
+      "path": "tools/control/PCCSurfaceCommon.py",
+      "bytes": 29108,
+      "sha256": "0302431ac357de6010b3a5cb98439c6c6b9840ff5ac21c755682738ba6d61f19"
+    },
+    {
+      "path": "tools/control/PCCVaultCatalog.py",
+      "bytes": 22317,
+      "sha256": "7bdee2cc63b2c9bf4a7b1f9660ff5e04e14a79f7fd0308142509ad47ead1a3ee"
+    },
+    {
+      "path": "tools/control/PCCVaultStorage.py",
+      "bytes": 36622,
+      "sha256": "95add4898e41f57ac555f4b00d9ffcca00b3a91860a74aa2aac1cbc14fe326de"
+    },
+    {
+      "path": "tools/control/ProjectControlCenter.ps1",
+      "bytes": 1880,
+      "sha256": "e7ee724cdda382e55969ddfcf8e78a502e985eb4f997747a1b39a3dd8accc95d"
+    },
+    {
+      "path": "tools/control/ProjectControlCenter.py",
+      "bytes": 3788,
+      "sha256": "2f1385598fef0f32daaee012ae3a3dc3a2ead958c9d164fe656bf5d48881d192"
+    },
+    {
+      "path": "tools/control/Start-CortexRoot.ps1",
+      "bytes": 341,
+      "sha256": "5bd4ccbcb230b7c0bb999c36e3105bbf66ace1e5b0eaed74854e7864544b5a12"
+    },
+    {
+      "path": "tools/control/Test-CortexControlContracts.ps1",
+      "bytes": 4166,
+      "sha256": "802d7382d705ea9c819e9ec64044c48e44d0d526d0e0397c0ea54a500bb44b73"
+    },
+    {
+      "path": "tools/control/Test-CortexQuickGate.ps1",
+      "bytes": 677,
+      "sha256": "cc7a36ea05eafcc60fba5393cb5468d2fc804c615fe926f461974aac12e87ce0"
+    },
+    {
+      "path": "tools/control/Test-CortexRootSelfAudit.ps1",
+      "bytes": 5558,
+      "sha256": "5e4d6f6ccfd18c1226d7cb492f87c7ce0b96be36e3fd8c2f99887dc2133ac339"
+    },
+    {
+      "path": "tools/control/UniversalPCCAudit.py",
+      "bytes": 15502,
+      "sha256": "6340f92c284534d6b7262d8a9ebf3a72cb8c3ccb4857c0008b4e7127f918a4e9"
+    },
+    {
+      "path": "tools/control/UniversalPCCPlan.py",
+      "bytes": 5562,
+      "sha256": "3e232c39ec8b4b42cb14dcfd26b46b12307c8fa69d986829f5fd760849096386"
+    },
+    {
+      "path": "tools/control/sitecustomize.py",
+      "bytes": 547,
+      "sha256": "100db354f7319cfbe6db528dfd5c929945d7f948b00035c11d5f6157316d0a66"
+    },
+    {
+      "path": "tools/control/tests/test_cortex_desktop_readiness.py",
+      "bytes": 3021,
+      "sha256": "0922a6d80d17115a4c949ed66144e419ce726f8bb160d3bbef16d7ccc674a132"
+    },
+    {
+      "path": "tools/control/tests/test_cortex_pcc.py",
+      "bytes": 25655,
+      "sha256": "4fa740860dc10097921397677180afee0de73a3566481ace0f4be68197cd5cd6"
+    },
+    {
+      "path": "tools/control/tests/test_cortex_pcc_source03r2.py",
+      "bytes": 4531,
+      "sha256": "4827605f0dfb442def1260e116461960840b1f2430dc144a65c0c135b4105429"
+    },
+    {
+      "path": "tools/control/tests/test_cortex_source_compare.py",
+      "bytes": 6176,
+      "sha256": "2c0d1bb8078ee2ee3d44c46c6d555e27fdbddffa614e9f819bb98f83f65a2af0"
+    },
+    {
+      "path": "tools/control/tests/test_cortex_source_rollup.py",
+      "bytes": 7167,
+      "sha256": "c15012d4b809bb0704e064317afebc1693692def3c9adba5f97e3830e703dc5e"
+    },
+    {
+      "path": "tools/control/tests/test_cortex_upcc_a01_integration.py",
+      "bytes": 3424,
+      "sha256": "8ab2c6825126df759600f2160a3114471554701a14828f70f18c2f5667f5ba61"
+    },
+    {
+      "path": "tools/control/tests/test_cortex_upcc_a02_integration.py",
+      "bytes": 5025,
+      "sha256": "0657b43a8b3e5b05e7d34c128c246acc4abb3938a522bfc8a391ea46080e3a18"
+    },
+    {
+      "path": "tools/control/tests/test_cortex_upcc_a03_restart.py",
+      "bytes": 3139,
+      "sha256": "500e7ce52dbbea6abb6db23c20233ec504e2997c0afffd3e49a96a2acc47edec"
+    },
+    {
+      "path": "tools/control/tests/test_cortex_upcc_a04_parity.py",
+      "bytes": 6140,
+      "sha256": "6029b34eca9177451a8f8f354f295ccfa6692b68e387782ce88b10050490a1f9"
+    },
+    {
+      "path": "tools/control/tests/test_cortex_upcc_a05_contract.py",
+      "bytes": 7016,
+      "sha256": "aca65600ea4a05f6aee5aec3151361925ec43be8b12985ecc5a9ae2b24a464ee"
+    },
+    {
+      "path": "tools/control/tests/test_pcc_vault_storage.py",
+      "bytes": 13309,
+      "sha256": "170751947f72d9f605e748d1e918c985da603769fb0710b4a0fe83e9b823df02"
+    },
+    {
+      "path": "tools/control/tests/test_universal_pcc_audit.py",
+      "bytes": 5950,
+      "sha256": "666a472a467189f7b418333399c8cf9bf48475f63bea546325e0ddfde8df2b55"
+    },
+    {
+      "path": "tools/control/tests/test_universal_pcc_plan.py",
+      "bytes": 3731,
+      "sha256": "1eacb0ce49aa11e54ed3c703bd33c1509d84364948fff27576654b35e90781ad"
+    },
+    {
+      "path": "tools/pcc/README.md",
+      "bytes": 1580,
+      "sha256": "a3b7980c09cbcbe6415b3dba82588575c5fc4fe1deba816b080547c92dbbc565"
+    },
+    {
+      "path": "tools/pcc/pyproject.toml",
+      "bytes": 510,
+      "sha256": "e275f0b05a89eb27fcc018fbae34f8c851e94a016f12d1320692ca5ecc77a0c3"
+    },
+    {
+      "path": "tools/pcc/src/pcc/__init__.py",
+      "bytes": 225,
+      "sha256": "c2ed26f5f558de3db95d445cca0821fc1a77750f96224ea0a5838f1295a5d111"
+    },
+    {
+      "path": "tools/pcc/src/pcc/__main__.py",
+      "bytes": 48,
+      "sha256": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d"
+    },
+    {
+      "path": "tools/pcc/src/pcc/archive_audit.py",
+      "bytes": 6163,
+      "sha256": "1f0dccc4f0804afe573bb8c41fa77e6a7620984ef619fc83eb2e2708a5fa48e4"
+    },
+    {
+      "path": "tools/pcc/src/pcc/cli.py",
+      "bytes": 3393,
+      "sha256": "e71cf0ce7a1566afee2875d61bbb25840feba2ac273e3cdce53a32d4c12ede19"
+    },
+    {
+      "path": "tools/pcc/src/pcc/control.py",
+      "bytes": 8018,
+      "sha256": "f0dd0ed7be756bbc29038c447c9f7843ead51f342f48bd88b0f47153ca38d32e"
+    },
+    {
+      "path": "tools/pcc/src/pcc/models.py",
+      "bytes": 2434,
+      "sha256": "751b81a1aff4d102c3e0230a9b15407cbd01ece737748cc3d11390dca0e54108"
+    },
+    {
+      "path": "tools/pcc/tests/test_pcc.py",
+      "bytes": 3744,
+      "sha256": "f1684fe1a7776b22ee7238c78fbdbcfc7da81284924930a3b1ec0e5352072a7e"
+    }
+  ]
+}

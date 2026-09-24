@@ -13,7 +13,7 @@ use cortex_execution::spine::{
 };
 use cortex_jobs::{ActivityKind, ActivityStore};
 use cortex_jobs::{TaskStatus, TaskStore};
-use cortex_model_host::{ModelHostRegistry, ModelHostState};
+use cortex_model_host::{discover_models, ModelHostRegistry, ModelHostState};
 use cortex_observability::{
     new_event_id, new_trace_id, EventSeverity, ProjectEvent, ProjectEventKind,
     ProjectObservability, TraceContext,
@@ -30,7 +30,10 @@ use cortex_registry::{
 use cortex_review::ReviewSnapshot;
 use cortex_service::{ServiceRegistry, ServiceState, ServiceStatus};
 use cortex_settings::CortexSettings;
-use cortex_universal::{choose_repair_strategy, RepairSignal, RepairStrategy};
+use cortex_universal::{
+    choose_repair_strategy, plan_project, BuildSystemKind as UniversalBuildSystemKind,
+    LanguageKind as UniversalLanguageKind, RepairSignal, RepairStrategy,
+};
 use cortex_vault::{LibraryItemKind, LibraryMemoryDatabase};
 use cortex_workspace::{Workspace, WorkspaceProfile};
 use serde::{Deserialize, Serialize};
@@ -105,7 +108,7 @@ impl DesktopBootstrap {
         let bootstrap =
             Workspace::open(workspace_root.as_ref()).map_err(|error| error.to_string())?;
         let registry = WorkspaceRegistry::open_default()?;
-        let _ = registry.ensure_default_library_root()?;
+        let _ = registry.ensure_library_root_for_workspace(workspace_root.as_ref())?;
         let _ = registry.ensure_cortex_self_registered()?;
         let record = registry.attach(&bootstrap)?;
         let workspace = registry.open_workspace(&record)?;
@@ -257,7 +260,6 @@ pub struct DesktopController {
     settings: CortexSettings,
     library_memory: Option<LibraryMemoryDatabase>,
     observability: ProjectObservability,
-    runtime_processes: ProcessService,
     project_id: String,
     active_conversation: Option<String>,
     pending_handoff: Option<PendingHandoff>,
@@ -275,7 +277,7 @@ impl DesktopController {
     fn open_internal(workspace_root: &Path, owns_runtime_lifetime: bool) -> Result<Self, String> {
         let bootstrap = Workspace::open(workspace_root).map_err(|error| error.to_string())?;
         let registry = WorkspaceRegistry::open_default()?;
-        let _ = registry.ensure_default_library_root()?;
+        let _ = registry.ensure_library_root_for_workspace(workspace_root)?;
         let _ = registry.ensure_cortex_self_registered()?;
         let record = registry.attach(&bootstrap)?;
         let workspace = registry.open_workspace(&record)?;
@@ -315,7 +317,6 @@ impl DesktopController {
             settings,
             library_memory,
             observability,
-            runtime_processes: ProcessService::default(),
             project_id,
             active_conversation,
             pending_handoff: None,
@@ -410,7 +411,6 @@ impl DesktopController {
             // actually require the full library catalog load it on demand.
             library_memory: None,
             observability: self.observability.clone(),
-            runtime_processes: ProcessService::default(),
             project_id: self.project_id.clone(),
             active_conversation: self.active_conversation.clone(),
             pending_handoff: self.pending_handoff.clone(),
@@ -2956,8 +2956,10 @@ Do not ask the user to edit files and do not stop at suggested code.\n\nORIGINAL
                     transcript_text.clone(),
                 )?;
                 if matches!(mode, "apply" | "repair") {
-                    self.append_result_diff_bubbles(&id, value)?;
-                    self.append_result_file_bubbles(&id, value)?;
+                    let diff_appended = self.append_result_diff_bubbles(&id, value)?;
+                    if !diff_appended {
+                        self.append_result_file_bubbles(&id, value)?;
+                    }
                 }
                 self.info = format!("CORTEX {}\n\n{}", mode.to_ascii_uppercase(), text);
                 self.activity.append(
@@ -2985,28 +2987,27 @@ Do not ask the user to edit files and do not stop at suggested code.\n\nORIGINAL
         &mut self,
         conversation_id: &str,
         result: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let verified = result
             .get("compile_verified")
             .and_then(Value::as_bool)
             .unwrap_or(false);
         let status = if verified { "Build Verified" } else { "Saved" };
+        let mut appended = false;
 
         if let Ok(review) = ReviewSnapshot::collect(self.workspace.root()) {
             if !review.diff.trim().is_empty() {
-                for (path, diff) in split_unified_diff_by_file(&review.diff)
-                    .into_iter()
-                    .take(16)
-                {
+                for (path, diff) in split_unified_diff_by_file(&review.diff).into_iter().take(8) {
                     self.append_diff_bubble(conversation_id, &path, status, &diff)?;
+                    appended = true;
                 }
-                return Ok(());
+                return Ok(appended);
             }
         }
 
         if let Some(files) = result.get("transaction_files") {
             if let Some(created) = files.get("created").and_then(Value::as_array) {
-                for item in created.iter().take(16) {
+                for item in created.iter().take(8) {
                     let Some(path) = item.as_str() else { continue };
                     let resolved = self
                         .workspace
@@ -3022,16 +3023,17 @@ Do not ask the user to edit files and do not stop at suggested code.\n\nORIGINAL
                         path.replace('\\', "/"),
                         line_count
                     );
-                    for line in text.lines().take(240) {
+                    for line in text.lines().take(160) {
                         diff.push('+');
                         diff.push_str(line);
                         diff.push('\n');
                     }
                     self.append_diff_bubble(conversation_id, path, status, &diff)?;
+                    appended = true;
                 }
             }
         }
-        Ok(())
+        Ok(appended)
     }
 
     fn append_diff_bubble(
@@ -3132,7 +3134,7 @@ Do not ask the user to edit files and do not stop at suggested code.\n\nORIGINAL
             conversation_id,
             ConversationRole::Tool,
             format!(
-                "[FileBubble]\\n\\n{}",
+                "[FileBubble]\n\n{}",
                 serde_json::to_string(&payload).map_err(|error| error.to_string())?
             ),
         )?;
@@ -3299,6 +3301,20 @@ COMPILER REPAIR CAPSULE:
         .any(|needle| lower.contains(needle))
     }
 
+    fn m11u2_prompt_requests_window(prompt: &str) -> bool {
+        let lower = prompt.to_ascii_lowercase();
+        [
+            "window",
+            "windowed",
+            "desktop app",
+            "desktop application",
+            "gui",
+            "native app",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    }
+
     fn m11u2_prompt_requests_title_change(prompt: &str) -> bool {
         let lower = prompt.to_ascii_lowercase();
         lower.contains("title")
@@ -3320,13 +3336,14 @@ COMPILER REPAIR CAPSULE:
             ));
         }
 
+        let require_window = Self::m11u2_prompt_requests_window(prompt);
         let require_title_change = Self::m11u2_prompt_requests_title_change(prompt);
         let runtime = client.tool(
             "runtime.verify_project",
             json!({
                 "minimum_alive_ms": 2_000,
                 "keep_running": true,
-                "require_window": true,
+                "require_window": require_window,
                 "require_title_change": require_title_change,
                 "title_sample_interval_ms": 1_200
             }),
@@ -3399,6 +3416,32 @@ COMPILER REPAIR CAPSULE:
                 // Re-read transaction evidence because bounded repair continuation may
                 // have touched additional project files after the first repair pass.
                 let transaction_files = client.tool("source.transaction_files", json!({}))?;
+                let intent_acceptance = project_intent_acceptance(self.workspace.root())?;
+                let intent_success = intent_acceptance
+                    .get("success")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                self.activity.append(
+                    if intent_success {
+                        ActivityKind::Build
+                    } else {
+                        ActivityKind::Error
+                    },
+                    "Project intent acceptance",
+                    if intent_success {
+                        "implemented project matches the saved technology/application intent contract"
+                    } else {
+                        "quality gate passed, but the implemented project does not match the saved intent contract"
+                    },
+                    Some(intent_success),
+                    intent_acceptance.clone(),
+                )?;
+                if !intent_success {
+                    return Err(format!(
+                        "Cortex produced a buildable project that does not satisfy the requested project intent. Completion is denied.\n\n{}",
+                        compact_json(&intent_acceptance, 10_000)
+                    ));
+                }
                 let runtime_acceptance = if Self::m11u2_prompt_requests_runtime(prompt) {
                     Some(Self::m11u2_runtime_acceptance(&client, prompt)?)
                 } else {
@@ -3413,6 +3456,7 @@ COMPILER REPAIR CAPSULE:
                     "transaction_commit": transaction_commit,
                     "project_profile": profile,
                     "verification": gate,
+                    "intent_acceptance": intent_acceptance,
                     "runtime_acceptance": runtime_acceptance,
                     "compile_verified": true,
                     "quality_verified": true,
@@ -3559,6 +3603,32 @@ COMPILER REPAIR CAPSULE:
                 // H54: commit the durable source transaction only after the
                 // complete detected quality gate succeeds. A later project request
                 // therefore starts cleanly, while failed work remains resumable.
+                let intent_acceptance = project_intent_acceptance(self.workspace.root())?;
+                let intent_success = intent_acceptance
+                    .get("success")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                self.activity.append(
+                    if intent_success {
+                        ActivityKind::Build
+                    } else {
+                        ActivityKind::Error
+                    },
+                    "Project intent acceptance",
+                    if intent_success {
+                        "implemented project matches the saved technology/application intent contract"
+                    } else {
+                        "quality gate passed, but the implemented project does not match the saved intent contract"
+                    },
+                    Some(intent_success),
+                    intent_acceptance.clone(),
+                )?;
+                if !intent_success {
+                    return Err(format!(
+                        "Cortex produced a buildable project that does not satisfy the requested project intent. Completion is denied.\n\n{}",
+                        compact_json(&intent_acceptance, 10_000)
+                    ));
+                }
                 let runtime_acceptance = if Self::m11u2_prompt_requests_runtime(prompt) {
                     Some(Self::m11u2_runtime_acceptance(&client, prompt)?)
                 } else {
@@ -3573,6 +3643,7 @@ COMPILER REPAIR CAPSULE:
                     "transaction_commit": transaction_commit,
                     "project_profile": profile,
                     "verification": gate,
+                    "intent_acceptance": intent_acceptance,
                     "runtime_acceptance": runtime_acceptance,
                     "compile_verified": true,
                     "quality_verified": true,
@@ -3676,6 +3747,7 @@ COMPILER REPAIR CAPSULE:
         prompt: &str,
     ) -> Result<(), String> {
         let project_name = standalone_project_name(prompt);
+        let intent = infer_project_intent(prompt);
         let target = if let Ok(Some(layout)) = self.registry.library_layout() {
             available_project_target(&layout.projects, &project_name)?
         } else {
@@ -3683,18 +3755,29 @@ COMPILER REPAIR CAPSULE:
         };
 
         let message = format!(
-            "I can create this as a completely separate Rust project without modifying `{}`.\n\n\
+            "I can create this as a completely separate project without modifying `{}`.\n\n\
 Project: `{}`\n\
 Location: `{}`\n\
-Scaffold: standalone Cargo binary (`cargo new --bin --vcs none`)\n\n\
+Detected language: {}\n\
+Detected build system: {}\n\
+Target platform: {}\n\
+Application type: {}\n\
+Scaffold: {}\n\
+Runtime proof required: {}\n\n\
 If you reply **Yes**, Cortex will create and register that project, switch this conversation to it, \
-hand the original request to the generic milestone-driven development workflow, require actual source changes, \
-run the detected Rust quality gate, use the bounded repair budget if verification fails, and only report \
-success when required milestone evidence is green.\n\n\
+hand the original request to the generic development workflow, require actual source changes, \
+run the detected project quality gate, enforce the saved project-intent contract, and only report \
+success when both technical verification and requested-intent acceptance are green.\n\n\
 Reply **No** to leave the filesystem unchanged.",
             self.workspace.profile().name,
             project_name,
-            target.display()
+            target.display(),
+            intent_value(&intent.language),
+            intent_value(&intent.build_system),
+            intent_value(&intent.platform),
+            intent_value(&intent.application_kind),
+            project_scaffold_label(&intent),
+            if intent.runtime_required { "yes" } else { "no" },
         );
 
         self.conversations
@@ -3704,6 +3787,7 @@ Reply **No** to leave the filesystem unchanged.",
             original_prompt: prompt.to_string(),
             project_name,
             target,
+            intent,
         });
         self.persist_background_state()?;
         self.runtime_status = "awaiting approval / create standalone project".into();
@@ -3758,7 +3842,8 @@ Reply **No** to leave the filesystem unchanged.",
         self.pending_project_creation = None;
         self.persist_background_state()?;
 
-        create_standalone_rust_binary(&pending.target)?;
+        let intent = normalized_project_intent(&pending.intent, &pending.original_prompt);
+        create_standalone_project(&pending.target, &pending.project_name, &intent)?;
 
         let created_workspace =
             Workspace::open(&pending.target).map_err(|error| error.to_string())?;
@@ -3777,11 +3862,12 @@ Reply **No** to leave the filesystem unchanged.",
             &transferred.id,
             ConversationRole::Assistant,
             format!(
-                "[Developer]\n\nCreated and registered standalone project `{}` at `{}`. \
+                "[Developer]\n\nCreated and registered standalone project `{}` at `{}` using the `{}` scaffold. \
 Cortex is now attached to the NEW project; the previous workspace remains untouched. \
-I am continuing the original request through the generic development pipeline and will preserve milestone/build/runtime evidence before reporting success.",
+The saved project-intent contract is authoritative for language/build/runtime acceptance, so a green compiler alone cannot satisfy the request if the resulting project is the wrong technology or application type.",
                 pending.project_name,
-                pending.target.display()
+                pending.target.display(),
+                project_scaffold_label(&intent),
             ),
         )?;
         replacement.active_conversation = Some(transferred.id);
@@ -3808,17 +3894,23 @@ I am continuing the original request through the generic development pipeline an
             json!({"development_run_id": development_run.id}),
         )?;
 
+        let intent_json =
+            serde_json::to_string_pretty(&intent).unwrap_or_else(|_| "{}".to_string());
         let implementation_prompt = format!(
-            "You are now attached to a newly-created standalone Rust binary project at `{}`. \
+            "You are now attached to a newly-created standalone project at `{}`. \
 Implement the user's ORIGINAL request in THIS new project only. \
-Do not modify or reference the previous Open2D/O2DF workspace. \
+Do not modify or reference the previous workspace. \
+The PROJECT INTENT CONTRACT below is authoritative. Do not silently change the requested language, build system, platform, or application type just because another scaffold is easier. \
 Use the smallest practical dependency set and current compileable APIs. \
-You MUST materially edit project source (and Cargo.toml when needed). \
+You MUST materially edit project source and any required project manifest/build files. \
 Do not merely paste sample code into chat. A prose/code-snippet-only answer is a failed implementation. \
 Keep the final chat response concise: changed files, quality/runtime evidence, and blockers; do not dump large source listings. \
-Treat the active Cortex development run as durable milestone state, not as a special-case demo. Finish only after the implementation itself is present in files and the applicable project quality gate is green.\n\n\
+Treat the active Cortex development run as durable milestone state, not as a special-case demo. \
+Finish only after the implementation exists in project files, the applicable quality gate is green, the project-intent contract passes, and requested runtime evidence passes.\n\n\
+PROJECT INTENT CONTRACT:\n{}\n\n\
 ORIGINAL USER REQUEST:\n{}",
             self.workspace.root().display(),
+            intent_json,
             pending.original_prompt
         );
 
@@ -3839,58 +3931,19 @@ ORIGINAL USER REQUEST:\n{}",
         };
 
         if result
-            .get("compile_verified")
+            .get("quality_verified")
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            let launch = self
-                .runtime_processes
-                .resolve_rust_debug_binary(self.workspace.root())
-                .and_then(|executable| {
-                    let pid = self.runtime_processes.spawn_project_executable(
-                        self.workspace.root(),
-                        "Cortex managed project runtime",
-                        Some(self.project_id.clone()),
-                        &executable,
-                        &[],
-                    )?;
-                    Ok((pid, executable))
-                });
-            match launch {
-                Ok((pid, executable)) => {
-                    let development_store =
-                        DevelopmentStore::open(&self.workspace.cortex_state_dir())?;
-                    if let Some(mut run) = development_store.active()? {
-                        run.add_evidence(
-                            "runtime.launch",
-                            "Built executable launched directly under Cortex Desktop ownership",
-                            Some(executable.clone()),
-                            json!({"pid": pid}),
-                        );
-                        development_store.save(&run)?;
-                    }
-                    self.conversations.append(
-                        self.active_conversation.as_deref().unwrap_or_default(),
-                        ConversationRole::Assistant,
-                        format!(
-                            "[Developer]\n\nThe quality gate passed. I launched the actual built executable `{}` under Cortex ownership (PID {pid}). The project remains registered in Cortex as `{}`.",
-                            executable.display(),
-                            pending.project_name
-                        ),
-                    )?;
-                    self.runtime_status = format!("online / project launched / pid={pid}");
-                }
-                Err(error) => {
-                    self.conversations.append(
-                        self.active_conversation.as_deref().unwrap_or_default(),
-                        ConversationRole::Assistant,
-                        format!(
-                            "[Developer]\n\nThe source quality gate passed, but direct executable launch failed: {error}\nThe verified source remains intact and launch can be retried without changing the project."
-                        ),
-                    )?;
-                    self.runtime_status = "online / quality verified / launch failed".into();
-                }
-            }
+            let runtime_verified = result
+                .get("runtime_verified")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            self.runtime_status = if runtime_verified {
+                "online / intent verified / runtime verified".into()
+            } else {
+                "online / intent verified / quality verified".into()
+            };
         }
 
         Ok(true)
@@ -5343,6 +5396,25 @@ Examples:\n• roadmap\n• renderer\n• project browser\n• last build failur
             .registry
             .library_root()?
             .ok_or_else(|| "Cortex Vault root is not configured".to_string())?;
+        let models_root = library.root.join("Models");
+        let catalog = discover_models(&models_root)?;
+        if catalog.models.is_empty() {
+            let detail = native_models_unavailable_detail(&models_root);
+            self.runtime_status = "native models / not configured".into();
+            self.activity.append(
+                ActivityKind::Service,
+                "Cortex Native Models",
+                &detail,
+                Some(false),
+                json!({
+                    "provider":"native",
+                    "state":"not_configured",
+                    "models_root":models_root,
+                    "models":0
+                }),
+            )?;
+            return Err(detail);
+        }
         if self.model_host.is_none() {
             self.model_host = Some(ModelHostRegistry::new(&library.root)?);
         }
@@ -5487,12 +5559,32 @@ enum HandoffMode {
     Repair,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+struct ProjectIntentContract {
+    #[serde(default)]
+    language: String,
+    #[serde(default)]
+    build_system: String,
+    #[serde(default)]
+    platform: String,
+    #[serde(default)]
+    application_kind: String,
+    #[serde(default)]
+    scaffold: String,
+    #[serde(default)]
+    expected_window: bool,
+    #[serde(default)]
+    runtime_required: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PendingProjectCreation {
     conversation_id: String,
     original_prompt: String,
     project_name: String,
     target: PathBuf,
+    #[serde(default)]
+    intent: ProjectIntentContract,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -6514,7 +6606,11 @@ fn conversation_blocks(conversation: Conversation) -> Vec<DesktopChatBlock> {
                         };
                     }
                 }
-                if let Some(raw) = message.content.strip_prefix("[FileBubble]\n\n") {
+                let file_bubble = message
+                    .content
+                    .strip_prefix("[FileBubble]\n\n")
+                    .or_else(|| message.content.strip_prefix("[FileBubble]\\n\\n"));
+                if let Some(raw) = file_bubble {
                     if let Ok(payload) = serde_json::from_str::<FileBubblePayload>(raw) {
                         let mut preview = payload.preview;
                         if payload.truncated {
@@ -6640,6 +6736,474 @@ fn tail_chars(text: &str, max_chars: usize) -> String {
         return text.to_string();
     }
     text.chars().skip(total - max_chars).collect()
+}
+
+fn infer_project_intent(prompt: &str) -> ProjectIntentContract {
+    let lower = prompt.to_ascii_lowercase();
+    let contains_any = |terms: &[&str]| terms.iter().any(|term| lower.contains(term));
+
+    let wants_cpp = contains_any(&["c++", "cpp", "c plus plus"]);
+    let wants_rust = contains_any(&["rust", "cargo"]);
+    let wants_cmake = lower.contains("cmake");
+    let wants_windows = contains_any(&["windows", "win32", "win64"]);
+    let wants_gui = contains_any(&[
+        "desktop app",
+        "desktop application",
+        "windows app",
+        "windows application",
+        "gui",
+        "windowed",
+        "native window",
+        "working window",
+    ]);
+    let wants_console = lower.contains("console");
+    let runtime_required = prompt_requests_launch(prompt)
+        || contains_any(&[
+            "launch the app",
+            "launch it",
+            "run the actual",
+            "prove it runs",
+        ]);
+
+    let (language, build_system, scaffold) = if wants_cpp || wants_cmake {
+        (
+            "cpp".to_string(),
+            "cmake".to_string(),
+            if wants_gui || wants_windows {
+                "cpp_cmake_windows_gui".to_string()
+            } else {
+                "cpp_cmake_console".to_string()
+            },
+        )
+    } else if wants_rust {
+        (
+            "rust".to_string(),
+            "cargo".to_string(),
+            "rust_cargo".to_string(),
+        )
+    } else if contains_any(&["python"]) {
+        (
+            "python".to_string(),
+            "python".to_string(),
+            "universal_empty".to_string(),
+        )
+    } else if contains_any(&["typescript", "javascript", "node"]) {
+        (
+            if lower.contains("typescript") {
+                "typescript".to_string()
+            } else {
+                "javascript".to_string()
+            },
+            "node".to_string(),
+            "universal_empty".to_string(),
+        )
+    } else if contains_any(&["java", "gradle"]) {
+        (
+            "java".to_string(),
+            "gradle".to_string(),
+            "universal_empty".to_string(),
+        )
+    } else if contains_any(&["c#", "csharp", ".net", "dotnet"]) {
+        (
+            "csharp".to_string(),
+            "dotnet".to_string(),
+            "universal_empty".to_string(),
+        )
+    } else if lower.contains("go ") || lower.starts_with("go ") || lower.contains("golang") {
+        (
+            "go".to_string(),
+            "go".to_string(),
+            "universal_empty".to_string(),
+        )
+    } else {
+        // Compatibility default for existing Cortex new-project behavior. The
+        // intent itself remains unspecified, so acceptance will not falsely claim
+        // the user requested Rust. Explicit technologies always override this.
+        (String::new(), String::new(), "rust_compat".to_string())
+    };
+
+    let application_kind = if wants_gui {
+        "desktop_gui".to_string()
+    } else if wants_console {
+        "console".to_string()
+    } else {
+        String::new()
+    };
+
+    ProjectIntentContract {
+        language,
+        build_system,
+        platform: if wants_windows {
+            "windows".to_string()
+        } else {
+            String::new()
+        },
+        application_kind,
+        scaffold,
+        expected_window: wants_gui,
+        runtime_required,
+    }
+}
+
+fn normalized_project_intent(
+    existing: &ProjectIntentContract,
+    original_prompt: &str,
+) -> ProjectIntentContract {
+    if existing.scaffold.trim().is_empty() {
+        infer_project_intent(original_prompt)
+    } else {
+        existing.clone()
+    }
+}
+
+fn intent_value(value: &str) -> &str {
+    if value.trim().is_empty() {
+        "unspecified"
+    } else {
+        value
+    }
+}
+
+fn project_scaffold_label(intent: &ProjectIntentContract) -> &'static str {
+    match intent.scaffold.as_str() {
+        "cpp_cmake_windows_gui" => "C++ / CMake / native Windows GUI",
+        "cpp_cmake_console" => "C++ / CMake console",
+        "rust_cargo" => "Rust / Cargo",
+        "universal_empty" => "universal empty project boundary",
+        _ => "Rust / Cargo compatibility default",
+    }
+}
+
+fn write_project_intent_contract(
+    target: &Path,
+    intent: &ProjectIntentContract,
+) -> Result<(), String> {
+    let cortex_dir = target.join(".cortex");
+    fs::create_dir_all(&cortex_dir).map_err(|error| error.to_string())?;
+    let bytes = serde_json::to_vec_pretty(intent).map_err(|error| error.to_string())?;
+    fs::write(cortex_dir.join("project-intent.json"), bytes).map_err(|error| error.to_string())
+}
+
+fn create_standalone_project(
+    target: &Path,
+    project_name: &str,
+    intent: &ProjectIntentContract,
+) -> Result<(), String> {
+    match intent.scaffold.as_str() {
+        "cpp_cmake_windows_gui" => {
+            create_standalone_cpp_cmake(target, project_name, true)?;
+        }
+        "cpp_cmake_console" => {
+            create_standalone_cpp_cmake(target, project_name, false)?;
+        }
+        "universal_empty" => {
+            if target.exists() {
+                return Err(format!(
+                    "standalone project target already exists: {}",
+                    target.display()
+                ));
+            }
+            fs::create_dir_all(target.join(".cortex")).map_err(|error| error.to_string())?;
+        }
+        _ => create_standalone_rust_binary(target)?,
+    }
+    write_project_intent_contract(target, intent)
+}
+
+fn cmake_target_name(project_name: &str) -> String {
+    let mut result = project_name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    while result.starts_with('_') {
+        result.remove(0);
+    }
+    if result.is_empty()
+        || !result
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphabetic())
+    {
+        result.insert_str(0, "cortex_app_");
+    }
+    result.chars().take(48).collect()
+}
+
+fn create_standalone_cpp_cmake(
+    target: &Path,
+    project_name: &str,
+    windows_gui: bool,
+) -> Result<(), String> {
+    if target.exists() {
+        return Err(format!(
+            "standalone project target already exists: {}",
+            target.display()
+        ));
+    }
+
+    fs::create_dir_all(target.join("src")).map_err(|error| error.to_string())?;
+    fs::create_dir_all(target.join(".cortex")).map_err(|error| error.to_string())?;
+
+    let target_name = cmake_target_name(project_name);
+    let add_executable = if windows_gui {
+        format!("add_executable({target_name} WIN32 src/main.cpp)")
+    } else {
+        format!("add_executable({target_name} src/main.cpp)")
+    };
+    let cmake = format!(
+        "cmake_minimum_required(VERSION 3.20)\n\
+project({target_name} LANGUAGES CXX)\n\n\
+set(CMAKE_CXX_STANDARD 20)\n\
+set(CMAKE_CXX_STANDARD_REQUIRED ON)\n\
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY \"${{CMAKE_BINARY_DIR}}/bin\")\n\
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG \"${{CMAKE_BINARY_DIR}}/bin\")\n\
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE \"${{CMAKE_BINARY_DIR}}/bin\")\n\
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO \"${{CMAKE_BINARY_DIR}}/bin\")\n\
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL \"${{CMAKE_BINARY_DIR}}/bin\")\n\n\
+{add_executable}\n\
+target_compile_definitions({target_name} PRIVATE UNICODE _UNICODE)\n"
+    );
+    fs::write(target.join("CMakeLists.txt"), cmake).map_err(|error| error.to_string())?;
+
+    let source = if windows_gui {
+        r#"#include <windows.h>
+
+LRESULT CALLBACK CortexScaffoldWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    switch (message) {
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+    default:
+        return DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+}
+
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
+    const wchar_t class_name[] = L"CortexScaffoldWindow";
+    WNDCLASSW window_class{};
+    window_class.lpfnWndProc = CortexScaffoldWindowProc;
+    window_class.hInstance = instance;
+    window_class.lpszClassName = class_name;
+    window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+
+    if (!RegisterClassW(&window_class)) {
+        return 1;
+    }
+
+    HWND window = CreateWindowExW(
+        0,
+        class_name,
+        L"Cortex C++ scaffold - implement the requested application",
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        720,
+        480,
+        nullptr,
+        nullptr,
+        instance,
+        nullptr);
+
+    if (!window) {
+        return 2;
+    }
+
+    ShowWindow(window, show_command);
+    UpdateWindow(window);
+
+    MSG message{};
+    while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+    return static_cast<int>(message.wParam);
+}
+"#
+    } else {
+        r#"#include <iostream>
+
+int main() {
+    std::cout << "Cortex C++ scaffold - implement the requested application\n";
+    return 0;
+}
+"#
+    };
+    fs::write(target.join("src").join("main.cpp"), source).map_err(|error| error.to_string())?;
+
+    #[cfg(windows)]
+    let artifact = format!(".cortex/build/cmake/bin/{target_name}.exe");
+    #[cfg(not(windows))]
+    let artifact = format!(".cortex/build/cmake/bin/{target_name}");
+
+    let profile = json!({
+        "validate": ["cmake", "-S", ".", "-B", ".cortex/build/cmake"],
+        "build": ["cmake", "--build", ".cortex/build/cmake", "--config", "Debug"],
+        "test": ["ctest", "--test-dir", ".cortex/build/cmake", "-C", "Debug", "--output-on-failure"],
+        "run": [artifact.clone()],
+        "artifact": artifact,
+        "expected_window": windows_gui,
+    });
+    fs::write(
+        target.join(".cortex").join("project.json"),
+        serde_json::to_vec_pretty(&profile).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+fn project_intent_acceptance(root: &Path) -> Result<Value, String> {
+    let path = root.join(".cortex").join("project-intent.json");
+    if !path.is_file() {
+        return Ok(json!({
+            "required": false,
+            "success": true,
+            "diagnostics": [],
+        }));
+    }
+
+    let intent: ProjectIntentContract =
+        serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("invalid project intent contract: {error}"))?;
+    let plan = plan_project(root, intent.runtime_required);
+    let mut diagnostics = Vec::<String>::new();
+
+    let language_ok = match intent.language.as_str() {
+        "" => true,
+        "cpp" => plan.profile.languages.contains(&UniversalLanguageKind::Cpp),
+        "rust" => plan
+            .profile
+            .languages
+            .contains(&UniversalLanguageKind::Rust),
+        "python" => plan
+            .profile
+            .languages
+            .contains(&UniversalLanguageKind::Python),
+        "javascript" => plan
+            .profile
+            .languages
+            .contains(&UniversalLanguageKind::JavaScript),
+        "typescript" => plan
+            .profile
+            .languages
+            .contains(&UniversalLanguageKind::TypeScript),
+        "java" => plan
+            .profile
+            .languages
+            .contains(&UniversalLanguageKind::Java),
+        "csharp" => plan
+            .profile
+            .languages
+            .contains(&UniversalLanguageKind::CSharp),
+        "go" => plan.profile.languages.contains(&UniversalLanguageKind::Go),
+        _ => true,
+    };
+    if !language_ok {
+        diagnostics.push(format!(
+            "requested language `{}` does not match detected languages {:?}",
+            intent.language, plan.profile.languages
+        ));
+    }
+
+    let build_ok = match intent.build_system.as_str() {
+        "" => true,
+        "cargo" => plan
+            .profile
+            .build_systems
+            .contains(&UniversalBuildSystemKind::Cargo),
+        "cmake" => plan
+            .profile
+            .build_systems
+            .contains(&UniversalBuildSystemKind::CMake),
+        "python" => plan
+            .profile
+            .build_systems
+            .contains(&UniversalBuildSystemKind::Python),
+        "node" => plan
+            .profile
+            .build_systems
+            .contains(&UniversalBuildSystemKind::Node),
+        "gradle" => plan
+            .profile
+            .build_systems
+            .contains(&UniversalBuildSystemKind::Gradle),
+        "dotnet" => plan
+            .profile
+            .build_systems
+            .contains(&UniversalBuildSystemKind::DotNet),
+        "go" => plan
+            .profile
+            .build_systems
+            .contains(&UniversalBuildSystemKind::Go),
+        _ => true,
+    };
+    if !build_ok {
+        diagnostics.push(format!(
+            "requested build system `{}` does not match detected build systems {:?}",
+            intent.build_system, plan.profile.build_systems
+        ));
+    }
+
+    if intent.build_system == "cmake" && root.join("Cargo.toml").is_file() {
+        diagnostics.push(
+            "requested standalone CMake project contains an unexpected Cargo.toml; refusing to accept a Rust substitution"
+                .into(),
+        );
+    }
+    if intent.build_system == "cargo" && root.join("CMakeLists.txt").is_file() {
+        diagnostics.push(
+            "requested standalone Cargo project contains an unexpected CMakeLists.txt; refusing to accept a CMake substitution"
+                .into(),
+        );
+    }
+
+    if intent.expected_window {
+        let explicit_window_profile = plan
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.expected_window);
+        let cmake_window_target = fs::read_to_string(root.join("CMakeLists.txt"))
+            .map(|source| {
+                source.to_ascii_lowercase().contains("add_executable")
+                    && source.to_ascii_lowercase().contains("win32")
+            })
+            .unwrap_or(false);
+        let rust_window_subsystem = fs::read_to_string(root.join("src").join("main.rs"))
+            .map(|source| source.contains("windows_subsystem"))
+            .unwrap_or(false);
+        if !(explicit_window_profile || cmake_window_target || rust_window_subsystem) {
+            diagnostics.push(
+                "requested desktop/windowed application does not expose an expected-window runtime profile or a windowed build target"
+                    .into(),
+            );
+        }
+    }
+
+    if intent.platform == "windows" && intent.language == "cpp" {
+        let has_cpp_entry =
+            root.join("src").join("main.cpp").is_file() || root.join("main.cpp").is_file();
+        if !has_cpp_entry {
+            diagnostics.push(
+                "requested native Windows C++ application is missing a C++ entry source".into(),
+            );
+        }
+    }
+
+    let success = diagnostics.is_empty();
+    Ok(json!({
+        "required": true,
+        "success": success,
+        "intent": intent,
+        "detected_profile": plan.profile,
+        "runtime_artifact": plan.runtime,
+        "diagnostics": diagnostics,
+    }))
 }
 
 fn standalone_project_name(prompt: &str) -> String {
@@ -7067,9 +7631,9 @@ fn run_project_quality_gate(client: &CortexClient, profile: &Value) -> Result<Va
     let stages = [
         ("format", "build.project_format"),
         ("validate", "build.project_validate"),
-        ("test", "build.project_test"),
         ("lint", "build.project_lint"),
         ("build", "build.project_build"),
+        ("test", "build.project_test"),
     ];
     let mut results = Vec::new();
     let mut success = true;
@@ -7509,28 +8073,82 @@ fn verified_mutation_response_text(value: &Value) -> String {
         .get("repair_attempts")
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let runtime_verified = value
+        .get("runtime_verified")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let intent_required = value
+        .pointer("/intent_acceptance/required")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let intent_verified = value
+        .pointer("/intent_acceptance/success")
+        .and_then(Value::as_bool)
+        .unwrap_or(!intent_required);
 
     let mut text =
-        "Project changes were applied and the detected project quality gate passed.".to_string();
+        "Done — Cortex applied the requested project changes and the detected project quality gate passed."
+            .to_string();
 
     if !ordered.is_empty() {
-        text.push_str("\n\nVerified project files:");
-        for path in ordered.iter().take(16) {
+        text.push_str("\n\nChanged files");
+        for path in ordered.iter().take(12) {
             text.push_str("\n- `");
             text.push_str(path);
             text.push('`');
         }
-        if ordered.len() > 16 {
-            text.push_str(&format!("\n- … {} additional file(s)", ordered.len() - 16));
+        if ordered.len() > 12 {
+            text.push_str(&format!("\n- … {} additional file(s)", ordered.len() - 12));
         }
+    }
+
+    if let Some(stages) = value
+        .pointer("/verification/stages")
+        .and_then(Value::as_array)
+    {
+        if !stages.is_empty() {
+            text.push_str("\n\nVerification");
+            for stage in stages.iter().take(8) {
+                let capability = stage
+                    .get("capability")
+                    .and_then(Value::as_str)
+                    .unwrap_or("check");
+                let passed = stage
+                    .get("success")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                text.push_str(&format!(
+                    "\n- {}: {}",
+                    capability,
+                    if passed { "passed" } else { "failed" }
+                ));
+            }
+        }
+    }
+
+    if intent_required {
+        text.push_str(&format!(
+            "\n- requested project intent: {}",
+            if intent_verified {
+                "verified"
+            } else {
+                "failed"
+            }
+        ));
+    }
+    if runtime_verified {
+        text.push_str("\n- runtime launch: verified");
     }
 
     if repair_attempts > 0 {
         text.push_str(&format!(
-            "\n\nCortex required {repair_attempts} bounded repair continuation attempt(s) before the quality gate became green."
+            "\n\nCortex used {repair_attempts} bounded repair continuation attempt(s) before reaching GREEN."
         ));
     }
 
+    text.push_str(
+        "\n\nDetailed code changes are available below and in Workbench; raw tool telemetry remains in Activity.",
+    );
     text
 }
 
@@ -7569,6 +8187,13 @@ fn same_executable(left: &Path, right: &Path) -> bool {
         (Ok(left), Ok(right)) => left == right,
         _ => false,
     }
+}
+
+fn native_models_unavailable_detail(models_root: &Path) -> String {
+    format!(
+        "Cortex Native Models are not configured: no GGUF text models were found under {} or the standard LM Studio model folders. Cortex itself remains available; place portable models under this drive's Models folder or select/configure another provider before sending an AI request.",
+        models_root.display()
+    )
 }
 
 fn sibling_model_host_executable() -> Result<PathBuf, String> {
@@ -7766,6 +8391,87 @@ mod tests {
             standalone_project_name("create another project called Tiny Renderer"),
             "tiny-renderer"
         );
+    }
+
+    #[test]
+    fn explicit_cpp_windows_request_selects_cmake_gui_scaffold() {
+        let intent = infer_project_intent(
+            "Create and finish a small native C++ Windows desktop app with CMake and launch it.",
+        );
+        assert_eq!(intent.language, "cpp");
+        assert_eq!(intent.build_system, "cmake");
+        assert_eq!(intent.platform, "windows");
+        assert_eq!(intent.application_kind, "desktop_gui");
+        assert_eq!(intent.scaffold, "cpp_cmake_windows_gui");
+        assert!(intent.expected_window);
+        assert!(intent.runtime_required);
+    }
+
+    #[test]
+    fn project_intent_acceptance_rejects_green_rust_project_for_cpp_contract() {
+        let root =
+            std::env::temp_dir().join(format!("cortex-intent-negative-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join(".cortex")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"wrong_app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let intent = ProjectIntentContract {
+            language: "cpp".into(),
+            build_system: "cmake".into(),
+            platform: "windows".into(),
+            application_kind: "desktop_gui".into(),
+            scaffold: "cpp_cmake_windows_gui".into(),
+            expected_window: true,
+            runtime_required: true,
+        };
+        write_project_intent_contract(&root, &intent).unwrap();
+
+        let acceptance = project_intent_acceptance(&root).unwrap();
+        assert_eq!(
+            acceptance.get("success").and_then(Value::as_bool),
+            Some(false)
+        );
+        let diagnostics = acceptance
+            .get("diagnostics")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert!(!diagnostics.is_empty());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cpp_cmake_gui_scaffold_satisfies_static_intent_contract() {
+        let root =
+            std::env::temp_dir().join(format!("cortex-intent-positive-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let intent = ProjectIntentContract {
+            language: "cpp".into(),
+            build_system: "cmake".into(),
+            platform: "windows".into(),
+            application_kind: "desktop_gui".into(),
+            scaffold: "cpp_cmake_windows_gui".into(),
+            expected_window: true,
+            runtime_required: true,
+        };
+        create_standalone_cpp_cmake(&root, "native_test", true).unwrap();
+        write_project_intent_contract(&root, &intent).unwrap();
+
+        let acceptance = project_intent_acceptance(&root).unwrap();
+        assert_eq!(
+            acceptance.get("success").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(root.join("CMakeLists.txt").is_file());
+        assert!(root.join("src/main.cpp").is_file());
+        assert!(root.join(".cortex/project.json").is_file());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -8286,14 +8992,31 @@ mod tests {
                 "created": [],
                 "touched": ["src/main.rs", "Cargo.toml"]
             },
+            "verification": {
+                "stages": [
+                    {"capability": "format", "success": true},
+                    {"capability": "validate", "success": true},
+                    {"capability": "build", "success": true}
+                ]
+            },
+            "intent_acceptance": {
+                "required": true,
+                "success": true
+            },
             "quality_verified": true,
             "compile_verified": true,
+            "runtime_verified": true,
             "repair_attempts": 2
         });
         let rendered = verified_mutation_response_text(&value);
         assert!(rendered.contains("quality gate passed"));
+        assert!(rendered.contains("Changed files"));
         assert!(rendered.contains("src/main.rs"));
         assert!(rendered.contains("Cargo.toml"));
+        assert!(rendered.contains("Verification"));
+        assert!(rendered.contains("validate: passed"));
+        assert!(rendered.contains("requested project intent: verified"));
+        assert!(rendered.contains("runtime launch: verified"));
         assert!(!rendered.contains("Should I proceed"));
     }
 
@@ -8392,6 +9115,7 @@ Do not stop after explaining the errors. Complete the work."#;
             "and keep updating the time in the window title once per second."
         );
         assert!(DesktopController::m11u2_prompt_requests_runtime(prompt));
+        assert!(DesktopController::m11u2_prompt_requests_window(prompt));
         assert!(DesktopController::m11u2_prompt_requests_title_change(
             prompt
         ));
@@ -8472,5 +9196,14 @@ Do not stop after explaining the errors. Complete the work."#;
         assert!(is_library_scan_request("catalog storage"));
         assert!(is_machine_scan_request("scan my entire PC for projects"));
         assert!(is_machine_scan_request("catalog all drives"));
+    }
+
+    #[test]
+    fn native_models_missing_is_degraded_configuration_not_process_crash_text() {
+        let detail = native_models_unavailable_detail(Path::new(r"E:\Models"));
+        assert!(detail.contains("not configured"));
+        assert!(detail.contains("Cortex itself remains available"));
+        assert!(detail.contains("Models"));
+        assert!(!detail.contains("PID"));
     }
 }

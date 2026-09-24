@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "mode": "catalog_first",
+  "mode": "vault_mirror_and_shared_dependencies",
   "default_library_root_windows": "D:\\CortexLibrary",
   "permissions": {
     "catalog": "read_only",
@@ -14,12 +14,12 @@
     "deep_personal_content_analysis": "off"
   },
   "storage_classes": {
-    "project_source": "git_candidate",
+    "project_source": "vault_cas_mirror_and_git_candidate",
     "project_content": "project_or_vault_by_policy",
     "documentation": "project_or_vault_by_context",
     "archive_backup": "artifact_or_lineage",
     "generated_build": "rebuildable_cache",
-    "dependency_vendor": "dependency_or_vendor",
+    "dependency_vendor": "shared_dependency_store_or_vendor",
     "toolchain_installed": "external_tooling",
     "model_data": "models_store",
     "media": "catalog_only_by_default",
@@ -32,6 +32,70 @@
     "verify_destination_hashes": true,
     "quarantine_before_delete": true,
     "auto_delete_originals": false,
-    "auto_merge_project_copies": false
+    "auto_merge_project_copies": false,
+    "shared_dependency_seed_requires_explicit_action": true,
+    "legacy_cache_delete_requires_explicit_action": true
+  },
+  "vault": {
+    "root_environment_overrides": [
+      "CORTEX_VAULT_ROOT",
+      "PCC_VAULT_ROOT"
+    ],
+    "project_namespace": "projects/<project_key>",
+    "object_store": "objects/sha256",
+    "mirror_mode": "content_addressed_incremental",
+    "mirror_full_green_required": true,
+    "git_bundle_when_available": true,
+    "exclude_duplicate_classes": [
+      "BUILD_OUTPUT",
+      "CACHE",
+      "DEPENDENCY",
+      "HISTORY",
+      "OPERATIONAL",
+      "TRANSPORT",
+      "LINK"
+    ],
+    "snapshot_retention": {
+      "certified_keep": 20,
+      "working_keep": 8,
+      "metadata_prune_requires_explicit_action": true,
+      "cas_gc_requires_quarantine_first": true,
+      "cas_purge_requires_explicit_action": true
+    },
+    "cas_lifecycle": "mark_sweep_plan_then_reversible_quarantine_then_explicit_purge",
+    "mirror_boundary": "project_root_only_no_symlink_or_reparse_traversal",
+    "cas_existing_object_validation": "sha256_required_before_reuse",
+    "full_green_verification": "source_fingerprint_stable_plus_deep_cas_hash_before_green",
+    "project_identity_status": "path-derived-project-key-pending-stable-id-migration",
+    "drive_root_authority_supported": true,
+    "drive_root_authority_note": "CORTEX_VAULT_ROOT may be set to a drive root such as E:\\; governed Vault namespaces are created directly under that root."
+  },
+  "shared_dependencies": {
+    "enabled": true,
+    "rust": {
+      "cargo_home": "shared/dependencies/rust/cargo-home",
+      "target_scope": "project_namespaced_under_shared_root",
+      "target_root": "shared/build/rust/targets/<project_key>",
+      "sccache": "shared/dependencies/rust/sccache",
+      "sccache_auto_use_when_installed": true
+    },
+    "node": {
+      "npm_cache": "shared/dependencies/node/npm-cache"
+    },
+    "python": {
+      "pip_cache": "shared/dependencies/python/pip-cache"
+    },
+    "java": {
+      "gradle_home": "shared/dependencies/java/gradle-home"
+    },
+    "dotnet": {
+      "nuget_packages": "shared/dependencies/dotnet/nuget-packages"
+    },
+    "cpp": {
+      "vcpkg_downloads": "shared/dependencies/cpp/vcpkg-downloads",
+      "vcpkg_binary_cache": "shared/dependencies/cpp/vcpkg-binary-cache"
+    },
+    "legacy_cache_migration": "explicit_only",
+    "automatic_deletion_of_legacy_caches": false
   }
 }

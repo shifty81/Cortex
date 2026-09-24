@@ -1,51 +1,56 @@
-# Cortex N1 — Native Desktop Startup Truth (review-only source candidate)
+# Cortex / Forge Unified Control Project
 
-**Date:** 2026-09-21. **Product:** Cortex, NOT Forge. **Authoritative source reference:** `shifty81/Cortex` commit `5e5e113d6168acac721bb722d169be04b4ec1c3f`; `tools/control/CortexPCC.py` Git blob `9c9f611cf70bbaaffc62b9375c0a05bebe11cc06`.
+**Current authority date:** 2026-09-23  
+**Operational control plane:** Python Forge/PCC + Cortex integration  
+**Rust Forge:** cumulative candidate through RS293; not takeover-certified  
+**Cortex:** intelligence, conversation, agent, provider/model, tool, project-intelligence and automation runtime
 
-## What is implemented
+## Current product direction
 
-- `tools/control/CortexDesktopReadiness.py`: a bounded Windows-only check for a visible, reasonably sized top-level GUI window owned by the exact PID launched by Cortex PCC. Detects early exit (even exit 0), process/window probe errors, and a living but windowless process. Doesn't execute other programs, write files, kill processes, start providers, or treat a window as a chat-ready handshake.
-- `tools/control/tests/test_cortex_desktop_readiness.py`: ten deterministic tests, including early exit, timeout, error handling, delayed window, no shell/process execution, and honest status.
-- A review-only change to `tools/control/CortexPCC.py`: retain typed-contract preflight and existing build/launch path; replace `time.sleep(1.0)` with the bounded PID-specific window observation. Full Gate's *existing* mandatory Python suite includes the new test.
-- `stage_candidate.py`: fail-closed source fingerprint check and output to a NEW directory **outside** the real Cortex repository, with changed files, generated diff and provenance. Doesn't modify the checkout, create a branch, run a gate, touch patch intake or push to GitHub.
+This repository is converging on one operator experience rather than competing top-level tools:
 
-## Why not a normal Cortex `.patch` yet?
+- **Forge** is the primary workstation/application shell and universal project-control surface.
+- **Cortex** is integrated under Forge as the intelligence and automation backend while remaining independently testable/service-capable.
+- **PCC functionality** is the universal project-control spine exposed through Forge and the repository root bootstrap.
+- **Vault** is the governed machine storage/catalog/provenance authority, with shared dependency/cache stores and per-project deduplicated mirrors.
+- **Ember and other projects** remain independent managed projects/integrations, not Cortex-owned source trees.
 
-The user's actual local Cortex source, including dirty/untracked files, is **not** available to this candidate. A full Forge C11 source ZIP is not a replacement. The stager checks the *exact published PCC blob* and refuses other revisions, even if the source looks similar. It makes **review files only**, not a transport accepted by Cortex's transactional patch authority.
+ForgePY/Python PCC remains the production control authority until the Rust Forge lane passes explicit semantic/runtime takeover certification. Do not treat candidate Rust Forge code as production merely because it compiles.
 
-## Optional staging on the local PC (non-mutating)
+## Repository entry point
 
-Extract this candidate ZIP **outside the source checkout and outside all patch inboxes**. In a terminal within that extracted candidate directory:
+Run `PROJECT_CONTROL_CENTER.cmd` from the repository root. It launches the current project-owned PCC GUI/console authority. The native Cortex desktop remains a product/runtime surface; it is not a replacement for the universal Forge/PCC control plane.
 
-```powershell
-py -3 stage_candidate.py --root "C:\Users\Shifty\Desktop\Cortex-main" --stage "C:\Users\Shifty\Desktop\Cortex-N1-Review"
-```
+## Current certification truth
 
-Replace the root with your *actual* Cortex path. `--stage` must name a new directory that does not exist. The script refuses unknown PCC preimages, already-existing module paths, non-Cortex roots and in-repository destinations. If it refuses, **do not manually force its changes**; use the actual source for a rebase.
+The implemented `full` source gate performs:
 
-Review `Cortex-N1-Review/review/CortexPCC.diff` and the three staged source files. The original Cortex tree is unchanged. This kit should not be dropped into root patch intake and should not be treated as installed. To prepare a governed patch for the actual checkout, supply its existing `CortexSourceRollup.py` archive + Git state + current PCC Full Gate/runtime log. The existing source exporter is:
+1. quick/root/toolchain/contract checks;
+2. mandatory Python/PCC regressions;
+3. `cargo fmt --all -- --check`;
+4. Cargo workspace check;
+5. Cargo workspace tests;
+6. Clippy with warnings denied;
+7. Cargo workspace build;
+8. source-stable, content-addressed Vault mirror;
+9. deep CAS verification;
+10. GREEN governed-source marker;
+11. Vault recovery-point certification tied to the GREEN source fingerprint.
 
-```powershell
-# Run from real Cortex root; this writes a source archive, not a source patch.
-python tools/control/CortexSourceRollup.py create --root .
-# Verify using the *exact printed archive filename*:
-python tools/control/CortexSourceRollup.py verify --archive "<actual-created-archive-path>"
-```
+Windows native desktop startup and real provider/chat interaction are separate runtime acceptance evidence until they are safely automated end-to-end. `launch-gui` now requires a visible native window owned by the launched PID instead of treating process survival as UI readiness.
 
-## Local isolated tests
+## Vault/storage authority
 
-```powershell
-py -3 -B -m unittest -v test_stage_candidate tools/control/tests/test_cortex_desktop_readiness.py
-```
+The PCC uses one machine-level Vault. On the intended Windows workstation the configured primary location is `D:\\CortexLibrary` unless explicitly overridden. Shared package/download caches live once under Vault; Rust build targets are project-namespaced to prevent binary collisions; project mirrors use global SHA-256 CAS deduplication.
 
-These tests exercise this candidate, not Cortex's full Python gate or Windows GUI. `cargo`/`rustc` and Windows GUI are unavailable in the authoring environment, so no native build or desktop runtime certification is claimed.
+Project mirrors intentionally exclude VCS internals, build outputs, dependency trees, caches, PCC operational state, debug/log artifacts, update/handoff residue, root transport ZIPs and link/reparse traversal. Lifecycle cleanup is plan-first and quarantine-first; destructive purge requires explicit approval.
 
-## Acceptance before N2 (ForgeGUI UI host)
+## Read next
 
-1. Current checkout fingerprint and source/asset backup established; candidate rebased or exact preimage confirmed.
-2. Existing `contract-migrate` PREVIEW reviewed; no automatic application. If approved, run source-guarded migration and prove backup/receipt.
-3. Real Windows `CortexPCC.py full` GREEN on exact source; start Cortex and observe `WINDOW_VISIBLE` with a runtime log. A timeout/early exit must FAIL, never GREEN.
-4. Manually send a real prompt with the configured provider, observe stream + response, restart and recover same conversation, cancel an agent, verify error-path UI.
-5. Pin and independently build ForgeGUI's `forge_gui_consumer_starter`; only then implement `DesktopHost` presentation adapter, retaining old Win32 host as fallback.
+- `README_FIRST.md` — concise authority/product hierarchy.
+- `docs/QUALITY_GATE_CONTRACT.md` — exact implemented certification boundaries.
+- `docs/CURRENT_IMPLEMENTATION_AUDIT_RS293.md` — Rust Forge candidate state.
+- `docs/TARGET_ARCHITECTURE.md` — target composition.
+- `products/forge-rust/docs/FORGEPY_PARITY_MATRIX.md` — current takeover gap matrix.
 
-**Do not rename C11 Forge into Cortex, replace Cortex Desktop, or introduce a second conversation/operation authority.**
+Historical standalone/N1/R051 manifests remain provenance evidence only. They do not override this file or `README_FIRST.md` as current project authority.

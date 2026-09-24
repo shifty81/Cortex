@@ -1984,51 +1984,46 @@ impl ToolBroker {
                 self.command_result_with_revision(&result)
             }
             "runtime.launch_project" => {
-                let profile = detect_project_profile(self.workspace.root());
-                if !matches!(profile.kind, cortex_development::ProjectKind::Rust) {
-                    return Err("direct executable resolution is currently implemented for Rust projects; other adapters must provide an explicit runtime launcher".into());
+                let plan = cortex_universal::plan_project(self.workspace.root(), true);
+                let runtime = plan.runtime.clone().ok_or_else(|| {
+                    format!(
+                        "Cortex could not resolve a runnable artifact for the detected project profile: {:?}",
+                        plan.profile
+                    )
+                })?;
+                let mut args = runtime.args.clone();
+                if let Some(extra) = call.arguments.get("args").and_then(Value::as_array) {
+                    args.extend(extra.iter().filter_map(Value::as_str).map(str::to_string));
                 }
-                let executable = self
-                    .processes
-                    .resolve_rust_debug_binary(self.workspace.root())?;
-                let args = call
-                    .arguments
-                    .get("args")
-                    .and_then(Value::as_array)
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_string)
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                let pid = self.processes.spawn_project_executable(
+                let (pid, executable) = spawn_universal_runtime(
+                    &mut self.processes,
                     self.workspace.root(),
                     "Cortex project runtime",
-                    None,
-                    &executable,
+                    &runtime,
                     &args,
                 )?;
                 self.record_development_evidence(
                     "runtime.launch",
-                    "Built project executable launched under Cortex ownership",
-                    Some(executable.clone()),
-                    json!({"pid": pid, "args": args}),
+                    "Built project runtime launched under Cortex ownership",
+                    executable.clone(),
+                    json!({
+                        "pid": pid,
+                        "program": runtime.program.clone(),
+                        "args": args,
+                        "expected_window": runtime.expected_window,
+                        "evidence": runtime.evidence.clone(),
+                    }),
                 )?;
-                Ok(json!({"pid": pid, "executable": executable, "args": args}))
+                Ok(json!({
+                    "pid": pid,
+                    "executable": executable,
+                    "program": runtime.program.clone(),
+                    "args": args,
+                    "expected_window": runtime.expected_window,
+                    "evidence": runtime.evidence.clone(),
+                }))
             }
             "runtime.verify_project" => {
-                let profile = detect_project_profile(self.workspace.root());
-                if !profile
-                    .runtime_capabilities
-                    .contains(&cortex_development::RuntimeCapability::Launch)
-                {
-                    return Err("the detected project profile has no root runnable target for generic runtime verification".into());
-                }
-                if !matches!(profile.kind, cortex_development::ProjectKind::Rust) {
-                    return Err("generic runtime completion is currently implemented for runnable Rust package roots; project adapters/checkpoints may provide deeper runtime certification".into());
-                }
                 let minimum_alive_ms = arg_u64(&call.arguments, "minimum_alive_ms")
                     .unwrap_or(1_500)
                     .clamp(100, 10_000);
@@ -2037,11 +2032,6 @@ impl ToolBroker {
                     .get("keep_running")
                     .and_then(Value::as_bool)
                     .unwrap_or(true);
-                let require_window = call
-                    .arguments
-                    .get("require_window")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
                 let require_title_change = call
                     .arguments
                     .get("require_title_change")
@@ -2050,16 +2040,29 @@ impl ToolBroker {
                 let title_sample_interval_ms = arg_u64(&call.arguments, "title_sample_interval_ms")
                     .unwrap_or(1_200)
                     .clamp(250, 5_000);
-                let executable = self
-                    .processes
-                    .resolve_rust_debug_binary(self.workspace.root())?;
-                let pid = self.processes.spawn_project_executable(
+
+                let plan = cortex_universal::plan_project(self.workspace.root(), true);
+                let runtime = plan.runtime.clone().ok_or_else(|| {
+                    format!(
+                        "the detected project profile has no resolvable runtime artifact: {:?}",
+                        plan.profile
+                    )
+                })?;
+                let require_window = call
+                    .arguments
+                    .get("require_window")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(runtime.expected_window);
+
+                let args = runtime.args.clone();
+                let (pid, executable) = spawn_universal_runtime(
+                    &mut self.processes,
                     self.workspace.root(),
                     "Cortex runtime acceptance",
-                    None,
-                    &executable,
-                    &[],
+                    &runtime,
+                    &args,
                 )?;
+
                 std::thread::sleep(Duration::from_millis(minimum_alive_ms));
                 let statuses = self.processes.statuses();
                 let running = statuses.iter().any(|status| {
@@ -2101,9 +2104,11 @@ impl ToolBroker {
                     } else {
                         "Runtime smoke acceptance failed"
                     },
-                    Some(executable.clone()),
+                    executable.clone(),
                     json!({
                         "pid": pid,
+                        "program": runtime.program.clone(),
+                        "args": args,
                         "minimum_alive_ms": minimum_alive_ms,
                         "running": running,
                         "require_window": require_window,
@@ -2112,6 +2117,8 @@ impl ToolBroker {
                         "first_window": first_window,
                         "second_window": second_window,
                         "title_changed": title_changed,
+                        "expected_window": runtime.expected_window,
+                        "evidence": runtime.evidence.clone(),
                         "success": success
                     }),
                 )?;
@@ -2119,6 +2126,8 @@ impl ToolBroker {
                     "success": success,
                     "pid": pid,
                     "executable": executable,
+                    "program": runtime.program.clone(),
+                    "args": args,
                     "minimum_alive_ms": minimum_alive_ms,
                     "kept_running": success && keep_running,
                     "running": running,
@@ -2127,6 +2136,8 @@ impl ToolBroker {
                     "first_window": first_window,
                     "second_window": second_window,
                     "title_changed": title_changed,
+                    "expected_window": runtime.expected_window,
+                    "evidence": runtime.evidence.clone(),
                     "statuses": statuses
                 }))
             }
@@ -2883,8 +2894,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool("build.project_test", "Run the detected project adapter's test stage.", false, json!({"type":"object","properties":{}})),
         tool("build.project_lint", "Run the detected project adapter's lint/static-analysis stage when supported.", false, json!({"type":"object","properties":{}})),
         tool("build.project_build", "Build the active project through its detected project adapter.", false, json!({"type":"object","properties":{}})),
-        tool("runtime.launch_project", "Launch the built project executable under Cortex ownership. Rust binaries are resolved from the project build output; other project adapters can provide runtime launchers.", true, json!({"type":"object","properties":{"args":{"type":"array","items":{"type":"string"}}}})),
-        tool("runtime.verify_project", "Controller-owned runtime completion gate for runnable Rust package roots. Launches the built executable, proves it remains alive, and can require a native window plus a changing title for deterministic GUI acceptance.", true, json!({"type":"object","properties":{"minimum_alive_ms":{"type":"integer"},"keep_running":{"type":"boolean"},"require_window":{"type":"boolean"},"require_title_change":{"type":"boolean"},"title_sample_interval_ms":{"type":"integer"}}})),
+        tool("runtime.launch_project", "Launch the runtime artifact resolved by Cortex's universal project plan under Cortex ownership. Project-local executables and approved interpreter runtimes are supported through the detected adapter/profile.", true, json!({"type":"object","properties":{"args":{"type":"array","items":{"type":"string"}}}})),
+        tool("runtime.verify_project", "Controller-owned runtime completion gate for any project with a resolvable universal RuntimeArtifact. Proves the process remains alive and can require a visible responsive native window plus a changing title.", true, json!({"type":"object","properties":{"minimum_alive_ms":{"type":"integer"},"keep_running":{"type":"boolean"},"require_window":{"type":"boolean"},"require_title_change":{"type":"boolean"},"title_sample_interval_ms":{"type":"integer"}}})),
         tool("runtime.process_status", "Read Cortex-owned runtime process records and live states.", false, json!({"type":"object","properties":{}})),
         tool("runtime.window_info", "Inspect the native main window for a known runtime PID: title, visibility, responsiveness and bounds.", false, json!({"type":"object","properties":{"pid":{"type":"integer"}},"required":["pid"]})),
         tool("runtime.process_stop", "Stop a Cortex-owned runtime process by PID; arbitrary external processes are never terminated.", true, json!({"type":"object","properties":{"pid":{"type":"integer"}},"required":["pid"]})),
@@ -6194,6 +6205,43 @@ fn compact_json_chars(value: &Value, max_chars: usize) -> String {
     let mut compact = text.chars().take(max_chars).collect::<String>();
     compact.push_str("…<truncated>");
     compact
+}
+
+fn spawn_universal_runtime(
+    processes: &mut ProcessService,
+    workspace_root: &Path,
+    label: &str,
+    runtime: &cortex_universal::RuntimeArtifact,
+    args: &[String],
+) -> Result<(u32, Option<PathBuf>), String> {
+    let program = &runtime.program;
+    let project_candidate = if program.is_absolute() {
+        program.clone()
+    } else {
+        workspace_root.join(program)
+    };
+
+    if project_candidate.is_file() {
+        let pid = processes.spawn_project_executable(
+            workspace_root,
+            label,
+            None,
+            &project_candidate,
+            args,
+        )?;
+        return Ok((pid, Some(project_candidate)));
+    }
+
+    let program_text = program.to_string_lossy().to_string();
+    if program.components().count() == 1 {
+        let pid = processes.spawn_owned(workspace_root, label, &program_text, args)?;
+        return Ok((pid, None));
+    }
+
+    Err(format!(
+        "Cortex resolved runtime artifact `{}` but it does not exist under the active project root",
+        project_candidate.display()
+    ))
 }
 
 fn required_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {

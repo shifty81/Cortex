@@ -39,10 +39,37 @@ def _print_hygiene(label: str, root: Path) -> int:
     return 0
 
 
-def _run(argv: Sequence[str], root: Path) -> int:
+def _operation_environment(root: Path) -> dict[str, str]:
+    """Build the authoritative child environment at the operation-host boundary.
+
+    The GUI/launcher may already have injected these variables, but native project
+    PCCs must not depend on that accident of ancestry.  Re-resolve the shared Vault
+    toolchains here so PCC.cmd/ProjectControlCenter.py and every other provider see
+    the same Python/Git/Rust/cache authority.  Existing MSVC/SDK variables remain
+    inherited because dependency_environment prepends to, rather than replaces, PATH.
+    """
     env = os.environ.copy()
+    try:
+        from PCCVaultStorage import dependency_environment, ensure_layout
+
+        ensure_layout(root)
+        if os.environ.get("CORTEX_SHARED_DEPENDENCIES", "1").strip().casefold() not in {
+            "0", "false", "off", "no"
+        }:
+            env.update(dependency_environment(root))
+    except Exception as exc:
+        print(f"[WARN] Operation host could not hydrate shared toolchain environment: {exc}", flush=True)
     env["PCC_OPERATION_HOST_ACTIVE"] = "1"
-    proc = subprocess.Popen(list(argv), cwd=str(root), stdin=subprocess.DEVNULL, env=env)
+    return env
+
+
+def _run(argv: Sequence[str], root: Path) -> int:
+    proc = subprocess.Popen(
+        list(argv),
+        cwd=str(root),
+        stdin=subprocess.DEVNULL,
+        env=_operation_environment(root),
+    )
     return int(proc.wait())
 
 

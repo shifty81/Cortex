@@ -311,17 +311,30 @@ pub fn detect_project_command(
             args,
         });
     }
-    if root.join("CMakeLists.txt").is_file() && root.join("build").is_dir() {
+    if root.join("CMakeLists.txt").is_file() {
+        let build_dir = ".cortex/build/cmake";
         let (program, args) = match operation {
             ProjectOperation::Format | ProjectOperation::Lint => return None,
-            ProjectOperation::Validate | ProjectOperation::Build => {
-                ("cmake", vec!["--build".into(), "build".into()])
-            }
+            ProjectOperation::Validate => (
+                "cmake",
+                vec!["-S".into(), ".".into(), "-B".into(), build_dir.into()],
+            ),
+            ProjectOperation::Build => (
+                "cmake",
+                vec![
+                    "--build".into(),
+                    build_dir.into(),
+                    "--config".into(),
+                    "Debug".into(),
+                ],
+            ),
             ProjectOperation::Test => (
                 "ctest",
                 vec![
                     "--test-dir".into(),
-                    "build".into(),
+                    build_dir.into(),
+                    "-C".into(),
+                    "Debug".into(),
                     "--output-on-failure".into(),
                 ],
             ),
@@ -914,6 +927,35 @@ mod tests {
         assert_eq!(format.args, vec!["fmt", "--", "--check"]);
         let lint = detect_project_command(&root, ProjectOperation::Lint).unwrap();
         assert!(lint.args.contains(&"clippy".to_string()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cmake_project_configures_before_build_and_uses_cortex_build_dir() {
+        let root =
+            std::env::temp_dir().join(format!("cortex-cmake-profile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("CMakeLists.txt"),
+            "cmake_minimum_required(VERSION 3.20)\nproject(demo LANGUAGES CXX)\n",
+        )
+        .unwrap();
+
+        let validate = detect_project_command(&root, ProjectOperation::Validate).unwrap();
+        assert_eq!(validate.program, "cmake");
+        assert_eq!(validate.args, vec!["-S", ".", "-B", ".cortex/build/cmake"]);
+
+        let build = detect_project_command(&root, ProjectOperation::Build).unwrap();
+        assert_eq!(
+            build.args,
+            vec!["--build", ".cortex/build/cmake", "--config", "Debug"]
+        );
+
+        let test = detect_project_command(&root, ProjectOperation::Test).unwrap();
+        assert_eq!(test.program, "ctest");
+        assert!(test.args.contains(&".cortex/build/cmake".to_string()));
+
         std::fs::remove_dir_all(root).unwrap();
     }
 

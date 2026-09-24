@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -14,7 +15,18 @@ def project_root() -> Path:
 
 def run(argv: list[str], root: Path) -> int:
     print('[INFO] START ' + subprocess.list2cmdline(argv))
-    cp = subprocess.run(argv, cwd=str(root), check=False)
+    env = os.environ.copy()
+    control_dir = str((root / 'tools' / 'control').resolve())
+    if control_dir not in sys.path:
+        sys.path.insert(0, control_dir)
+    try:
+        from PCCVaultStorage import dependency_environment, ensure_layout
+        ensure_layout(root)
+        if os.environ.get('CORTEX_SHARED_DEPENDENCIES', '1').strip().casefold() not in {'0', 'false', 'off', 'no'}:
+            env.update(dependency_environment(root))
+    except Exception as exc:
+        print(f'[WARN] Shared dependency environment unavailable; using host defaults: {exc}')
+    cp = subprocess.run(argv, cwd=str(root), check=False, env=env)
     print(('[PASS]' if cp.returncode == 0 else '[FAIL]') + f' END exit={cp.returncode}')
     return int(cp.returncode)
 
