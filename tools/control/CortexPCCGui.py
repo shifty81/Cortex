@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -44,6 +45,14 @@ from PCCVaultCatalog import (
     vault_root as global_vault_root,
 )
 from PCCRepoHygiene import prepare as repo_hygiene_prepare
+from PCCVaultIntakeAudit import (
+    audit_dir as vault_intake_audit_dir,
+    audit_root as vault_intake_root,
+    create_handoff as vault_intake_create_handoff,
+    latest_summary as vault_intake_latest_summary,
+    scan_intake as vault_intake_scan,
+)
+from PCCChatStore import list_conversations as chat_list_conversations, load_messages as chat_load_messages
 from PCCStoragePaths import project_vault_dir as vault_project_dir
 from PCCVaultStorage import (
     dependency_status as vault_dependency_status,
@@ -56,7 +65,7 @@ from PCCVaultStorage import (
     verify_latest_mirror as vault_verify_latest_mirror,
 )
 
-GUI_VERSION = "PCC-GUI-0.11.6"
+GUI_VERSION = "PCC-GUI-0.13.0"
 
 BG = "#090b0e"
 PANEL = "#11151a"
@@ -85,7 +94,7 @@ class CortexPCCGui:
         self.root_path = root.resolve()
         self._startup_hygiene: dict[str, Any] = {}
         try:
-            self._startup_hygiene = repo_hygiene_prepare(self.root_path, apply=True)
+            self._startup_hygiene = repo_hygiene_prepare(self.root_path, apply=False)
         except Exception as exc:
             self._startup_hygiene = {"moved": 0, "error": str(exc)}
         self.contract = ProjectContract.load(self.root_path)
@@ -120,6 +129,16 @@ class CortexPCCGui:
         self._category_command_hosts: list[tuple[Any, tuple[str, ...]]] = []
         self._console_history: list[str] = []
         self._console_history_index: int | None = None
+        self._cortex_conversations: dict[str, str] = {}
+        self._chat_rendered_conversation: str | None = None
+        self._chat_active_buffer: list[str] = []
+        self._chat_conversation_rows: dict[str, str] = {}
+        self._project_probe_generation = 0
+        self._project_probe_after: str | None = None
+        # Status reads are asynchronous and may overlap startup/operation completion.
+        # Only the newest generation may update the authoritative header/dashboard.
+        self._status_generation = 0
+        self._vault_tree_initialized = False
         self._console_compacting_diff = False
         self._vault_busy = False
         self._vault_cancel = False
@@ -144,7 +163,7 @@ class CortexPCCGui:
         if self._startup_hygiene.get("error"):
             self._append_log(f"[WARN] Startup repository hygiene could not complete: {self._startup_hygiene['error']}\n", "warn")
         elif moved:
-            self._append_log(f"[PASS] Startup repository hygiene moved {moved} loose operational artifact(s) out of the repository root.\n", "pass")
+            self._append_log(f"[PASS] Startup repository hygiene preview: {moved} loose operational artifact(s) would move during an explicit operation.\n", "pass")
         else:
             self._append_log("[PASS] Startup repository hygiene: root transport area clean.\n", "pass")
         self._refresh_status_async()
@@ -265,7 +284,7 @@ class CortexPCCGui:
         tabs.pack(fill="x")
         tabs.pack_propagate(False)
 
-        for name in ("Projects", "Project Workspace"):
+        for name in ("Projects", "Chat", "Project Workspace"):
             btn = tk.Button(
                 tabs,
                 text=name,
@@ -304,11 +323,12 @@ class CortexPCCGui:
 
         self.app_content = tk.Frame(self.window, bg=BG)
         self.app_content.pack(fill="both", expand=True)
-        for name in ("Projects", "Project Workspace", "Vault / Forge"):
+        for name in ("Projects", "Chat", "Project Workspace", "Vault / Forge"):
             frame = tk.Frame(self.app_content, bg=BG)
             self._app_frames[name] = frame
 
         self._build_projects_tab(self._app_frames["Projects"])
+        self._build_chat_tab(self._app_frames["Chat"])
         self._build_workspace_tab(self._app_frames["Project Workspace"])
         self._build_vault_tab(self._app_frames["Vault / Forge"])
 
@@ -331,7 +351,7 @@ class CortexPCCGui:
             ("Open Project Workspace", self._open_selected_project, False, False),
             ("Open Folder", self._open_selected_project_folder, False, False),
             ("Remove Registration", self._remove_selected_project, False, True),
-            ("Rescan / Rebind", self._refresh_projects, False, False),
+            ("Refresh", self._refresh_projects, False, False),
         ), preferred_columns=5, minimum_cell_width=150)
 
         panel = self._panel(shell)
@@ -374,6 +394,180 @@ class CortexPCCGui:
             font=("Consolas", 9),
         )
         self.project_detail.pack(fill="x", padx=14, pady=(4, 12))
+
+
+    def _build_chat_tab(self, parent: Any) -> None:
+        tk = self.tk
+        ttk = self.ttk
+
+        shell = tk.Frame(parent, bg=BG)
+        shell.pack(fill="both", expand=True, padx=16, pady=(12, 8))
+
+        header = self._panel(shell)
+        header.pack(fill="x", pady=(0, 8))
+        header_left = tk.Frame(header, bg=PANEL)
+        header_left.pack(side="left", fill="both", expand=True, padx=12, pady=10)
+        tk.Label(
+            header_left,
+            text="CORTEX CHAT",
+            bg=PANEL,
+            fg=CYAN,
+            font=("Segoe UI Semibold", 11),
+        ).pack(anchor="w")
+        self.chat_project_label = tk.Label(
+            header_left,
+            text="",
+            bg=PANEL,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+            anchor="w",
+            justify="left",
+        )
+        self.chat_project_label.pack(anchor="w", pady=(3, 0))
+
+        header_right = tk.Frame(header, bg=PANEL)
+        header_right.pack(side="right", padx=10, pady=8)
+        self.chat_worker_label = tk.Label(
+            header_right,
+            text="Python control plane ready",
+            bg=PANEL,
+            fg=GREEN,
+            font=("Segoe UI Semibold", 8),
+        )
+        self.chat_worker_label.pack(side="left", padx=(0, 8))
+        self._button(header_right, "New Chat", self._new_cortex_conversation, compact=True).pack(side="left", padx=3)
+        self._button(header_right, "Repair Plan", self._start_repair_plan, compact=True).pack(side="left", padx=3)
+        self._button(header_right, "Repair + FULL", self._start_repair_current_full, compact=True).pack(side="left", padx=3)
+        self._button(header_right, "Build Worker", self._start_cortex_worker_build, compact=True).pack(side="left", padx=3)
+
+        panes = tk.PanedWindow(
+            shell,
+            orient="horizontal",
+            bg=BG,
+            bd=0,
+            sashwidth=5,
+            sashrelief="flat",
+            showhandle=False,
+            opaqueresize=True,
+        )
+        panes.pack(fill="both", expand=True)
+
+        history = self._panel(panes)
+        history.configure(width=240)
+        history.pack_propagate(False)
+        tk.Label(
+            history,
+            text="CONVERSATIONS",
+            bg=PANEL,
+            fg=MUTED,
+            font=("Segoe UI Semibold", 8),
+        ).pack(anchor="w", padx=10, pady=(10, 6))
+        history_body = tk.Frame(history, bg=PANEL)
+        history_body.pack(fill="both", expand=True, padx=7, pady=(0, 7))
+        self.chat_history_tree = ttk.Treeview(
+            history_body,
+            columns=("title", "messages"),
+            show="headings",
+            selectmode="browse",
+            height=10,
+        )
+        self.chat_history_tree.heading("title", text="Conversation")
+        self.chat_history_tree.heading("messages", text="#")
+        self.chat_history_tree.column("title", width=185, anchor="w")
+        self.chat_history_tree.column("messages", width=34, anchor="center")
+        hscroll = self._dark_scrollbar(history_body, orient="vertical", command=self.chat_history_tree.yview)
+        self.chat_history_tree.configure(yscrollcommand=hscroll.set)
+        self.chat_history_tree.pack(side="left", fill="both", expand=True)
+        hscroll.pack(side="right", fill="y")
+        self.chat_history_tree.bind("<<TreeviewSelect>>", self._chat_history_selected)
+        self._button(history, "Refresh History", self._refresh_chat_history, compact=True).pack(fill="x", padx=8, pady=(0, 8))
+
+        chat = self._panel(panes)
+        transcript_body = tk.Frame(chat, bg="#0b0e12")
+        transcript_body.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+        self.chat_text = tk.Text(
+            transcript_body,
+            bg="#0b0e12",
+            fg=TEXT,
+            insertbackground=TEXT,
+            selectbackground="#21404a",
+            bd=0,
+            relief="flat",
+            wrap="word",
+            font=("Segoe UI", 10),
+            padx=18,
+            pady=14,
+            state="disabled",
+        )
+        self.chat_text.tag_configure("chat-user-head", foreground=CYAN, font=("Segoe UI Semibold", 9), spacing1=10)
+        self.chat_text.tag_configure("chat-assistant-head", foreground=GREEN, font=("Segoe UI Semibold", 9), spacing1=10)
+        self.chat_text.tag_configure("chat-system-head", foreground=YELLOW, font=("Segoe UI Semibold", 9), spacing1=10)
+        self.chat_text.tag_configure("chat-body", foreground=TEXT, font=("Segoe UI", 10), lmargin1=4, lmargin2=4, spacing3=10)
+        self.chat_text.tag_configure("chat-muted", foreground=MUTED, font=("Segoe UI", 9), spacing3=8)
+        tscroll = self._dark_scrollbar(transcript_body, orient="vertical", command=self.chat_text.yview)
+        self.chat_text.configure(yscrollcommand=tscroll.set)
+        self.chat_text.pack(side="left", fill="both", expand=True)
+        tscroll.pack(side="right", fill="y")
+
+        composer = tk.Frame(chat, bg=PANEL)
+        composer.pack(fill="x", padx=8, pady=(4, 8))
+
+        composer_top = tk.Frame(composer, bg=PANEL)
+        composer_top.pack(fill="x", pady=(0, 5))
+        tk.Label(composer_top, text="Mode", bg=PANEL, fg=MUTED, font=("Segoe UI", 8)).pack(side="left")
+        self.chat_mode_var = tk.StringVar(value="Chat")
+        self.chat_mode_box = ttk.Combobox(
+            composer_top,
+            textvariable=self.chat_mode_var,
+            values=("Chat", "Inspect", "Plan", "Apply", "Repair"),
+            state="readonly",
+            width=12,
+        )
+        self.chat_mode_box.pack(side="left", padx=(6, 8))
+        tk.Label(
+            composer_top,
+            text="Enter sends • Shift+Enter adds a line • Apply/Repair require the transactional worker",
+            bg=PANEL,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+        ).pack(side="left")
+
+        composer_bottom = tk.Frame(composer, bg=PANEL)
+        composer_bottom.pack(fill="x")
+        self.chat_input = tk.Text(
+            composer_bottom,
+            height=4,
+            bg=PANEL_2,
+            fg=TEXT,
+            insertbackground=TEXT,
+            selectbackground="#21404a",
+            bd=1,
+            relief="solid",
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            highlightcolor=CYAN,
+            wrap="word",
+            font=("Segoe UI", 10),
+            padx=10,
+            pady=8,
+        )
+        self.chat_input.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.chat_input.bind("<Return>", self._submit_chat_input)
+        self.chat_input.bind("<Shift-Return>", self._chat_insert_newline)
+        controls = tk.Frame(composer_bottom, bg=PANEL)
+        controls.pack(side="right", fill="y")
+        self.chat_send_btn = self._button(controls, "Send", self._submit_chat_input, primary=True, compact=True)
+        self.chat_send_btn.pack(fill="x", pady=(0, 5))
+        self.chat_stop_btn = self._button(controls, "Stop", self._stop_active, compact=True, danger=True)
+        self.chat_stop_btn.pack(fill="x")
+        self.chat_stop_btn.configure(state="disabled")
+
+        panes.add(history, minsize=190, width=240)
+        panes.add(chat, minsize=520)
+        self.chat_panes = panes
+        self._refresh_chat_header()
+        self._refresh_chat_history()
+        self._render_current_chat()
 
 
     def _build_workspace_tab(self, parent: Any) -> None:
@@ -650,6 +844,22 @@ class CortexPCCGui:
             ("Compare Baseline", self._vault_compare_baseline, False, False),
         ), preferred_columns=4, minimum_cell_width=145)
 
+        intake_toolbar = tk.Frame(shell, bg=BG)
+        intake_toolbar.pack(fill="x", pady=(0, 9))
+        tk.Label(intake_toolbar, text="Intake / classification", bg=BG, fg=MUTED, font=("Segoe UI Semibold", 8)).pack(anchor="w", pady=(0, 3))
+        self._toolbar_grid(intake_toolbar, (
+            ("Audit Intake", self._start_vault_intake_audit, True, False),
+            ("Create Chat Handoff", self._start_vault_intake_handoff, False, False),
+            ("Open Intake Audit", lambda: open_path(vault_intake_audit_dir(self.root_path)), False, False),
+            ("Open Intake Folder", lambda: open_path(vault_intake_root(self.root_path)), False, False),
+            ("Stop Vault Scan", self._vault_stop_scan, False, False),
+        ), preferred_columns=5, minimum_cell_width=145)
+        tk.Label(
+            intake_toolbar,
+            text="Audit is non-destructive: no move, rename, delete, execute or archive extraction. Review handoff before organization.",
+            bg=BG, fg=MUTED, font=("Segoe UI", 8), anchor="w",
+        ).pack(fill="x", padx=2, pady=(4, 0))
+
         storage_toolbar = tk.Frame(shell, bg=BG)
         storage_toolbar.pack(fill="x", pady=(0, 9))
         tk.Label(storage_toolbar, text="Storage authority", bg=BG, fg=MUTED, font=("Segoe UI Semibold", 8)).pack(anchor="w", pady=(0, 3))
@@ -766,8 +976,9 @@ class CortexPCCGui:
         self.vault_detail.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=10)
         dscroll.pack(side="right", fill="y", padx=(4, 8), pady=8)
         self.vault_detail.configure(state="disabled")
-        self._vault_refresh_tree()
-        self._vault_render_summary(vault_latest_summary(self.root_path))
+        # Vault filesystem inspection is lazy. Building the hidden Vault tab must
+        # never stall the Tk main thread during application startup.
+        self.vault_scan_status.configure(text="Open Vault / Forge to inspect project files", fg=MUTED)
 
     @staticmethod
     def _human_bytes(value: int) -> str:
@@ -934,6 +1145,61 @@ class CortexPCCGui:
                 self._event_q.put(("vault-done", (root, summary)))
             except Exception as exc:
                 self._event_q.put(("vault-error", str(exc)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _vault_stop_scan(self) -> None:
+        if not self._vault_busy:
+            self.vault_scan_status.configure(text="Idle", fg=MUTED)
+            return
+        self._vault_cancel = True
+        self.vault_scan_status.configure(text="Cancellation requested…", fg=YELLOW)
+        self._append_log("[INFO] Vault scan cancellation requested by operator.\n", "info")
+
+    def _start_vault_intake_audit(self) -> None:
+        if self._vault_busy:
+            self._popup("Vault Intake Audit", "A Vault operation is already running.", kind="warning")
+            return
+        self._vault_busy = True
+        self._vault_cancel = False
+        self.vault_scan_status.configure(text="Auditing Intake…", fg=CYAN)
+        root = self.root_path
+
+        def progress(payload: dict[str, Any]) -> None:
+            self._event_q.put(("vault-intake-progress", payload))
+
+        def work() -> None:
+            try:
+                summary = vault_intake_scan(
+                    root,
+                    progress=progress,
+                    cancelled=lambda: self._vault_cancel,
+                )
+                self._event_q.put(("vault-intake-done", summary))
+            except InterruptedError as exc:
+                self._event_q.put(("vault-intake-cancelled", str(exc)))
+            except Exception as exc:
+                self._event_q.put(("vault-intake-error", str(exc)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _start_vault_intake_handoff(self) -> None:
+        if self._vault_busy:
+            self._popup("Vault Intake Handoff", "A Vault operation is already running.", kind="warning")
+            return
+        if not vault_intake_latest_summary(self.root_path):
+            self._popup("Vault Intake Handoff", "No Intake audit exists yet. Run Audit Intake first.", kind="warning")
+            return
+        self._vault_busy = True
+        self.vault_scan_status.configure(text="Creating Intake handoff…", fg=CYAN)
+        root = self.root_path
+
+        def work() -> None:
+            try:
+                path = vault_intake_create_handoff(root)
+                self._event_q.put(("vault-intake-handoff-done", str(path)))
+            except Exception as exc:
+                self._event_q.put(("vault-intake-error", str(exc)))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -1661,6 +1927,7 @@ class CortexPCCGui:
         self.git_identity_label.pack(fill="x", padx=12, pady=(4, 8))
         self._action_grid(identity, (
             ("Configure Git Identity", self._configure_git_identity, True),
+            ("Trust Current Checkout", self._trust_git_checkout, False),
             ("Refresh Identity", self._refresh_git_identity_panel, False),
         ))
         self._refresh_git_identity_panel()
@@ -1682,14 +1949,67 @@ class CortexPCCGui:
         except Exception:
             return ""
 
+    def _project_git_identity_authority(self) -> dict[str, str]:
+        """Return the repository-declared author identity, if one is valid.
+
+        Cortex repositories may carry a portable GitHub authority contract under
+        config/cortex/github_authority.v1.json.  The backend applies that author
+        as repository-local Git configuration during governed commit operations.
+        The GUI must recognize the same authority *before* the commit begins;
+        otherwise it repeatedly asks for an identity that the project already
+        owns.
+        """
+        path = self.root_path / "config" / "cortex" / "github_authority.v1.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except Exception:
+            return {}
+        if not isinstance(data, dict) or data.get("schema") != "cortex.github_authority.v1":
+            return {}
+        author = data.get("author")
+        if not isinstance(author, dict):
+            return {}
+        name = str(author.get("name") or "").strip()
+        email = str(author.get("email") or "").strip()
+        scope = str(author.get("scope") or "local").strip().casefold()
+        if not name or not email or "@" not in email:
+            return {}
+        if scope not in {"local", "global"}:
+            scope = "local"
+        return {"name": name, "email": email, "scope": scope}
+
     def _git_identity_snapshot(self) -> dict[str, str | bool]:
         local_name = self._git_config_value("local", "user.name")
         local_email = self._git_config_value("local", "user.email")
         global_name = self._git_config_value("global", "user.name")
         global_email = self._git_config_value("global", "user.email")
-        effective_name = local_name or global_name
-        effective_email = local_email or global_email
-        source = "local" if local_name and local_email else ("global" if global_name and global_email else "missing")
+        authority = self._project_git_identity_authority()
+
+        local_complete = bool(local_name and local_email)
+        authority_complete = bool(authority.get("name") and authority.get("email"))
+        global_complete = bool(global_name and global_email)
+
+        # Repository-local identity is authoritative once present.  For a
+        # governed portable project, the repository-declared authority comes
+        # next because the backend will materialize it locally at commit time.
+        # A machine-global Git identity remains a fallback for ordinary repos.
+        if local_complete:
+            effective_name = local_name
+            effective_email = local_email
+            source = "local"
+        elif authority_complete:
+            effective_name = str(authority["name"])
+            effective_email = str(authority["email"])
+            source = "project-authority"
+        elif global_complete:
+            effective_name = global_name
+            effective_email = global_email
+            source = "global"
+        else:
+            effective_name = ""
+            effective_email = ""
+            source = "missing"
+
         return {
             "configured": bool(effective_name and effective_email),
             "name": effective_name,
@@ -1699,6 +2019,10 @@ class CortexPCCGui:
             "local_email": local_email,
             "global_name": global_name,
             "global_email": global_email,
+            "authority_name": authority.get("name", ""),
+            "authority_email": authority.get("email", ""),
+            "authority_scope": authority.get("scope", ""),
+            "authority_pending_local_apply": bool(authority_complete and not local_complete),
         }
 
     def _refresh_git_identity_panel(self) -> None:
@@ -1706,8 +2030,12 @@ class CortexPCCGui:
             return
         snap = self._git_identity_snapshot()
         if snap["configured"]:
+            if snap.get("source") == "project-authority" and snap.get("authority_pending_local_apply"):
+                text = f"Project authority: {snap['name']} <{snap['email']}> — applies locally on first governed commit"
+            else:
+                text = f"Configured ({snap['source']}): {snap['name']} <{snap['email']}>"
             self.git_identity_label.configure(
-                text=f"Configured ({snap['source']}): {snap['name']} <{snap['email']}>",
+                text=text,
                 fg=GREEN,
             )
         else:
@@ -1715,6 +2043,20 @@ class CortexPCCGui:
                 text="Not configured. Certified commits are blocked until an author name and email are set.",
                 fg=YELLOW,
             )
+
+    def _trust_git_checkout(self) -> None:
+        if self._busy:
+            self._popup("Git Checkout Trust", "Wait for the active PCC job to finish before changing Git checkout trust.", kind="warning")
+            return
+        if not self._popup(
+            "Trust Current Checkout",
+            "Trust this Cortex checkout for the current Windows user on this machine?\n\n"
+            "This adds only the current repository path to Git safe.directory. It does not disable Git ownership checks globally and does not modify project source.",
+            kind="warning",
+            confirm=True,
+        ):
+            return
+        self._start_command("git-trust", label="git-trust")
 
     def _configure_git_identity(self) -> None:
         if self._busy:
@@ -1742,7 +2084,10 @@ class CortexPCCGui:
         form.pack(fill="x", padx=18)
         name_var = tk.StringVar(value=str(snap.get("name") or ""))
         email_var = tk.StringVar(value=str(snap.get("email") or ""))
-        default_scope = "local" if snap.get("local_name") and snap.get("local_email") else "global"
+        # Repository-local is the portable/default choice. It travels in the
+        # checkout's .git/config when the external drive changes computers or
+        # drive letters. Global remains available as an explicit override.
+        default_scope = "local"
         scope_var = tk.StringVar(value=default_scope)
 
         for label, variable in (("Name", name_var), ("Email", email_var)):
@@ -1923,6 +2268,15 @@ class CortexPCCGui:
                 btn.configure(bg=PANEL, fg=TEXT)
         self._app_frames[name].pack(fill="both", expand=True)
         self._app_tab_buttons[name].configure(bg=PANEL_2, fg=CYAN)
+        if name == "Chat":
+            self._refresh_chat_header()
+            self._refresh_chat_history()
+            if hasattr(self, "chat_input"):
+                self.chat_input.focus_set()
+        elif name == "Vault / Forge" and not self._vault_tree_initialized:
+            self._vault_tree_initialized = True
+            # Defer the first filesystem view until after the tab is painted.
+            self.window.after(1, self._vault_refresh_tree)
 
         if hasattr(self, "header_health_rail"):
             if name == "Project Workspace":
@@ -1960,7 +2314,7 @@ class CortexPCCGui:
         target_root = root.resolve()
         activation_hygiene: dict[str, Any] = {}
         try:
-            activation_hygiene = repo_hygiene_prepare(target_root, apply=True)
+            activation_hygiene = repo_hygiene_prepare(target_root, apply=False)
         except Exception as exc:
             activation_hygiene = {"moved": 0, "error": str(exc)}
         try:
@@ -1975,6 +2329,9 @@ class CortexPCCGui:
         self._last_status = {}
         self._update_header()
         self._refresh_command_catalog()
+        self._refresh_chat_header()
+        self._refresh_chat_history()
+        self._render_current_chat()
         self._reset_status_cards()
         self._clear_log()
         if hasattr(self, "vault_tree"):
@@ -1986,7 +2343,7 @@ class CortexPCCGui:
             self._append_log(f"[WARN] Project activation hygiene: {activation_hygiene['error']}\n", "warn")
         else:
             moved = int(activation_hygiene.get("moved", 0) or 0)
-            self._append_log(f"[PASS] Project activation hygiene: {moved} loose operational artifact(s) moved.\n", "pass")
+            self._append_log(f"[PASS] Project activation hygiene preview: {moved} loose operational artifact(s) would move during an explicit operation.\n", "pass")
         if self.backend_error:
             self._append_log(f"PCC adapter: {self.backend_error}\n", "warn")
             self._render_adapter_unavailable()
@@ -2014,58 +2371,37 @@ class CortexPCCGui:
     # Registry
     # ------------------------------------------------------------------
     def _refresh_projects(self) -> None:
+        """Refresh the registry table without probing every project provider.
+
+        Project discovery/provider/Vault probing is intentionally deferred until a
+        row settles as the current selection.  This keeps cold external drives,
+        antivirus scans, stale roots, or a slow project manifest from starving the
+        Tk event loop and making row clicks appear to be ignored.
+        """
         if not hasattr(self, "projects_tree"):
             return
         self._project_entries_by_id.clear()
         for iid in self.projects_tree.get_children():
             self.projects_tree.delete(iid)
         try:
-            # Registration is a live binding, not a one-time label snapshot. Re-scan every
-            # existing root so newly standardized project.control.json/root-tool changes are
-            # adopted automatically without removing/re-adding the project.
-            previous = self.registry.entries()
-            for registered in previous:
-                if registered.root.is_dir():
-                    try:
-                        self.registry.register(registered.root, make_active=False)
-                    except Exception:
-                        pass
             entries = self.registry.entries()
         except Exception as exc:
             self._popup("Project Registry", str(exc), kind="error")
             return
         for entry in entries:
             self._project_entries_by_id[entry.registry_id] = entry
-            tag = "ready"
-            adapter_text = "Ready"
-            if not entry.root.is_dir():
-                tag, adapter_text = "missing", "Missing root"
-            else:
-                try:
-                    contract = ProjectContract.load(entry.root)
-                    backend = BackendClient(entry.root, contract)
-                    discovery = contract.raw.get("_pccDiscovery") or {}
-                    source = str(discovery.get("source") or "")
-                    if source in {"native-project-pcc", "project-powershell-pcc"}:
-                        adapter_text = "Native PCC"
-                    elif source == "project.control.json":
-                        adapter_text = "Project contract"
-                    else:
-                        adapter_text = "Fallback adapter" if backend.provider_mode == "auto-contract" else "Ready"
-                except SurfaceError:
-                    tag, adapter_text = "adapter", "Scan incomplete"
-                except Exception:
-                    tag, adapter_text = "missing", "Invalid"
-            catalog = vault_latest_summary(entry.root) if entry.root.is_dir() else None
-            mirror = vault_mirror_status(entry.root) if entry.root.is_dir() else {"hasSnapshot": False}
-            catalog_text = f"{catalog.get('files', 0)} files" if catalog else "Not scanned"
-            if mirror.get("hasSnapshot"):
-                catalog_text += " · mirrored"
+            try:
+                exists = entry.root.is_dir()
+            except OSError:
+                exists = False
+            tag = "ready" if exists else "missing"
+            adapter_text = "Registered" if exists else "Missing root"
+            # Keep the list refresh cheap. Detailed catalog/provider state is loaded
+            # asynchronously only for the selected project.
+            catalog_text = "Select to inspect" if exists else "Unavailable"
             last = entry.last_opened_utc.replace("T", " ")[:19] if entry.last_opened_utc else "—"
             self.projects_tree.insert(
-                "",
-                "end",
-                iid=entry.registry_id,
+                "", "end", iid=entry.registry_id,
                 values=(entry.name, entry.kind, str(entry.root), adapter_text, catalog_text, last),
                 tags=(tag,),
             )
@@ -2086,48 +2422,84 @@ class CortexPCCGui:
         if entry is None:
             self.project_detail.configure(text="Select a registered project.", fg=MUTED)
             return
-        adapter = "Ready"
-        detail_color = TEXT
-        try:
-            contract = ProjectContract.load(entry.root)
-            backend = BackendClient(entry.root, contract)
-            discovery = contract.raw.get("_pccDiscovery") or {}
-            source = str(discovery.get("source") or "unknown")
-            if source in {"native-project-pcc", "project-powershell-pcc"}:
-                adapter = "Native Project PCC"
-            elif source == "project.control.json":
-                adapter = "Project Contract"
-            else:
-                adapter = "Generated fallback" if backend.provider_mode == "auto-contract" else "Native provider"
-            provider = backend.provider_label
-            catalog = vault_latest_summary(entry.root)
-            catalog_line = f"{catalog.get('files', 0)} files / {catalog.get('duplicateGroups', 0)} duplicate groups" if catalog else "Not cataloged yet"
-            mirror_state = vault_mirror_status(entry.root)
-        except Exception as exc:
-            adapter = "Scan incomplete"
-            provider = str(exc)
-            source = "filesystem-scan"
-            catalog = vault_latest_summary(entry.root) if entry.root.exists() else None
-            catalog_line = f"{catalog.get('files', 0)} files" if catalog else "Not cataloged yet"
-            mirror_state = vault_mirror_status(entry.root) if entry.root.exists() else {"hasSnapshot": False}
-            detail_color = YELLOW if entry.root.exists() else RED
+
+        # Selection feedback is immediate. Provider discovery and Vault inspection
+        # happen after a short debounce on a worker thread so clicks never wait for
+        # disk/project probes.
+        self._project_probe_generation += 1
+        generation = self._project_probe_generation
+        if self._project_probe_after is not None:
+            try:
+                self.window.after_cancel(self._project_probe_after)
+            except Exception:
+                pass
+            self._project_probe_after = None
+
         self.project_detail.configure(
             text=(
                 f"Project    : {entry.name}\n"
                 f"Type       : {entry.kind}\n"
                 f"Root       : {entry.root}\n"
-                f"PCC        : {adapter}\n"
-                f"Discovery  : {source}\n"
-                f"Manifest   : {discovery.get('manifest') or '—'}\n"
-                f"Entrypoint : {discovery.get('entrypoint') or discovery.get('provider') or '—'}\n"
-                f"Fallback   : {discovery.get('fallback') or entry.kind}\n"
-                f"Vault      : {catalog_line}\n"
-                f"Mirror     : {'Current snapshot present' if mirror_state.get('hasSnapshot') else 'Not mirrored yet'}\n"
-                f"Passport   : {self.registry.passport_path(entry.root)}\n"
-                f"Provider   : {provider}"
+                "PCC        : Inspecting…\n"
+                "Vault      : Inspecting…"
             ),
-            fg=detail_color,
+            fg=TEXT if entry.root.exists() else RED,
         )
+
+        def launch_probe() -> None:
+            self._project_probe_after = None
+
+            def work() -> None:
+                adapter = "Ready"
+                detail_color = TEXT
+                discovery: dict[str, Any] = {}
+                try:
+                    contract = ProjectContract.load(entry.root)
+                    backend = BackendClient(entry.root, contract)
+                    discovery = contract.raw.get("_pccDiscovery") or {}
+                    source = str(discovery.get("source") or "unknown")
+                    if source in {"native-project-pcc", "project-powershell-pcc"}:
+                        adapter = "Native Project PCC"
+                    elif source == "project.control.json":
+                        adapter = "Project Contract"
+                    else:
+                        adapter = "Generated fallback" if backend.provider_mode == "auto-contract" else "Native provider"
+                    provider = backend.provider_label
+                    catalog = vault_latest_summary(entry.root)
+                    catalog_line = f"{catalog.get('files', 0)} files / {catalog.get('duplicateGroups', 0)} duplicate groups" if catalog else "Not cataloged yet"
+                    mirror_state = vault_mirror_status(entry.root)
+                except Exception as exc:
+                    adapter = "Scan incomplete"
+                    provider = str(exc)
+                    source = "filesystem-scan"
+                    try:
+                        catalog = vault_latest_summary(entry.root) if entry.root.exists() else None
+                        catalog_line = f"{catalog.get('files', 0)} files" if catalog else "Not cataloged yet"
+                        mirror_state = vault_mirror_status(entry.root) if entry.root.exists() else {"hasSnapshot": False}
+                    except Exception:
+                        catalog_line = "Unavailable"
+                        mirror_state = {"hasSnapshot": False}
+                    detail_color = YELLOW if entry.root.exists() else RED
+                passport = self.registry.path.parent / "passports" / f"{ProjectRegistry._registry_id(entry.root)}.json"
+                detail = (
+                    f"Project    : {entry.name}\n"
+                    f"Type       : {entry.kind}\n"
+                    f"Root       : {entry.root}\n"
+                    f"PCC        : {adapter}\n"
+                    f"Discovery  : {source}\n"
+                    f"Manifest   : {discovery.get('manifest') or '—'}\n"
+                    f"Entrypoint : {discovery.get('entrypoint') or discovery.get('provider') or '—'}\n"
+                    f"Fallback   : {discovery.get('fallback') or entry.kind}\n"
+                    f"Vault      : {catalog_line}\n"
+                    f"Mirror     : {'Current snapshot present' if mirror_state.get('hasSnapshot') else 'Not mirrored yet'}\n"
+                    f"Passport   : {passport}\n"
+                    f"Provider   : {provider}"
+                )
+                self._event_q.put(("project-detail", (generation, entry.registry_id, detail, detail_color, adapter, catalog_line)))
+
+            threading.Thread(target=work, daemon=True).start()
+
+        self._project_probe_after = self.window.after(120, launch_probe)
 
     def _register_project(self) -> None:
         raw = self.filedialog.askdirectory(title="Register Project Root")
@@ -2328,15 +2700,17 @@ class CortexPCCGui:
         if self.backend is None:
             self._render_adapter_unavailable()
             return
+        self._status_generation += 1
+        generation = self._status_generation
         self.refresh_btn.configure(state="disabled")
         self.footer.configure(text="[Status:Refreshing]", fg=CYAN)
 
         def work() -> None:
             try:
                 status = self.backend.status() if self.backend is not None else {}
-                self._event_q.put(("status", status))
+                self._event_q.put(("status", (generation, status)))
             except Exception as exc:
-                self._event_q.put(("status-error", str(exc)))
+                self._event_q.put(("status-error", (generation, str(exc))))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -2546,20 +2920,27 @@ class CortexPCCGui:
         factory: Callable[[], subprocess.Popen[str]],
         *,
         process_note: str = "[ProcessHost] Embedded capture ON / hidden inherited console + universal repo hygiene.",
+        focus_tab: str | None = "Project Workspace",
+        event_channel: str = "console",
     ) -> None:
         if self._busy or (self._active_proc and self._active_proc.poll() is None):
             self._popup("Project Control Center", "Another PCC job is already running.", kind="warning")
             return
-        self._show_app_tab("Project Workspace")
+        if focus_tab:
+            self._show_app_tab(focus_tab)
         if hasattr(self, "console_text"):
             self.console_text.see("end")
-        if hasattr(self, "console_entry"):
+        if focus_tab == "Project Workspace" and hasattr(self, "console_entry"):
             self.console_entry.focus_set()
         self._busy = True
         self._active_command = label
         self.operation_label.configure(text=f"Running: {self._active_command}", fg=CYAN)
         self.console_job_label.configure(text=f"Running: {self._active_command}", fg=CYAN)
         self.stop_btn.configure(state="normal")
+        if hasattr(self, "chat_stop_btn"):
+            self.chat_stop_btn.configure(state="normal")
+        if hasattr(self, "chat_send_btn"):
+            self.chat_send_btn.configure(state="disabled")
         if not self.stop_btn.winfo_ismapped():
             self.stop_btn.pack(fill="x", padx=10, pady=(3, 8))
         self.refresh_btn.configure(state="disabled")
@@ -2574,7 +2955,11 @@ class CortexPCCGui:
                 assert proc.stdout is not None
                 for line in proc.stdout:
                     self._event_q.put(("log", line))
+                    if event_channel == "chat":
+                        self._event_q.put(("chat-log", line))
                 rc = proc.wait()
+                if event_channel == "chat":
+                    self._event_q.put(("chat-finalize", (command_token, rc)))
                 self._event_q.put(("done", (command_token, rc)))
             except Exception as exc:
                 self._event_q.put(("command-error", (command_token, str(exc))))
@@ -2640,7 +3025,230 @@ class CortexPCCGui:
                 return candidate
         return Path(__file__).resolve().parents[2]
 
-    def _start_cortex_cli(self, mode: str, prompt: str) -> None:
+    def _cortex_conversation_id(self) -> str:
+        key = str(self.root_path).casefold() if os.name == "nt" else str(self.root_path)
+        value = self._cortex_conversations.get(key)
+        if not value:
+            value = uuid.uuid4().hex
+            self._cortex_conversations[key] = value
+        return value
+
+    def _new_cortex_conversation(self) -> None:
+        key = self._chat_project_key()
+        self._cortex_conversations[key] = uuid.uuid4().hex
+        self._append_log(
+            f"[Cortex] New conversation started for {self.contract.name}. Previous conversation history remains archived.\n",
+            "info",
+        )
+        self._render_current_chat()
+        self._refresh_chat_history()
+        if hasattr(self, "chat_input"):
+            self.chat_input.focus_set()
+
+
+    def _chat_project_key(self) -> str:
+        return str(self.root_path).casefold() if os.name == "nt" else str(self.root_path)
+
+    def _refresh_chat_header(self) -> None:
+        if hasattr(self, "chat_project_label"):
+            self.chat_project_label.configure(
+                text=f"{self.contract.name}  •  {compact_path(self.root_path, 96)}  •  conversation {self._cortex_conversation_id()[:10]}"
+            )
+
+    def _append_chat_message(self, role: str, text: str) -> None:
+        widget = getattr(self, "chat_text", None)
+        if widget is None:
+            return
+        clean = text.strip()
+        if not clean:
+            return
+        widget.configure(state="normal")
+        if role == "user":
+            widget.insert("end", "YOU\n", "chat-user-head")
+            widget.insert("end", clean + "\n", "chat-body")
+        elif role == "assistant":
+            widget.insert("end", "CORTEX\n", "chat-assistant-head")
+            widget.insert("end", clean + "\n", "chat-body")
+        else:
+            widget.insert("end", "SYSTEM\n", "chat-system-head")
+            widget.insert("end", clean + "\n", "chat-muted")
+        widget.see("end")
+        widget.configure(state="disabled")
+
+    def _clear_chat_transcript(self) -> None:
+        widget = getattr(self, "chat_text", None)
+        if widget is None:
+            return
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.configure(state="disabled")
+
+    def _render_current_chat(self) -> None:
+        if not hasattr(self, "chat_text"):
+            return
+        self._clear_chat_transcript()
+        conversation_id = self._cortex_conversation_id()
+        cortex_root = self._cortex_runtime_root()
+        rows = chat_load_messages(cortex_root, self.root_path, conversation_id)
+        if not rows:
+            self._append_chat_message(
+                "system",
+                f"Cortex is attached to {self.contract.name}. Python chat/inspect/plan are available immediately; Apply/Repair use the transactional worker.",
+            )
+        else:
+            for row in rows:
+                self._append_chat_message(str(row.get("role") or "assistant"), str(row.get("content") or ""))
+        self._chat_rendered_conversation = conversation_id
+        self._refresh_chat_header()
+
+    def _refresh_chat_history(self) -> None:
+        tree = getattr(self, "chat_history_tree", None)
+        if tree is None:
+            return
+        self._chat_conversation_rows.clear()
+        for iid in tree.get_children():
+            tree.delete(iid)
+        cortex_root = self._cortex_runtime_root()
+        current = self._cortex_conversation_id()
+        rows = chat_list_conversations(cortex_root, self.root_path)
+        present = False
+        for index, row in enumerate(rows):
+            cid = str(row.get("conversationId") or "")
+            if not cid:
+                continue
+            iid = f"chat-{index}"
+            tree.insert("", "end", iid=iid, values=(row.get("title") or "Conversation", row.get("messageCount") or 0))
+            self._chat_conversation_rows[iid] = cid
+            if cid == current:
+                present = True
+                tree.selection_set(iid)
+        if not present:
+            iid = "chat-current"
+            tree.insert("", 0, iid=iid, values=("New conversation", 0))
+            self._chat_conversation_rows[iid] = current
+            tree.selection_set(iid)
+
+    def _chat_history_selected(self, _event: Any = None) -> None:
+        tree = getattr(self, "chat_history_tree", None)
+        if tree is None:
+            return
+        selection = tree.selection()
+        if not selection:
+            return
+        conversation_id = self._chat_conversation_rows.get(selection[0])
+        if not conversation_id:
+            return
+        self._cortex_conversations[self._chat_project_key()] = conversation_id
+        self._render_current_chat()
+
+    def _chat_insert_newline(self, _event: Any = None) -> str:
+        if hasattr(self, "chat_input"):
+            self.chat_input.insert("insert", "\n")
+        return "break"
+
+    def _submit_chat_input(self, _event: Any = None) -> str:
+        if not hasattr(self, "chat_input"):
+            return "break"
+        prompt = self.chat_input.get("1.0", "end-1c").strip()
+        if not prompt:
+            return "break"
+        mode = str(self.chat_mode_var.get() or "Chat").strip().casefold()
+        mode = mode if mode in {"chat", "inspect", "plan", "apply", "repair"} else "chat"
+        self.chat_input.delete("1.0", "end")
+        self._append_chat_message("user", prompt)
+        self._start_cortex_cli(mode, prompt, surface="chat")
+        return "break"
+
+    def _start_repair_plan(self) -> None:
+        backend = self.backend
+        if backend is None:
+            self._popup("Repair Coordinator", "No project backend is bound.", kind="warning")
+            return
+        self._append_chat_message("system", "Reading the latest authoritative PCC failure and building a non-mutating repair plan.")
+        self._start_streaming_process(
+            "repair-plan",
+            "Repair Current Failure — Plan",
+            lambda: backend.popen("repair-plan"),
+            process_note="[RepairCoordinator] Read-only BuildDoctor → repair-scope plan.",
+            focus_tab="Chat",
+        )
+
+    def _start_repair_current_full(self) -> None:
+        backend = self.backend
+        if backend is None:
+            self._popup("Repair Coordinator", "No project backend is bound.", kind="warning")
+            return
+        if not self._popup(
+            "Repair Current Failure + FULL",
+            "Allow Cortex to repair the currently classified PCC failure inside one bounded source transaction, validate it, run QUICK, run FULL, and automatically roll back if certification fails?",
+            kind="warning",
+            confirm=True,
+        ):
+            return
+        self._append_chat_message(
+            "system",
+            "Repair Coordinator started. Source changes remain transactional and will roll back automatically unless targeted validation, QUICK, and FULL all pass.",
+        )
+        self._start_streaming_process(
+            "repair-current-full",
+            "Repair Current Failure + FULL",
+            lambda: backend.popen("repair-current-full", ["--yes"]),
+            process_note="[RepairCoordinator] BuildDoctor → transactional repair → targeted validation → QUICK → FULL → commit/rollback.",
+            focus_tab="Chat",
+        )
+
+    def _start_cortex_worker_build(self) -> None:
+        backend = self.backend
+        if backend is None:
+            self._popup("Cortex Worker", "No project backend is bound.", kind="warning")
+            return
+        cortex_root = self._cortex_runtime_root()
+        script = cortex_root / "tools" / "control" / "PCCCortexWorker.py"
+        if not script.is_file():
+            self._popup("Cortex Worker", f"Worker bootstrap is missing:\n{script}", kind="error")
+            return
+        argv = [sys.executable, str(script), "build", "--root", str(cortex_root)]
+        if hasattr(self, "chat_worker_label"):
+            self.chat_worker_label.configure(text="Building transactional worker...", fg=CYAN)
+        self._append_chat_message("system", "Building the transactional Cortex worker through the bounded ToolchainBroker. Build output is mirrored to Project Console.")
+        self._start_streaming_process(
+            "cortex-worker-build",
+            "Build Cortex Worker",
+            lambda: backend.popen_argv(argv, cwd=cortex_root, environment_root=cortex_root),
+            process_note="[Cortex] Building only the transactional Cortex worker through the bounded ToolchainBroker.",
+            focus_tab="Chat",
+        )
+
+    def _finalize_chat_output(self, command: str, rc: int) -> None:
+        raw = "".join(self._chat_active_buffer).strip()
+        self._chat_active_buffer = []
+        lines = raw.splitlines()
+        answer_lines: list[str] = []
+        for line in lines:
+            if line.startswith("[Cortex] CORTEX-PY-BRIDGE-"):
+                if hasattr(self, "chat_worker_label"):
+                    if "worker=unavailable" in line:
+                        self.chat_worker_label.configure(text="Python fallback active", fg=YELLOW)
+                    else:
+                        self.chat_worker_label.configure(text="Transactional worker active", fg=GREEN)
+                continue
+            answer_lines.append(line)
+        answer = "\n".join(answer_lines).strip()
+        if answer:
+            self._append_chat_message("assistant" if rc == 0 else "system", answer)
+        elif rc != 0:
+            self._append_chat_message("system", f"Cortex request failed with exit code {rc}. See Project Console for raw output.")
+        self._refresh_chat_history()
+        self._refresh_chat_header()
+
+
+    def _start_cortex_cli(self, mode: str, prompt: str, *, surface: str = "console") -> None:
+        """Route Cortex requests through the Python bootstrap broker.
+
+        Chat must not require compiling Cortex.  The broker prefers an existing
+        compiled Cortex worker for the full transactional agent surface and can
+        fall back to the configured local model provider for ordinary chat.
+        """
         backend = self.backend
         if backend is None:
             self._popup("Project Console", "No project backend is bound.", kind="warning")
@@ -2651,19 +3259,29 @@ class CortexPCCGui:
             return
         mode = mode if mode in {"chat", "inspect", "plan", "apply", "repair"} else "chat"
         cortex_root = self._cortex_runtime_root()
-        manifest = cortex_root / "Cargo.toml"
-        if not manifest.is_file():
-            self._append_log(f"[FAIL] Cortex runtime manifest was not found: {manifest}\n", "fail")
+        bridge = cortex_root / "tools" / "control" / "CortexPythonBridge.py"
+        if not bridge.is_file():
+            self._append_log(f"[FAIL] Cortex Python bridge was not found: {bridge}\n", "fail")
             return
         argv = [
-            "cargo", "run", "--quiet", "--manifest-path", str(manifest), "-p", "cortex", "--",
-            "--workspace", str(self.root_path), mode, prompt,
+            sys.executable,
+            str(bridge),
+            "--cortex-root", str(cortex_root),
+            "--workspace", str(self.root_path),
+            "--conversation-id", self._cortex_conversation_id(),
+            "--owner-pid", str(os.getpid()),
+            mode,
+            prompt,
         ]
+        if surface == "chat":
+            self._chat_active_buffer = []
         self._start_streaming_process(
             f"cortex-{mode}",
             f"Cortex {mode}",
             lambda: backend.popen_argv(argv, cwd=cortex_root, environment_root=cortex_root),
-            process_note="[Cortex] Cortex-runtime authority / selected project workspace / shared toolchain environment / live output.",
+            process_note="[Cortex] Python control-plane broker / direct prebuilt Cortex worker / local-provider chat fallback / live output.",
+            focus_tab="Chat" if surface == "chat" else "Project Workspace",
+            event_channel="chat" if surface == "chat" else "console",
         )
 
     def _submit_console_input(self, _event: Any = None) -> str:
@@ -2688,12 +3306,15 @@ class CortexPCCGui:
             self._append_log(
                 "[INFO] Console: command key/label runs registered project operations; "
                 "/cortex, /inspect, /plan, /apply, /repair send Cortex requests; "
-                "!command runs the project shell; /history, /stop and /clear are local controls.\n",
+                "!<shell command> runs the project shell; /newchat starts a clean Cortex conversation; /history, /stop and /clear are local controls.\n",
                 "info",
             )
             return
         if lower in {"/clear", "clear"}:
             self._clear_log()
+            return
+        if lower in {"/newchat", "newchat", "/new-chat", "new-chat"}:
+            self._new_cortex_conversation()
             return
         if lower in {"/stop", "stop"}:
             self._stop_active()
@@ -2716,6 +3337,9 @@ class CortexPCCGui:
             if lower.startswith(prefix):
                 self._start_cortex_cli(mode, text[len(prefix):])
                 return
+        if lower in {"!", "!command"}:
+            self._append_log("[INFO] Shell syntax: !<command>  Example: !git status\n", "info")
+            return
         if text.startswith("!"):
             self._start_shell_command(text[1:])
             return
@@ -2732,6 +3356,16 @@ class CortexPCCGui:
         row = self._find_registered_command(text)
         if row is not None:
             self._start_registered_command(row)
+            return
+        # Obvious build/gate repair requests enter the deterministic read-only
+        # Repair Coordinator plan first.  Source mutation still requires the
+        # explicit Repair + FULL confirmation path.
+        if re.search(r"\b(fix|repair|correct)\b.*\b(build|full[ -]?gate|quick[ -]?gate|pcc|compile|test)\b", lower):
+            self._append_chat_message(
+                "system",
+                "Build/gate repair request detected. Cortex will classify the current failure first; source mutation still requires explicit Repair + FULL approval.",
+            )
+            self._start_repair_plan()
             return
         # Dotted identifiers are project-operation keys, not natural-language chat.
         # Fail closed when the active project does not expose one instead of sending
@@ -2786,18 +3420,51 @@ class CortexPCCGui:
                     up = line.upper()
                     tag = "fail" if ("FAIL" in up or "ERROR" in up) else ("warn" if "WARN" in up else ("pass" if "PASS" in up or "GREEN" in up else ""))
                     self._append_stream_log(line, tag)
+                elif kind == "chat-log":
+                    self._chat_active_buffer.append(str(payload))
+                elif kind == "chat-finalize":
+                    command, rc = payload
+                    self._finalize_chat_output(str(command), int(rc))
                 elif kind == "done":
                     command, rc = payload
                     self._active_proc = None
                     self._busy = False
                     self.stop_btn.configure(state="disabled")
                     self.stop_btn.pack_forget()
+                    if hasattr(self, "chat_stop_btn"):
+                        self.chat_stop_btn.configure(state="disabled")
+                    if hasattr(self, "chat_send_btn"):
+                        self.chat_send_btn.configure(state="normal")
                     color = GREEN if rc == 0 else RED
                     state = "PASS" if rc == 0 else f"FAIL ({rc})"
                     self.operation_label.configure(text=f"Last: {command} {state}", fg=color)
                     self.console_job_label.configure(text=f"Last: {command} {state}", fg=color)
+                    if command == "cortex-worker-build" and hasattr(self, "chat_worker_label"):
+                        self.chat_worker_label.configure(
+                            text="Transactional worker ready" if rc == 0 else "Worker build blocked/failed",
+                            fg=GREEN if rc == 0 else RED,
+                        )
+                        self._append_chat_message(
+                            "system",
+                            "Transactional Cortex worker is ready. Apply/Repair can now use the real mutation path."
+                            if rc == 0
+                            else "Transactional worker build did not complete. See Project Console for the structured blocker/failure.",
+                        )
+                    if str(command).casefold() in {"repair-plan", "repair-current", "repair-current-full"}:
+                        self._append_chat_message(
+                            "system",
+                            "Repair Coordinator completed successfully. Review the Project Console/repair receipt for certification evidence."
+                            if rc == 0
+                            else "Repair Coordinator stopped without certification. Any source candidate that failed validation was rolled back; review Project Console for the blocker.",
+                        )
                     self._append_log(f"=== END {command}: {state} ===\n", "pass" if rc == 0 else "fail")
                     self.footer.configure(text=f"[Last:{command}] [{state}]", fg=color)
+                    if str(command).casefold() == "full" and int(rc) == 0:
+                        # The gate just issued a GREEN marker. Do not leave stale pre-gate
+                        # state visible while the authoritative readback runs.
+                        self._set_status_card("GREEN", "Verifying", CYAN)
+                        self._set_status_card("Git", "Refreshing", CYAN)
+                        self._set_status_card("Sync", "Refreshing", CYAN)
                     self._refresh_status_async()
                     self.window.after(50, self._refresh_git_identity_panel)
                 elif kind == "command-error":
@@ -2806,11 +3473,29 @@ class CortexPCCGui:
                     self._busy = False
                     self.stop_btn.configure(state="disabled")
                     self.stop_btn.pack_forget()
+                    if hasattr(self, "chat_stop_btn"):
+                        self.chat_stop_btn.configure(state="disabled")
+                    if hasattr(self, "chat_send_btn"):
+                        self.chat_send_btn.configure(state="normal")
                     self.operation_label.configure(text=f"Last: {command} FAIL", fg=RED)
                     self.console_job_label.configure(text=f"Last: {command} FAIL", fg=RED)
                     self._append_log(f"ERROR: {detail}\n", "fail")
                     self._popup("PCC Command Failed", detail, kind="error")
                     self._refresh_status_async()
+                elif kind == "project-detail":
+                    generation, registry_id, detail, color, adapter_text, catalog_text = payload
+                    if int(generation) != self._project_probe_generation:
+                        continue
+                    selected = self._selected_project()
+                    if selected is None or selected.registry_id != registry_id:
+                        continue
+                    self.project_detail.configure(text=str(detail), fg=str(color))
+                    if self.projects_tree.exists(registry_id):
+                        values = list(self.projects_tree.item(registry_id, "values"))
+                        if len(values) >= 5:
+                            values[3] = str(adapter_text)
+                            values[4] = str(catalog_text)
+                            self.projects_tree.item(registry_id, values=values)
                 elif kind == "onboard-done":
                     root, summary, mirror = payload
                     mirror_stats = mirror.get("stats") or {}
@@ -2839,6 +3524,61 @@ class CortexPCCGui:
                         self._vault_render_summary(summary)
                         self._vault_refresh_tree()
                     self._append_log(f"[PASS] Vault/Forge catalog scan complete: {root} ({summary.get('files', 0)} files)\n", "pass")
+                elif kind == "vault-intake-progress":
+                    files = int((payload or {}).get("files") or 0)
+                    bytes_value = int((payload or {}).get("bytes") or 0)
+                    reused = int((payload or {}).get("reused") or 0)
+                    hashed = int((payload or {}).get("hashed") or 0)
+                    self.vault_scan_status.configure(
+                        text=f"Intake · {files:,} files · {self._human_bytes(bytes_value)} · {hashed:,} hashed · {reused:,} reused",
+                        fg=CYAN,
+                    )
+                elif kind == "vault-intake-done":
+                    self._vault_busy = False
+                    summary = payload or {}
+                    self.vault_scan_status.configure(
+                        text=f"Intake PASS · {int(summary.get('files') or 0):,} files · {summary.get('humanBytes', '0 B')}",
+                        fg=GREEN,
+                    )
+                    self._append_log(
+                        f"[PASS] Vault Intake audit complete: {summary.get('files', 0)} files / {summary.get('humanBytes', '0 B')} / "
+                        f"{summary.get('projectCandidates', 0)} project candidate(s) / {summary.get('unknownFiles', 0)} unknown file(s).\n",
+                        "pass",
+                    )
+                    self._popup(
+                        "Vault Intake Audit",
+                        f"Inventory complete.\n\nFiles: {int(summary.get('files') or 0):,}\n"
+                        f"Size: {summary.get('humanBytes', '0 B')}\n"
+                        f"Project candidates: {int(summary.get('projectCandidates') or 0):,}\n"
+                        f"Exact duplicate groups: {int(summary.get('exactDuplicateGroups') or 0):,}\n"
+                        f"Sampled duplicate candidates: {int(summary.get('sampledDuplicateCandidateGroups') or 0):,}\n"
+                        f"Unknown files: {int(summary.get('unknownFiles') or 0):,}\n\n"
+                        "Nothing was moved or deleted. Create Chat Handoff to review the classification here.",
+                        kind="success",
+                    )
+                elif kind == "vault-intake-cancelled":
+                    self._vault_busy = False
+                    self.vault_scan_status.configure(text="Intake audit cancelled", fg=YELLOW)
+                    self._append_log(f"[WARN] Vault Intake audit cancelled: {payload}\n", "warn")
+                elif kind == "vault-intake-handoff-done":
+                    self._vault_busy = False
+                    path = Path(str(payload))
+                    self.vault_scan_status.configure(text="Intake handoff ready", fg=GREEN)
+                    self._append_log(f"[PASS] Vault Intake planning handoff created: {path}\n", "pass")
+                    self._popup(
+                        "Vault Intake Handoff",
+                        f"Planning handoff created. Upload this ZIP here for classification/organization planning:\n\n{path}",
+                        kind="success",
+                    )
+                    try:
+                        reveal_file(path)
+                    except Exception:
+                        pass
+                elif kind == "vault-intake-error":
+                    self._vault_busy = False
+                    self.vault_scan_status.configure(text="Intake audit failed", fg=RED)
+                    self._append_log(f"[FAIL] Vault Intake audit: {payload}\n", "fail")
+                    self._popup("Vault Intake Audit", str(payload), kind="error")
                 elif kind == "vault-mirror-all-progress":
                     index = int((payload or {}).get("index") or 0)
                     total = int((payload or {}).get("total") or 0)
@@ -2880,11 +3620,17 @@ class CortexPCCGui:
                     self._append_log(f"[FAIL] Vault/Forge scan: {payload}\n", "fail")
                     self._popup("Vault Scan Failed", str(payload), kind="error")
                 elif kind == "status":
-                    self._render_status(payload)
+                    generation, status = payload
+                    if int(generation) != self._status_generation:
+                        continue
+                    self._render_status(status)
                 elif kind == "status-error":
+                    generation, detail = payload
+                    if int(generation) != self._status_generation:
+                        continue
                     self.refresh_btn.configure(state="normal")
                     self.footer.configure(text="[Status:Unavailable]", fg=RED)
-                    self._append_log(f"Status refresh failed: {payload}\n", "fail")
+                    self._append_log(f"Status refresh failed: {detail}\n", "fail")
         except queue.Empty:
             pass
         self.window.after(60, self._drain_events)
@@ -3165,9 +3911,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         for note in validate_surface(root):
             print(f"PASS {note}")
         registry = ProjectRegistry()
-        registry.register(root, make_active=False)
         print(f"PASS registry={registry.path}")
         print(f"PASS registered-projects={len(registry.entries())}")
+        print("PASS self-test-registry-mode=read-only")
         try:
             import tkinter as tk
             print(f"PASS tkinter={tk.TkVersion}")

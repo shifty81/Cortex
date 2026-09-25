@@ -409,6 +409,13 @@ def validate_patch(zip_path: Path, *, require_sidecar: bool = True) -> Validatio
 
 
 def looks_like_patch(zip_path: Path) -> bool:
+    """Return True only for an actual Cortex root-patch transport.
+
+    A generic/source/handoff ZIP is allowed to contain a PATCH_MANIFEST.json used
+    for its own package metadata.  Such archives must not poison the patch queue
+    merely because the filename is neutral.  Explicitly patch-named transports
+    remain fail-closed and are validated normally.
+    """
     name = zip_path.name
     if NON_PATCH_RE.search(name):
         return False
@@ -416,8 +423,15 @@ def looks_like_patch(zip_path: Path) -> bool:
         return True
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
-            names = [n.replace("\\", "/").lower() for n in zf.namelist()]
-            return "patch_manifest.json" in names
+            names = {n.replace("\\", "/").casefold(): n for n in zf.namelist()}
+            manifest_name = names.get("patch_manifest.json")
+            if not manifest_name:
+                return False
+            try:
+                manifest = json.loads(zf.read(manifest_name).decode("utf-8-sig"))
+            except Exception:
+                return False
+            return isinstance(manifest, dict) and manifest.get("schema") == SCHEMA
     except Exception:
         return False
 

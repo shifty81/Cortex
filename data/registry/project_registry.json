@@ -1,0 +1,24 @@
+{
+  "schema": "pcc.project_registry.v1",
+  "projects": [
+    {
+      "registryId": "a2a6ce0e6dd41288",
+      "projectId": "cortex",
+      "name": "Cortex",
+      "kind": "rust-workspace",
+      "root": "G:\\Cortex",
+      "portableRelativeRoot": "Cortex",
+      "lastOpenedUtc": "2026-09-25T16:50:55.152105+00:00"
+    },
+    {
+      "registryId": "e580fef60b5d3f5e",
+      "projectId": "havenwild_bevy",
+      "name": "Havenwild_Bevy",
+      "kind": "rust-workspace",
+      "root": "E:\\Source\\Havenwild_Bevy",
+      "lastOpenedUtc": "2026-09-24T19:13:15.011767+00:00",
+      "portableRelativeRoot": "Source/Havenwild_Bevy"
+    }
+  ],
+  "activeProject": "a2a6ce0e6dd41288"
+}

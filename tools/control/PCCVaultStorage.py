@@ -147,10 +147,13 @@ def dependency_environment(root: Path) -> dict[str, str]:
     env = {
         "CORTEX_VAULT_ROOT": str(vault),
         "PCC_VAULT_ROOT": str(vault),
+        "CORTEX_LIBRARY_ROOT": str(vault),
+        "CORTEX_PORTABLE_VOLUME_ROOT": str(vault),
         "CORTEX_HOME": str(vault / ".cortex" / "home"),
         "CORTEX_RUNTIME_ROOT": str(_runtime_root()),
         "CORTEX_PROJECTS_ROOT": str(vault / "Source"),
         "CORTEX_MODELS_ROOT": str(vault / "Models"),
+        "CORTEX_LOCAL_GIT_ROOT": str(vault / "Cortex" / "Git"),
         "CORTEX_STATE_MODE": "portable",
         "CARGO_HOME": str(paths["cargo_home"]),
         "RUSTUP_HOME": str(rustup_home),

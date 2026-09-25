@@ -14,6 +14,7 @@ from typing import Any, Iterable, Sequence
 
 from PCCProjectDiscovery import discover_project_contract_data
 from PCCRepoHygiene import prepare as repo_hygiene_prepare
+from PCCSharedEnvironment import apply_shared_toolchain_environment
 
 AUTO_ADAPTER_VERSION = "PCC-AUTO-ADAPTER-0.2"
 
@@ -282,7 +283,7 @@ def _stream_argv(root: Path, argv: list[str], *, label: str = "command", stdin_t
         errors="replace",
         bufsize=1,
         creationflags=0,
-        env=os.environ.copy(),
+        env=apply_shared_toolchain_environment(os.environ.copy(), root=root),
     )
     if stdin_text and proc.stdin is not None:
         try:
@@ -373,7 +374,7 @@ def _run_command_core(root: Path, command: str, *, message: str = "", assume_yes
     stdin_text = ""
     if command == "commit-green":
         stdin_text = (message + "\n") if message else "\n"
-    elif assume_yes or command == "patch-apply":
+    elif assume_yes:
         stdin_text = "Y\n"
     return _stream_command(root, item, stdin_text=stdin_text)
 

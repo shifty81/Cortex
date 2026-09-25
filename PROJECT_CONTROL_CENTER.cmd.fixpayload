@@ -4,8 +4,6 @@ chcp 65001 >nul 2>nul
 
 set "CORTEX_ROOT=%~dp0"
 if "%CORTEX_ROOT:~-1%"=="\" set "CORTEX_ROOT=%CORTEX_ROOT:~0,-1%"
-set "CORTEX_RUNTIME_ROOT=%CORTEX_ROOT%"
-set "CORTEX_PORTABLE_VOLUME_ROOT=%~d0\"
 
 set "PCC_CORE=%CORTEX_ROOT%\tools\control\CortexPCC.py"
 set "PCC_GUI=%CORTEX_ROOT%\tools\control\CortexPCCGui.py"
@@ -17,7 +15,29 @@ set "PY_ARGS="
 set "PYW_EXE="
 set "PYW_ARGS="
 
-call :resolve_python
+rem R21: restore portable/shared environment bootstrap before Python/GUI resolution.
+rem The newer fail-closed GUI launcher accidentally dropped this handoff.
+call :bootstrap_environment
+if exist "%CORTEX_ROOT%\.cortex\bootstrap-env.cmd" call "%CORTEX_ROOT%\.cortex\bootstrap-env.cmd"
+
+call :bootstrap_environment
+rem Startup bootstrap is allowed to discover/hydrate shared Python/Git/Rust and to
+rem generate .cortex\bootstrap-env.cmd.  It does NOT silently install MSVC Build
+rem Tools unless the explicit IncludeBuildTools workflow is used.
+if not exist "%CORTEX_ROOT%\scripts\Bootstrap-CortexEnvironment.ps1" (
+  echo [WARN] Cortex environment bootstrap is missing: %CORTEX_ROOT%\scripts\Bootstrap-CortexEnvironment.ps1
+  exit /b 0
+)
+where powershell.exe >nul 2>nul
+if errorlevel 1 (
+  echo [WARN] Windows PowerShell is unavailable; Cortex startup environment could not be refreshed.
+  exit /b 0
+)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%CORTEX_ROOT%\scripts\Bootstrap-CortexEnvironment.ps1" -Mode Startup
+if errorlevel 1 echo [WARN] Cortex environment bootstrap reported a launch blocker.
+exit /b 0
+
+:resolve_python
 if errorlevel 1 goto :python_fail
 
 rem R20 startup contract: no arguments means GUI only. CLI is explicit.
@@ -88,18 +108,18 @@ if defined CORTEX_PYTHON_EXE if exist "%CORTEX_PYTHON_EXE%" (
   )
 )
 
-rem 2. Portable/shared layout on the SAME physical volume as this Cortex checkout.
-rem    The drive letter is intentionally derived from %~d0 so the external disk may
-rem    mount as E:, G:, H:, etc. without changing the launcher.
-if not defined PY_EXE if exist "%~d0\shared\toolchains\python" (
-  for /f "delims=" %%P in ('dir /b /ad /o-n "%~d0\shared\toolchains\python" 2^>nul') do (
-    if not defined PY_EXE if exist "%~d0\shared\toolchains\python\%%P\python.exe" (
-      "%~d0\shared\toolchains\python\%%P\python.exe" -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
-      if not errorlevel 1 (
-        set "CORTEX_PYTHON_EXE=%~d0\shared\toolchains\python\%%P\python.exe"
-        set "PY_EXE=%~d0\shared\toolchains\python\%%P\python.exe"
-        if exist "%~d0\shared\toolchains\python\%%P\pythonw.exe" set "PYW_EXE=%~d0\shared\toolchains\python\%%P\pythonw.exe"
-        set "PATH=%~d0\shared\toolchains\python\%%P;%PATH%"
+rem 2. Portable/shared layout. First valid newest version wins. Never embed escaped quotes in variables.
+for %%D in (E D C) do (
+  if not defined PY_EXE if exist "%%D:\shared\toolchains\python" (
+    for /f "delims=" %%P in ('dir /b /ad /o-n "%%D:\shared\toolchains\python" 2^>nul') do (
+      if not defined PY_EXE if exist "%%D:\shared\toolchains\python\%%P\python.exe" (
+        "%%D:\shared\toolchains\python\%%P\python.exe" -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
+        if not errorlevel 1 (
+          set "CORTEX_PYTHON_EXE=%%D:\shared\toolchains\python\%%P\python.exe"
+          set "PY_EXE=%%D:\shared\toolchains\python\%%P\python.exe"
+          if exist "%%D:\shared\toolchains\python\%%P\pythonw.exe" set "PYW_EXE=%%D:\shared\toolchains\python\%%P\pythonw.exe"
+          set "PATH=%%D:\shared\toolchains\python\%%P;%PATH%"
+        )
       )
     )
   )

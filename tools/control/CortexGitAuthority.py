@@ -58,9 +58,16 @@ def apply_project_git_defaults(root: Path) -> dict[str, object]:
     authority = project_git_authority(root)
     if not authority or not git_repo(root):
         return authority
+
     author = authority.get("author") if isinstance(authority.get("author"), dict) else {}
     status = git_identity_status(root)
-    if not status.get("configured") and author:
+
+    # Project GitHub authority is repository-local policy. A valid global Git
+    # identity is a useful fallback for ordinary repositories, but it must not
+    # prevent an explicitly governed Cortex project from receiving its declared
+    # local author identity.
+    local_complete = bool(status.get("localName") and status.get("localEmail"))
+    if not local_complete and author:
         name = str(author.get("name") or "").strip()
         email = str(author.get("email") or "").strip()
         if name and email:
@@ -96,8 +103,99 @@ def git_text(root: Path, *args: str) -> str:
     return cp.stdout.strip() if cp.returncode == 0 else ""
 
 
+def git_repo_probe(root: Path) -> dict[str, object]:
+    cp = git(root, "rev-parse", "--is-inside-work-tree", check=False)
+    stdout = (cp.stdout or "").strip()
+    stderr = (cp.stderr or "").strip()
+    detail = stderr or stdout
+    ready = cp.returncode == 0 and stdout.casefold() == "true"
+    blocker = ""
+    low = detail.casefold()
+    if not ready:
+        if "dubious ownership" in low or "safe.directory" in low:
+            blocker = "UNTRUSTED_CHECKOUT"
+        elif not (root / ".git").exists():
+            blocker = "NOT_INITIALIZED"
+        else:
+            blocker = "GIT_ERROR"
+    return {
+        "ready": ready,
+        "returncode": cp.returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+        "detail": detail,
+        "blocker": blocker,
+    }
+
+
 def git_repo(root: Path) -> bool:
-    return git_text(root, "rev-parse", "--is-inside-work-tree").lower() == "true"
+    return bool(git_repo_probe(root).get("ready"))
+
+
+def require_git_repo(root: Path) -> None:
+    probe = git_repo_probe(root)
+    if probe.get("ready"):
+        return
+    blocker = str(probe.get("blocker") or "GIT_ERROR")
+    detail = str(probe.get("detail") or "").strip()
+    if blocker == "UNTRUSTED_CHECKOUT":
+        raise GitError(
+            "Git blocked this checkout because the current Windows user/machine does not trust its ownership. "
+            "Run 'Trust Current Checkout' once for this machine/path, then retry. " +
+            (f"Git detail: {detail}" if detail else "")
+        )
+    if blocker == "NOT_INITIALIZED":
+        raise GitError("Cortex is not a Git repository yet. Run Git Setup first.")
+    raise GitError(detail or "Git could not open the current checkout.")
+
+
+def _configured_origin_without_repo_trust(root: Path) -> str:
+    config = root / ".git" / "config"
+    if not config.is_file():
+        return ""
+    cp = run(["git", "config", "--file", str(config), "--get", "remote.origin.url"], check=False, timeout=30)
+    return (cp.stdout or "").strip() if cp.returncode == 0 else ""
+
+
+def trust_checkout(root: Path, remote: str) -> int:
+    git_meta = root / ".git"
+    if not git_meta.exists():
+        raise GitError("Cannot trust checkout because .git metadata is missing. Run Git Setup instead.")
+
+    probe = git_repo_probe(root)
+    if probe.get("ready"):
+        print("GIT CHECKOUT TRUST: PASS")
+        print(f" Checkout : {root}")
+        print(" State    : already trusted for this Windows user")
+        return 0
+
+    if str(probe.get("blocker") or "") != "UNTRUSTED_CHECKOUT":
+        detail = str(probe.get("detail") or "").strip()
+        raise GitError(detail or "Checkout is unavailable for a reason other than Git ownership trust.")
+
+    authority = project_git_authority(root)
+    expected_remote = str(authority.get("remote") or remote or "").strip()
+    configured_origin = _configured_origin_without_repo_trust(root)
+    if configured_origin and expected_remote and configured_origin != expected_remote:
+        raise GitError(
+            "Refusing to trust checkout because .git/config origin does not match the project authority: "
+            f"configured={configured_origin!r} expected={expected_remote!r}"
+        )
+
+    current = run(["git", "config", "--global", "--get-all", "safe.directory"], check=False, timeout=30)
+    existing = {line.strip().casefold() for line in (current.stdout or "").splitlines() if line.strip()}
+    resolved = str(root.resolve())
+    if resolved.casefold() not in existing:
+        run(["git", "config", "--global", "--add", "safe.directory", resolved], timeout=30)
+
+    require_git_repo(root)
+    print("GIT CHECKOUT TRUST: PASS")
+    print(f" Checkout : {resolved}")
+    print(" Scope    : current Windows user / machine Git config")
+    if configured_origin:
+        print(f" Origin   : {configured_origin}")
+    print(" Note     : trust is machine/path specific; the portable source itself was not modified.")
+    return 0
 
 
 def has_commit(root: Path) -> bool:
@@ -268,7 +366,13 @@ def setup_or_repair(root: Path, remote: str) -> int:
     print(f" Remote      : {remote}")
     print(f" Green source: {'MATCH' if green_ok else 'NOT CERTIFIED'}")
 
-    if not git_repo(root):
+    probe = git_repo_probe(root)
+    if not probe.get("ready"):
+        if str(probe.get("blocker") or "") == "UNTRUSTED_CHECKOUT":
+            raise GitError(
+                "Git checkout exists but is blocked by ownership trust on this Windows user/machine. "
+                "Run 'Trust Current Checkout' instead of re-initializing the repository."
+            )
         cp = run(["git", "init", "-b", "main", str(root)], check=False, timeout=60)
         if cp.returncode != 0:
             run(["git", "init", str(root)], timeout=60)
@@ -423,7 +527,9 @@ def require_git_identity(root: Path) -> dict[str, object]:
 def status_summary(root: Path) -> dict[str, object]:
     result: dict[str, object] = {
         "repository": str(root),
-        "gitReady": git_repo(root),
+        "gitReady": False,
+        "gitBlocker": None,
+        "gitDetail": None,
         "branch": None,
         "head": None,
         "headShort": None,
@@ -448,8 +554,18 @@ def status_summary(root: Path) -> dict[str, object]:
         "gitIdentitySource": "missing",
     }
 
+    probe = git_repo_probe(root)
+    result["gitReady"] = bool(probe.get("ready"))
+    result["gitBlocker"] = probe.get("blocker") or None
+    result["gitDetail"] = probe.get("detail") or None
     if not result["gitReady"]:
-        result["greenDetail"] = "Git is not initialized."
+        blocker = str(probe.get("blocker") or "GIT_ERROR")
+        if blocker == "UNTRUSTED_CHECKOUT":
+            result["greenDetail"] = "Git checkout exists but is not trusted by this Windows user/machine."
+        elif blocker == "NOT_INITIALIZED":
+            result["greenDetail"] = "Git is not initialized."
+        else:
+            result["greenDetail"] = str(probe.get("detail") or "Git checkout is unavailable.")
         return result
 
     branch = current_branch(root) or "<detached>"
@@ -546,9 +662,19 @@ def show_status(root: Path) -> int:
     print("=================")
     print(f" Repository  : {root}")
 
-    if not git_repo(root):
-        print(" Git         : NOT INITIALIZED")
-        print(" Next action : Git / Source Control -> Initialize / connect / repair")
+    probe = git_repo_probe(root)
+    if not probe.get("ready"):
+        blocker = str(probe.get("blocker") or "GIT_ERROR")
+        if blocker == "UNTRUSTED_CHECKOUT":
+            print(" Git         : BLOCKED - CHECKOUT TRUST REQUIRED")
+            print(" Next action : Source Control -> Trust Current Checkout")
+        elif blocker == "NOT_INITIALIZED":
+            print(" Git         : NOT INITIALIZED")
+            print(" Next action : Git / Source Control -> Initialize / connect / repair")
+        else:
+            print(" Git         : ERROR")
+            if probe.get("detail"):
+                print(f" Detail      : {probe.get('detail')}")
         return 0
 
     branch = current_branch(root) or "<detached>"
@@ -632,8 +758,7 @@ def show_status(root: Path) -> int:
 
 
 def review(root: Path) -> int:
-    if not git_repo(root):
-        raise GitError("Cortex is not a Git repository yet.")
+    require_git_repo(root)
     print("STATUS")
     print("------")
     print(git(root, "status", "--short", "--branch", check=False).stdout.rstrip())
@@ -689,8 +814,7 @@ def require_main_branch(root: Path, action: str) -> None:
 
 
 def commit_green(root: Path, message: str) -> int:
-    if not git_repo(root):
-        raise GitError("Cortex is not a Git repository yet.")
+    require_git_repo(root)
     require_main_branch(root, "GREEN commit")
 
     marker = load_marker(root)
@@ -746,8 +870,7 @@ def commit_green(root: Path, message: str) -> int:
 
 
 def push_main(root: Path) -> int:
-    if not git_repo(root):
-        raise GitError("Cortex is not a Git repository yet.")
+    require_git_repo(root)
     require_main_branch(root, "Push")
 
     print("PUSH PRECHECK")
@@ -768,16 +891,14 @@ def commit_push_green(root: Path, message: str) -> int:
 
 
 def fetch_main(root: Path) -> int:
-    if not git_repo(root):
-        raise GitError("Cortex is not a Git repository yet.")
+    require_git_repo(root)
     git(root, "fetch", "--prune", "origin", "main", timeout=300)
     print("Fetch origin/main: PASS")
     return 0
 
 
 def compare_main(root: Path) -> int:
-    if not git_repo(root):
-        raise GitError("Cortex is not a Git repository yet.")
+    require_git_repo(root)
     if git(root, "rev-parse", "--verify", "origin/main", check=False).returncode != 0:
         raise GitError("origin/main is unavailable. Run Fetch first.")
     local = current_head(root)
@@ -804,8 +925,7 @@ def compare_main(root: Path) -> int:
 
 
 def history(root: Path) -> int:
-    if not git_repo(root):
-        raise GitError("Cortex is not a Git repository yet.")
+    require_git_repo(root)
     print("RECENT SOURCE HISTORY")
     print("=====================")
     print(git(root, "log", "--graph", "--decorate", "--oneline", "-20", check=False).stdout.strip() or "<no commits>")
@@ -813,8 +933,7 @@ def history(root: Path) -> int:
 
 
 def verify_sync(root: Path) -> int:
-    if not git_repo(root):
-        raise GitError("Cortex is not a Git repository yet.")
+    require_git_repo(root)
     summary = status_summary(root)
     print("SOURCE AUTHORITY VERIFICATION")
     print("=============================")
@@ -829,8 +948,7 @@ def verify_sync(root: Path) -> int:
 
 
 def pull_ff_only(root: Path) -> int:
-    if not git_repo(root):
-        raise GitError("Cortex is not a Git repository yet.")
+    require_git_repo(root)
     porcelain = git(root, "status", "--porcelain=v1", "-uall", check=False).stdout.strip()
     if porcelain:
         raise GitError("Fast-forward pull requires a clean working tree. Commit/stash/review local changes first.")
@@ -851,8 +969,7 @@ def pull_ff_only(root: Path) -> int:
 
 
 def manual_commit(root: Path, message: str) -> int:
-    if not git_repo(root):
-        raise GitError("Cortex is not a Git repository yet.")
+    require_git_repo(root)
     if not message.strip():
         raise GitError("Manual commit message cannot be empty.")
     require_git_identity(root)
@@ -879,6 +996,7 @@ def main() -> int:
         "commit-push-green",
         "identity-status",
         "identity-set",
+        "trust",
         "push",
         "fetch",
         "compare",
@@ -917,6 +1035,8 @@ def main() -> int:
         return show_git_identity(root)
     if args.action == "identity-set":
         return set_git_identity(root, args.name, args.email, args.scope)
+    if args.action == "trust":
+        return trust_checkout(root, args.remote)
     if args.action == "push":
         return push_main(root)
     if args.action == "fetch":

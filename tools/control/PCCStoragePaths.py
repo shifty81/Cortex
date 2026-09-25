@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-STORAGE_PATHS_VERSION = "PCC-STORAGE-PATHS-0.3"
+STORAGE_PATHS_VERSION = "PCC-STORAGE-PATHS-0.4"
 
 
 def _safe_json(path: Path) -> dict[str, Any] | None:
@@ -47,6 +47,53 @@ def _runtime_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def runtime_volume_root() -> Path:
+    """Return the volume that physically contains the Cortex runtime.
+
+    On Windows this deliberately returns the drive root (for example ``E:\\``)
+    rather than persisting the transient drive letter anywhere else.  The same
+    external disk may therefore appear as E:, G:, or another letter on a
+    different machine without changing its logical Vault authority.
+    """
+    runtime = _runtime_root()
+    if os.name == "nt" and runtime.drive:
+        return Path(runtime.drive + "\\")
+    anchor = runtime.anchor
+    return Path(anchor) if anchor else runtime
+
+
+def _portable_drive_root_policy_enabled() -> bool:
+    if os.name != "nt":
+        return False
+    candidates = [
+        _runtime_root() / "config" / "cortex" / "portable_drive_root_vault.v1.json",
+    ]
+    for path in candidates:
+        data = _safe_json(path)
+        if not data:
+            continue
+        if str(data.get("schema") or "") != "cortex.portable_drive_root_vault.v1":
+            continue
+        return bool(data.get("enabled")) and str(data.get("mode") or "") == "repository_drive_root"
+    return False
+
+
+def portable_relative_to_runtime_volume(path: Path) -> str | None:
+    """Return a stable volume-relative path for files beside Cortex."""
+    resolved = path.expanduser().resolve()
+    volume = runtime_volume_root().resolve()
+    try:
+        relative = resolved.relative_to(volume)
+    except ValueError:
+        return None
+    return relative.as_posix().strip("/")
+
+
+def resolve_portable_volume_path(relative: str) -> Path:
+    cleaned = str(relative or "").replace("\\", "/").strip("/")
+    return (runtime_volume_root() / Path(cleaned)).resolve() if cleaned else runtime_volume_root().resolve()
+
+
 def _bootstrap_vault_root() -> Path | None:
     """Read the persisted machine Vault authority written by Cortex bootstrap.
 
@@ -78,16 +125,20 @@ def _bootstrap_vault_root() -> Path | None:
 
 
 def resolve_vault_root(project_root: Path | None = None) -> Path:
-    """Resolve the one machine-level Vault root used by PCC and project mirrors.
+    """Resolve the single Vault authority used by PCC and managed projects.
 
-    Explicit environment configuration always wins.  If a child project is
-    activated without those variables, recover the machine authority persisted by
-    the Cortex bootstrap before consulting project-local policy.  This prevents a
-    project switch from silently creating a second AppData/D-drive Vault.
+    A process-level override remains the highest authority.  Otherwise, when the
+    repository enables ``repository_drive_root`` portability, the physical volume
+    containing Cortex wins over any persisted bootstrap drive letter.  This is
+    what allows one external disk to mount as E:, G:, etc. without creating a
+    second Vault or pointing at a missing old drive.
     """
     override = os.environ.get("CORTEX_VAULT_ROOT") or os.environ.get("PCC_VAULT_ROOT")
     if override:
         return Path(override).expanduser().resolve()
+
+    if _portable_drive_root_policy_enabled():
+        return runtime_volume_root().resolve()
 
     bootstrapped = _bootstrap_vault_root()
     if bootstrapped is not None:

@@ -28,7 +28,7 @@ import CortexPCCMaintenance as maintenance
 import CortexSourceRollup as source_rollup
 import PCCVaultStorage as vault_storage
 
-PCC_VERSION = "CTX-PCC-12.3"
+PCC_VERSION = "CTX-PCC-12.4"
 DEFAULT_REMOTE = "https://github.com/shifty81/Cortex.git"
 RESULT_PREFIX = "PCC_RESULT_JSON="
 
@@ -585,8 +585,18 @@ class GateEngine:
         result = self.git.action("summary-json", stream=False, timeout=60)
         if not result.ok:
             return "FAIL", f"Git authority exited {result.returncode}: {(result.stderr or result.stdout).strip()[-1000:]}"
-        json.loads(result.stdout.strip().splitlines()[-1])
-        return "PASS", "Git authority returned machine-readable status"
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+        if not isinstance(payload, dict):
+            return "FAIL", "Git authority returned a non-object status payload"
+        if not bool(payload.get("gitReady")):
+            blocker = str(payload.get("gitBlocker") or "GIT_ERROR")
+            detail = str(payload.get("gitDetail") or payload.get("greenDetail") or "Git checkout is unavailable")
+            if blocker == "UNTRUSTED_CHECKOUT":
+                return "FAIL", "Git checkout trust required for this Windows user/machine; run Source Control -> Trust Current Checkout"
+            if blocker == "NOT_INITIALIZED":
+                return "FAIL", "Git repository is not initialized; run Git Setup"
+            return "FAIL", f"Git authority unavailable ({blocker}): {detail[-1000:]}"
+        return "PASS", "Git authority ready and machine-readable"
 
     def _root_hygiene(self) -> tuple[str, str]:
         summary = maintenance.scan_root_hygiene(self.ctx.root)
@@ -831,8 +841,11 @@ class EvidenceBuilder:
                 "pythonExecutable": sys.executable,
             }
             self._write_json(work / "bundle.json", meta)
+            self.log.emit("INFO", f"Evidence: assembling {reason} debug bundle (lightweight evidence path)", phase="evidence")
             self._write_json(work / "git-summary.json", self.git.summary())
+            self.log.emit("INFO", "Evidence: Git summary captured; scanning patch authority", phase="evidence")
             _, patch_summary = self.patch.scan()
+            self.log.emit("INFO", "Evidence: patch summary captured; collecting bounded diagnostics", phase="evidence")
             self._write_json(work / "patch-summary.json", patch_summary)
             for rel in [
                 "project.control.json",
@@ -888,16 +901,23 @@ class EvidenceBuilder:
                     shutil.copy2(src, dst)
             hygiene = maintenance.scan_root_hygiene(self.ctx.root)
             self._write_json(work / "root-hygiene.json", hygiene)
+            # Failure evidence must stay lightweight. Deep storage health/GC walks can
+            # traverse large CAS/shared stores and used to make a failed QUICK/FULL
+            # appear frozen while the debug bundle was being assembled. Deep storage
+            # diagnostics remain explicit PCC operations; gate-failure evidence records
+            # only constant/bounded metadata here.
+            self.log.emit("INFO", "Evidence: collecting lightweight Vault/storage summary", phase="evidence")
             try:
                 self._write_json(work / "vault-storage.json", {
+                    "schema": "cortex.pcc_debug_vault_summary.v1",
+                    "mode": "LIGHTWEIGHT",
                     "dependencies": vault_storage.dependency_status(self.ctx.root),
                     "mirror": vault_storage.mirror_status(self.ctx.root),
-                    "health": vault_storage.storage_health(self.ctx.root),
-                    "retention": vault_storage.snapshot_retention_plan(self.ctx.root),
-                    "gc": vault_storage.cas_gc_plan(self.ctx.root),
+                    "deepHealthCollected": False,
+                    "note": "Run explicit storage-health / vault-gc-plan operations for deep diagnostics.",
                 })
             except Exception as exc:
-                self._write_json(work / "vault-storage.json", {"status": "ERROR", "error": str(exc)})
+                self._write_json(work / "vault-storage.json", {"status": "ERROR", "mode": "LIGHTWEIGHT", "error": str(exc)})
             manifest = maintenance.debug_manifest_for_tree(work)
             self._write_json(work / "MANIFEST.json", manifest)
             out = self.ctx.debug_dir / f"Cortex_DebugBundle_{stamp}_{safe_reason}.zip"
@@ -1728,10 +1748,17 @@ def run_universal_python_regressions(root: Path, runner: CommandRunner | None = 
     if missing:
         print("[FAIL] Missing mandatory Python PCC tests: " + ", ".join(missing))
         return 2
-    command = [*which_python(), "-B", "-m", "unittest", "-v", *map(str, tests)]
+    command = [*which_python(), "-B", "-m", "unittest", "-v", "-b", *map(str, tests)]
     if runner:
-        result = runner.run(command, cwd=root, timeout=900, stream=True, phase="gate:python-pcc-tests")
-        if not result.ok:
+        result = runner.run(command, cwd=root, timeout=900, stream=False, phase="gate:python-pcc-tests")
+        combined = result.stdout + "\n" + result.stderr
+        match = re.search(r"Ran\s+(\d+)\s+tests?", combined)
+        if result.ok:
+            runner.log.emit("PASS", f"Python PCC regressions: {match.group(1) if match else 'all'} test(s) passed", phase="gate:python-pcc-tests")
+        else:
+            tail = "\n".join(combined.splitlines()[-80:]).strip()
+            if tail:
+                print(tail)
             return result.returncode if result.returncode != 0 else 2
     else:
         result = subprocess.run(command, cwd=str(root), check=False)
@@ -1742,12 +1769,20 @@ def run_universal_python_regressions(root: Path, runner: CommandRunner | None = 
         if not list(provider_tests.glob("test_*.py")):
             print("[FAIL] Universal Python PCC provider test suite is empty: " + str(provider_tests))
             return 2
-        command = [*which_python(), "-B", "-m", "unittest", "discover", "-s", str(provider_tests), "-p", "test_*.py", "-v"]
+        command = [*which_python(), "-B", "-m", "unittest", "discover", "-s", str(provider_tests), "-p", "test_*.py", "-v", "-b"]
         environment = os.environ.copy()
         provider_src = str(root / "tools/pcc/src")
         environment["PYTHONPATH"] = provider_src + (os.pathsep + environment["PYTHONPATH"] if environment.get("PYTHONPATH") else "")
         if runner:
-            result = runner.run(command, cwd=root, timeout=900, stream=True, phase="gate:universal-provider-tests", env=environment)
+            result = runner.run(command, cwd=root, timeout=900, stream=False, phase="gate:universal-provider-tests", env=environment)
+            combined = result.stdout + "\n" + result.stderr
+            match = re.search(r"Ran\s+(\d+)\s+tests?", combined)
+            if result.ok:
+                runner.log.emit("PASS", f"Universal PCC provider regressions: {match.group(1) if match else 'all'} test(s) passed", phase="gate:universal-provider-tests")
+            else:
+                tail = "\n".join(combined.splitlines()[-80:]).strip()
+                if tail:
+                    print(tail)
             return result.returncode if not result.timed_out and not result.cancelled else 2
         return subprocess.run(command, cwd=str(root), check=False, env=environment).returncode
     print("[FAIL] Missing Universal Python PCC provider test directory: " + str(provider_tests))
@@ -1759,7 +1794,7 @@ def run_self_tests(root: Path, runner: CommandRunner | None = None) -> int:
     if not test_file.is_file():
         print(f"Self-test file missing: {test_file}")
         return 1
-    argv = [*which_python(), "-m", "unittest", "-v", str(test_file)]
+    argv = [*which_python(), "-m", "unittest", "-v", "-b", str(test_file)]
     if runner:
         result = runner.run(argv, cwd=root, timeout=600, stream=True, phase="pcc:self-test")
         return result.returncode
@@ -1771,16 +1806,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("command", nargs="?", default="interactive", choices=[
         "interactive", "status", "status-json", "quick", "fast", "full",
         "patch-status", "patch-apply", "debug-bundle", "git-status", "git-review",
-        "git-history", "git-verify", "git-fetch", "git-compare", "git-pull", "git-setup",
+        "git-history", "git-verify", "git-fetch", "git-compare", "git-pull", "git-setup", "git-trust",
         "git-identity", "git-identity-status", "commit-green", "commit-push-green", "push", "build", "build-release", "format",
         "storage-status", "storage-status-json", "storage-health", "storage-health-json", "storage-prepare", "storage-reclaim-plan", "storage-reclaim-plan-all", "vault-mirror", "vault-mirror-all", "vault-verify", "vault-verify-deep",
         "vault-retention-plan", "vault-retention-apply", "vault-gc-plan", "vault-gc-stage", "vault-gc-restore", "vault-gc-purge",
-        "launch-gui", "self-test", "doctor", "doctor-json",
+        "vault-intake-status", "vault-intake-audit", "vault-intake-handoff",
+        "launch-gui", "self-test", "doctor", "doctor-json", "failure-doctor", "failure-doctor-json", "repair-plan", "repair-plan-json", "repair-current", "repair-current-full",
         "root-hygiene", "root-hygiene-fix", "artifact-status",
+        "cortex-worker-status", "cortex-worker-build", "cortex-worker-build-release",
         "artifact-prune", "artifact-prune-apply", "verify-latest-debug", "source-rollup", "universal-audit", "universal-plan", "forgepy-parity", "contract-migrate",
     ])
     parser.add_argument("--root")
     parser.add_argument("--scan-root", action="append", default=[], help="Additional roots for read-only PCC inventory")
+    parser.add_argument("--intake-root", help="Optional exact Vault Intake root override for intake audit")
+    parser.add_argument("--no-archive-inventory", action="store_true", help="Skip ZIP central-directory inventory during Vault Intake audit")
     parser.add_argument("--max-depth", type=int, default=5, help="Bounded inventory depth")
     parser.add_argument("--gate-key", default="full", help="Requested gate for universal-plan; plan only, no execution")
     parser.add_argument("--project-root", help="Other repository to inspect using universal-plan (read-only)")
@@ -1842,6 +1881,58 @@ def _dispatch_main(argv: Sequence[str] | None = None) -> int:
         for scan_root in args.scan_root:
             audit_args.extend(["--scan-root", scan_root])
         return audit_main(audit_args)
+    if cmd in {"failure-doctor", "failure-doctor-json"}:
+        # Read-only structured failure classification; no controller/session creation.
+        from PCCBuildDoctor import main as failure_doctor_main
+        doctor_args = ["--root", str(root)]
+        if cmd == "failure-doctor-json":
+            doctor_args.append("--json")
+        return failure_doctor_main(doctor_args)
+    if cmd in {"repair-plan", "repair-plan-json", "repair-current", "repair-current-full"}:
+        # Deterministic repair coordination is independent from the ordinary PCC
+        # controller.  Planning is read-only; apply paths require explicit --yes
+        # and keep all project-file mutations inside the Cortex transaction.
+        from PCCRepairCoordinator import main as repair_main
+        action = {
+            "repair-plan": "plan",
+            "repair-plan-json": "plan",
+            "repair-current": "apply",
+            "repair-current-full": "apply-full",
+        }[cmd]
+        repair_args = [action, "--root", str(root)]
+        if cmd == "repair-plan-json":
+            repair_args.append("--json")
+        if args.yes:
+            repair_args.append("--yes")
+        if args.message:
+            repair_args.extend(["--message", args.message])
+        return repair_main(repair_args)
+    if cmd in {"cortex-worker-status", "cortex-worker-build", "cortex-worker-build-release"}:
+        # Worker bootstrap is independent from FULL.  Status is read-only; build
+        # creates only Cargo build artifacts/receipt and never mutates project source.
+        from PCCCortexWorker import main as worker_main
+        action = {
+            "cortex-worker-status": "status",
+            "cortex-worker-build": "build",
+            "cortex-worker-build-release": "build-release",
+        }[cmd]
+        return worker_main([action, "--root", str(root)])
+    if cmd in {"vault-intake-status", "vault-intake-audit", "vault-intake-handoff"}:
+        # Intake audit is deliberately independent from the project build/gate path.
+        # It catalogs the governed Vault Intake and emits planning evidence only;
+        # it never moves, deletes, executes or extracts intake content.
+        from PCCVaultIntakeAudit import main as intake_main
+        action = {
+            "vault-intake-status": "status",
+            "vault-intake-audit": "scan",
+            "vault-intake-handoff": "handoff",
+        }[cmd]
+        intake_args = [action, "--root", str(root)]
+        if args.intake_root:
+            intake_args.extend(["--intake-root", args.intake_root])
+        if args.no_archive_inventory:
+            intake_args.append("--no-archive-inventory")
+        return intake_main(intake_args)
     pcc = CortexPCC(root, remote=args.remote, quiet=(args.quiet or cmd == "status-json"))
     if cmd == "interactive": return pcc.interactive()
     if cmd == "status": return pcc.status()
@@ -1886,7 +1977,7 @@ def _dispatch_main(argv: Sequence[str] | None = None) -> int:
     git_map = {
         "git-status": "status", "git-review": "review", "git-history": "history",
         "git-verify": "verify", "git-fetch": "fetch", "git-compare": "compare",
-        "git-pull": "pull", "git-setup": "setup", "push": "push",
+        "git-pull": "pull", "git-setup": "setup", "git-trust": "trust", "push": "push",
     }
     if cmd in git_map: return pcc.git.action(git_map[cmd], stream=True).returncode
     if cmd in {"commit-green", "commit-push-green"}:

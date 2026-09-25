@@ -4,13 +4,13 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Sequence
 
 from PCCRepoHygiene import prepare
+from PCCSharedEnvironment import BROKER_VERSION, resolve_toolchain_environment
 
-VERSION = "PCC-OPERATION-HOST-0.1"
+VERSION = "PCC-OPERATION-HOST-0.4"
 
 # Operations that should begin and end from a transport-clean repository root.
 CLEAN_OPERATIONS = {
@@ -39,38 +39,52 @@ def _print_hygiene(label: str, root: Path) -> int:
     return 0
 
 
-def _operation_environment(root: Path) -> dict[str, str]:
-    """Build the authoritative child environment at the operation-host boundary.
-
-    The GUI/launcher may already have injected these variables, but native project
-    PCCs must not depend on that accident of ancestry.  Re-resolve the shared Vault
-    toolchains here so PCC.cmd/ProjectControlCenter.py and every other provider see
-    the same Python/Git/Rust/cache authority.  Existing MSVC/SDK variables remain
-    inherited because dependency_environment prepends to, rather than replaces, PATH.
-    """
-    env = os.environ.copy()
-    try:
-        from PCCVaultStorage import dependency_environment, ensure_layout
-
-        ensure_layout(root)
-        if os.environ.get("CORTEX_SHARED_DEPENDENCIES", "1").strip().casefold() not in {
-            "0", "false", "off", "no"
-        }:
-            env.update(dependency_environment(root))
-    except Exception as exc:
-        print(f"[WARN] Operation host could not hydrate shared toolchain environment: {exc}", flush=True)
-    env["PCC_OPERATION_HOST_ACTIVE"] = "1"
-    return env
+def _tool_name(path: object) -> str:
+    value = str(path or "").strip()
+    return Path(value).name if value else "missing"
 
 
 def _run(argv: Sequence[str], root: Path) -> int:
-    proc = subprocess.Popen(
-        list(argv),
-        cwd=str(root),
-        stdin=subprocess.DEVNULL,
-        env=_operation_environment(root),
+    print(f"[PCC] Toolchain broker {BROKER_VERSION}: resolving child environment...", flush=True)
+    try:
+        env, report = resolve_toolchain_environment(root, os.environ.copy(), timeout=20.0)
+    except Exception as exc:
+        # Resolution must never create a silent operation-host deadlock.  The
+        # provider still gets a chance to report its own structured blocker.
+        print(f"[WARN] Toolchain broker failed open to inherited environment: {exc}", flush=True)
+        env = os.environ.copy()
+        report = {"elapsedMs": 0, "tools": {}, "msvc": {"status": "broker_error"}}
+
+    tools = report.get("tools") or {}
+    msvc = report.get("msvc") or {}
+    print(
+        "[PCC] Toolchain resolution complete "
+        f"({int(report.get('elapsedMs', 0) or 0)} ms) | "
+        f"python={_tool_name(tools.get('python'))} "
+        f"git={_tool_name(tools.get('git'))} "
+        f"cargo={_tool_name(tools.get('cargo'))} "
+        f"rustc={_tool_name(tools.get('rustc'))} "
+        f"msvc={msvc.get('status', 'unknown')}",
+        flush=True,
     )
-    return int(proc.wait())
+    if str(msvc.get("status") or "") in {"activation_failed", "activation_timeout", "activation_incomplete"}:
+        detail = str(msvc.get("error") or "").strip()
+        vsdev = str(msvc.get("vsDevCmd") or "").strip()
+        print(f"[WARN] MSVC activation detail: vsDevCmd={vsdev or '<not found>'}", flush=True)
+        if detail:
+            print(f"[WARN] MSVC activation error: {detail}", flush=True)
+
+    env["PCC_OPERATION_HOST_ACTIVE"] = "1"
+    env["PYTHONUNBUFFERED"] = "1"
+    display = " ".join(str(item) for item in argv[:4])
+    if len(argv) > 4:
+        display += " ..."
+    print(f"[PCC] Provider launch: {display}", flush=True)
+    proc = subprocess.Popen(list(argv), cwd=str(root), stdin=subprocess.DEVNULL, env=env)
+    print(f"[PCC] Provider PID: {proc.pid}", flush=True)
+    rc = int(proc.wait())
+    print(f"[PCC] Provider exit: {rc}", flush=True)
+    return rc
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -541,7 +541,7 @@ class PCC60PassTests(TempRoot):
 
     # 60
     def test_60_pcc12_version_and_no_duplicate_fast_menu(self):
-        self.assertEqual(pcc.PCC_VERSION,"CTX-PCC-12.3")
+        self.assertEqual(pcc.PCC_VERSION,"CTX-PCC-12.4")
         source=(TOOLS/"CortexPCC.py").read_text(encoding="utf-8")
         self.assertEqual(source.count('print(" 21 Fast gate")'),1)
 
@@ -577,7 +577,7 @@ class PCC60PassTests(TempRoot):
             "Command Registry",
             "_scrollable_page_body",
             "_responsive_action_grid",
-            'GUI_VERSION = "PCC-GUI-0.11.6"',
+            'GUI_VERSION = "PCC-GUI-0.13.0"',
         ):
             self.assertIn(token, source)
 
@@ -687,22 +687,39 @@ class PCC60PassTests(TempRoot):
         self.assertEqual(summary["fallback"], "rust-workspace")
 
 
-    def test_68_console_uses_cortex_runtime_authority_and_fail_closed_operation_keys(self):
+    def test_68_console_uses_python_cortex_bridge_without_building_on_prompt(self):
         source=(TOOLS/"CortexPCCGui.py").read_text(encoding="utf-8")
-        self.assertIn('GUI_VERSION = "PCC-GUI-0.11.6"', source)
+        bridge=(TOOLS/"CortexPythonBridge.py").read_text(encoding="utf-8")
+        self.assertIn('GUI_VERSION = "PCC-GUI-0.13.0"', source)
         self.assertIn('def _cortex_runtime_root', source)
-        self.assertIn('"--manifest-path", str(manifest)', source)
+        self.assertIn('CortexPythonBridge.py', source)
         self.assertIn('environment_root=cortex_root', source)
+        self.assertNotIn('"cargo", "run"', source)
+        self.assertIn('BRIDGE_VERSION = "CORTEX-PY-BRIDGE-0.7"', bridge)
+        self.assertNotIn('cargo", "metadata', bridge)
         self.assertIn('Project operation is not available for', source)
+        self.assertIn('/newchat', source)
+        self.assertIn('--conversation-id', source)
         self.assertIn('re.fullmatch(r"[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)+", text)', source)
 
-    def test_69_universal_process_environment_exports_shared_python_authority(self):
+    def test_69_universal_process_environment_uses_bounded_toolchain_broker(self):
         storage_source=(TOOLS/"PCCVaultStorage.py").read_text(encoding="utf-8")
         surface_source=(TOOLS/"PCCSurfaceCommon.py").read_text(encoding="utf-8")
+        shared_source=(TOOLS/"PCCSharedEnvironment.py").read_text(encoding="utf-8")
+        host_source=(TOOLS/"PCCOperationHost.py").read_text(encoding="utf-8")
         for token in ("CORTEX_PYTHON_EXE", "PCC_VAULT_ROOT", "RUSTUP_HOME", 'toolchains / "python"'):
             self.assertIn(token, storage_source)
         self.assertIn("environment_root: Path | None = None", surface_source)
-        self.assertIn("dependency_environment(effective_root)", surface_source)
+        self.assertIn("apply_shared_toolchain_environment(os.environ.copy(), root=effective_root)", surface_source)
+        self.assertIn('BROKER_VERSION = "PCC-TOOLCHAIN-BROKER-0.4"', shared_source)
+        self.assertIn("resolve_toolchain_environment", host_source)
+        self.assertIn("Provider PID", host_source)
+
+    def test_69b_patch_apply_requires_explicit_yes(self):
+        source=(TOOLS/"PCCAutoAdapter.py").read_text(encoding="utf-8")
+        self.assertNotIn('assume_yes or command == "patch-apply"', source)
+        self.assertIn('elif assume_yes:', source)
+
 
 
     def test_70_git_identity_round_trip_and_status_summary(self):
@@ -733,7 +750,7 @@ class PCC60PassTests(TempRoot):
             "--git-name",
             "--git-email",
             "--git-scope",
-            'GUI_VERSION = "PCC-GUI-0.11.6"',
+            'GUI_VERSION = "PCC-GUI-0.13.0"',
         ):
             self.assertIn(token, source)
         pcc_source=(TOOLS/"CortexPCC.py").read_text(encoding="utf-8")
@@ -758,6 +775,8 @@ class PCC60PassTests(TempRoot):
         status = git.git_identity_status(self.root)
         self.assertTrue(status["configured"])
         self.assertEqual(status["source"], "local")
+        self.assertEqual(status["localName"], "shifty81")
+        self.assertEqual(status["localEmail"], "50773914+shifty81@users.noreply.github.com")
         self.assertEqual(status["effectiveName"], "shifty81")
         self.assertEqual(status["effectiveEmail"], "50773914+shifty81@users.noreply.github.com")
 

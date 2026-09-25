@@ -58,6 +58,10 @@ fn value(args: &[String], key: &str) -> Option<String> {
 }
 
 fn configured_models_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("CORTEX_MODELS_ROOT").map(PathBuf::from) {
+        return root;
+    }
+
     if let Some(root) = std::env::var_os("CORTEX_LIBRARY_ROOT").map(PathBuf::from) {
         return models_root_for(&root);
     }

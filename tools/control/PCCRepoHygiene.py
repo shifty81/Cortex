@@ -237,7 +237,11 @@ def classify_root(root: Path) -> dict[str, Any]:
 
 def prepare(root: Path, *, apply: bool = True) -> dict[str, Any]:
     root = root.resolve()
-    git_excludes = ensure_local_git_excludes(root)
+    git_excludes = (
+        ensure_local_git_excludes(root)
+        if apply
+        else {"updated": False, "path": str(_git_exclude_path(root) or ""), "reason": "dry-run; no Git exclude mutation"}
+    )
     scan = classify_root(root)
     session = stamp()
     moves: list[MoveRecord] = []

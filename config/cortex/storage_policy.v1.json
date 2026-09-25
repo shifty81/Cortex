@@ -68,7 +68,9 @@
     "full_green_verification": "source_fingerprint_stable_plus_deep_cas_hash_before_green",
     "project_identity_status": "path-derived-project-key-pending-stable-id-migration",
     "drive_root_authority_supported": true,
-    "drive_root_authority_note": "CORTEX_VAULT_ROOT may be set to a drive root such as E:\\; governed Vault namespaces are created directly under that root."
+    "drive_root_authority_note": "CORTEX_VAULT_ROOT may be set to a drive root such as E:\\; governed Vault namespaces are created directly under that root.",
+    "portable_root_resolution": "repository_volume_root_drive_letter_independent",
+    "portable_registry": "data/registry/project_registry.json"
   },
   "shared_dependencies": {
     "enabled": true,
@@ -97,5 +99,7 @@
     },
     "legacy_cache_migration": "explicit_only",
     "automatic_deletion_of_legacy_caches": false
-  }
+  },
+  "root_mode": "repository_drive_root",
+  "portable_drive_root_policy": "config/cortex/portable_drive_root_vault.v1.json"
 }

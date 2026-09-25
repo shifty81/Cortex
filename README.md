@@ -1,56 +1,45 @@
-# Cortex / Forge Unified Control Project
+# Cortex PCC Build-Gate Recovery R1
 
-**Current authority date:** 2026-09-23  
-**Operational control plane:** Python Forge/PCC + Cortex integration  
-**Rust Forge:** cumulative candidate through RS293; not takeover-certified  
-**Cortex:** intelligence, conversation, agent, provider/model, tool, project-intelligence and automation runtime
+Built from the exact `PROJECT_CONTROL_CENTER.cmd` captured in
+`Cortex_DebugBundle_20260924-195210_FULL_FAIL.zip`.
 
-## Current product direction
+Captured launcher Git blob:
+`9f62406a0253dc1574c037bb5daf78e78659bd34`
 
-This repository is converging on one operator experience rather than competing top-level tools:
+Patched launcher Git blob:
+`f828d6e170db9d4bf8df3787463a3b53769e7ef1`
 
-- **Forge** is the primary workstation/application shell and universal project-control surface.
-- **Cortex** is integrated under Forge as the intelligence and automation backend while remaining independently testable/service-capable.
-- **PCC functionality** is the universal project-control spine exposed through Forge and the repository root bootstrap.
-- **Vault** is the governed machine storage/catalog/provenance authority, with shared dependency/cache stores and per-project deduplicated mirrors.
-- **Ember and other projects** remain independent managed projects/integrations, not Cortex-owned source trees.
+## What the debug bundle proved
 
-ForgePY/Python PCC remains the production control authority until the Rust Forge lane passes explicit semantic/runtime takeover certification. Do not treat candidate Rust Forge code as production merely because it compiles.
+The FULL gate is currently stopping in QUICK at `windows-linker-toolchain`.
+Cargo and Rust are present and Cargo metadata resolves the 49-package workspace,
+but `link.exe` and `cl.exe` are missing from the PCC process environment.
 
-## Repository entry point
+The live fail-closed launcher removed the older startup environment bootstrap.
+The older launcher called `scripts\Bootstrap-CortexEnvironment.ps1 -Mode Startup`
+and then called `.cortex\bootstrap-env.cmd`. That generated handoff includes the
+Visual Studio `VsDevCmd.bat` activation when MSVC Build Tools are installed.
 
-Run `PROJECT_CONTROL_CENTER.cmd` from the repository root. It launches the current project-owned PCC GUI/console authority. The native Cortex desktop remains a product/runtime surface; it is not a replacement for the universal Forge/PCC control plane.
+R1 restores those two startup steps while preserving:
+- GUI-first launch
+- fail-closed GUI preflight
+- no silent CLI fallback
+- explicit `--cli` recovery
 
-## Current certification truth
+## Apply
 
-The implemented `full` source gate performs:
+Extract directly into the Cortex root and run:
 
-1. quick/root/toolchain/contract checks;
-2. mandatory Python/PCC regressions;
-3. `cargo fmt --all -- --check`;
-4. Cargo workspace check;
-5. Cargo workspace tests;
-6. Clippy with warnings denied;
-7. Cargo workspace build;
-8. source-stable, content-addressed Vault mirror;
-9. deep CAS verification;
-10. GREEN governed-source marker;
-11. Vault recovery-point certification tied to the GREEN source fingerprint.
+`APPLY_PCC_BUILDGATE_RECOVERY_R1.cmd`
 
-Windows native desktop startup and real provider/chat interaction are separate runtime acceptance evidence until they are safely automated end-to-end. `launch-gui` now requires a visible native window owned by the launched PID instead of treating process survival as UI readiness.
+Then close all PCC windows, relaunch `PROJECT_CONTROL_CENTER.cmd`, and run
+**QUICK** first.
 
-## Vault/storage authority
+If QUICK still reports `link.exe/cl.exe missing`, run the existing
+`HYDRATE_CORTEX_BUILD_TOOLS.cmd` once, restart PCC, then QUICK again.
 
-The PCC uses one machine-level Vault. On the intended Windows workstation the configured primary location is `D:\\CortexLibrary` unless explicitly overridden. Shared package/download caches live once under Vault; Rust build targets are project-namespaced to prevent binary collisions; project mirrors use global SHA-256 CAS deduplication.
+## Separate known blocker
 
-Project mirrors intentionally exclude VCS internals, build outputs, dependency trees, caches, PCC operational state, debug/log artifacts, update/handoff residue, root transport ZIPs and link/reparse traversal. Lifecycle cleanup is plan-first and quarantine-first; destructive purge requires explicit approval.
-
-## Read next
-
-- `README_FIRST.md` — concise authority/product hierarchy.
-- `docs/QUALITY_GATE_CONTRACT.md` — exact implemented certification boundaries.
-- `docs/CURRENT_IMPLEMENTATION_AUDIT_RS293.md` — Rust Forge candidate state.
-- `docs/TARGET_ARCHITECTURE.md` — target composition.
-- `products/forge-rust/docs/FORGEPY_PARITY_MATRIX.md` — current takeover gap matrix.
-
-Historical standalone/N1/R051 manifests remain provenance evidence only. They do not override this file or `README_FIRST.md` as current project authority.
+Git on `G:\Cortex` is also currently rejected because of dubious ownership.
+That is not changed by this patch. It needs an explicit checkout-trust/rebind
+step after build-environment recovery.
