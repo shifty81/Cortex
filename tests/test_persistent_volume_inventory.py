@@ -115,7 +115,7 @@ class PersistentVolumeTests(unittest.TestCase):
             boundary = db.execute("SELECT boundary FROM entries WHERE path='.cortex/inventory/fixture-volume-1'").fetchone()
         self.assertEqual(boundary[0], "inventory_index")
         with self.assertRaises(sqlite3.ProgrammingError):
-            db.execute("SELECT 1")  # Regression: the temporary DB handle is closed.
+            db.execute("SELECT 1")  # Regression: the temporary DB handle is closed. 
 
     def test_portable_marker_keeps_index_identity_after_mount_rename(self):
         layout = ROOT / "config" / "cortex" / "volume_layout.v2.json"
@@ -141,6 +141,44 @@ class PersistentVolumeTests(unittest.TestCase):
             self.assertEqual(index.query_entries(located2, volume_id=identity, query="vault_catalog")["total"], 1)
         finally:
             sys.path.remove(control)
+
+    def test_access_gaps_are_paged_searchable_literal_and_read_only(self):
+        self._scan()
+        diagnostics = [
+            (f"projects/blocked/item_{i:03d}", "scandir" if i % 2 else "stat",
+             f"PermissionError: sample_{i:03d}") for i in range(278)
+        ]
+        diagnostics.extend([
+            ("projects/100%_literal", "scandir", "literal matching"),
+            (r"Git/back\slash", "stat", "escaped path"),
+        ])
+        with closing(sqlite3.connect(self.index_file)) as conn:
+            conn.executemany("INSERT INTO errors(path,operation,message) VALUES(?,?,?)", diagnostics)
+            conn.commit()
+        before = (self.drive / "vault_catalog.db").read_bytes()
+        page1 = index.query_access_gaps(self.index_file, volume_id=self.volume_id, page_size=70)
+        self.assertEqual(page1["total"], 280)
+        self.assertEqual(len(page1["rows"]), 70)
+        self.assertTrue(page1["has_next"])
+        last = index.query_access_gaps(self.index_file, volume_id=self.volume_id, page=3, page_size=70)
+        self.assertEqual(len(last["rows"]), 70)
+        self.assertFalse(last["has_next"])
+        escaped = index.query_access_gaps(self.index_file, volume_id=self.volume_id, query="100%_literal")
+        self.assertEqual(escaped["total"], 1)
+        self.assertEqual(escaped["rows"][0]["path"], "projects/100%_literal")
+        slashed = index.query_access_gaps(self.index_file, volume_id=self.volume_id, query=r"back\slash")
+        self.assertEqual(slashed["total"], 1)
+        message = index.query_access_gaps(self.index_file, volume_id=self.volume_id, query="SAMPLE_002")
+        self.assertEqual(message["total"], 1)
+        self.assertEqual(message["rows"][0]["operation"], "stat")
+        self.assertEqual((self.drive / "vault_catalog.db").read_bytes(), before)
+        self.assertEqual(index.index_status(self.index_file, self.drive, volume_id=self.volume_id)["errors"], 280)
+        with self.assertRaises(ValueError):
+            index.query_access_gaps(self.index_file, volume_id="another")
+        with self.assertRaises(ValueError):
+            index.query_access_gaps(self.index_file, volume_id=self.volume_id, page_size=501)
+        with self.assertRaises(ValueError):
+            index.query_access_gaps(self.index_file, volume_id=self.volume_id, page=-1)
 
     def test_explicit_restart_and_error_recording(self):
         (self.drive / "hello.txt").write_text("hi")

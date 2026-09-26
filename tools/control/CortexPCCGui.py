@@ -49,7 +49,7 @@ from CortexPersistentVolumeInventory import (
     index_status as persistent_volume_status,
     query_entries as persistent_volume_query,
     run_scan as persistent_volume_scan,
-    list_errors as persistent_volume_errors,
+    query_access_gaps as persistent_volume_gap_query,
 )
 from PCCRepoHygiene import prepare as repo_hygiene_prepare
 from PCCVaultIntakeAudit import (
@@ -73,7 +73,7 @@ from PCCVaultStorage import (
     verify_latest_mirror as vault_verify_latest_mirror,
 )
 
-GUI_VERSION = "PCC-GUI-0.15.1"
+GUI_VERSION = "PCC-GUI-0.15.2"
 
 BG = "#090b0e"
 PANEL = "#11151a"
@@ -164,6 +164,7 @@ class CortexPCCGui:
         self._volume_progress_last_query = 0.0
         self._volume_filter_busy = False
         self._volume_filter_pending = False
+        self._volume_view_mode = "paths"
 
         self._configure_styles()
         self._build_shell()
@@ -208,6 +209,12 @@ class CortexPCCGui:
             borderwidth=0,
         )
         style.configure("Treeview.Heading", background=PANEL, foreground=CYAN, relief="flat")
+        style.configure("VaultInventory.Treeview", background=PANEL_2, fieldbackground=PANEL_2,
+                        foreground=TEXT, font=("Segoe UI", 10), rowheight=32, borderwidth=0)
+        style.configure("VaultInventory.Treeview.Heading", background=PANEL, foreground=CYAN,
+                        font=("Segoe UI Semibold", 10), relief="flat")
+        style.map("VaultInventory.Treeview", background=[("selected", "#21404a")],
+                  foreground=[("selected", TEXT)])
         style.map("Treeview", background=[("selected", "#21404a")], foreground=[("selected", TEXT)])
         style.configure("TProgressbar", troughcolor=PANEL_2, background=CYAN, borderwidth=0)
         style.configure(
@@ -909,8 +916,9 @@ class CortexPCCGui:
                  font=("Segoe UI", 9)).pack(side="right")
         self.volume_progress = ttk.Progressbar(progress_shell, orient="horizontal", mode="indeterminate")
         self.volume_progress.pack(fill="x", padx=12, pady=(0, 5))
+        self.volume_progress.pack_forget()  # Never display an active-looking bar for a completed index.
         self.volume_counts = tk.Label(progress_shell,
-            text="0 entries · 0 files · 0 folders · 0 links · 0 errors",
+            text="0 entries · 0 files · 0 folders · 0 links · 0 access gaps",
             bg=PANEL, fg=MUTED, anchor="w", font=("Segoe UI", 9))
         self.volume_counts.pack(fill="x", padx=12, pady=(0, 5))
 
@@ -933,9 +941,23 @@ class CortexPCCGui:
         right = tk.Frame(panes, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
         panes.add(left, minsize=380, stretch="always")
         panes.add(right, minsize=280, stretch="always")
+        initial_sash_set = [False]
+        def set_initial_panes(_event: Any = None) -> None:
+            # Vault starts hidden behind the Projects tab: defer until the real
+            # viewport is mapped, and never reset a user-adjusted sash afterward.
+            if initial_sash_set[0] or not panes.winfo_exists() or panes.winfo_width() <= 800:
+                return
+            initial_sash_set[0] = True
+            try:
+                panes.sash_place(0, int(panes.winfo_width() * .61), 0)
+            except self.tk.TclError:
+                pass
+        panes.bind("<Configure>", set_initial_panes, add="+")
+        self.window.after(100, set_initial_panes)
 
-        tk.Label(left, text="RESULTS", bg=PANEL, fg=CYAN,
-                 font=("Segoe UI Semibold", 10)).pack(anchor="w", padx=12, pady=(11, 5))
+        self.volume_results_heading = tk.Label(left, text="RESULTS · FILES & DIRECTORIES", bg=PANEL, fg=CYAN,
+                 font=("Segoe UI Semibold", 11))
+        self.volume_results_heading.pack(anchor="w", padx=12, pady=(11, 6))
         filter_row = tk.Frame(left, bg=PANEL)
         filter_row.pack(fill="x", padx=12, pady=(0, 6))
         self.volume_query_var = tk.StringVar()
@@ -954,6 +976,11 @@ class CortexPCCGui:
             self._button(shortcuts, label,
                          lambda value=needle: self._volume_apply_quick_filter(value), compact=True).pack(
                              side="left", padx=(0, 6))
+        self.volume_gaps_btn = self._button(shortcuts, "Access Gaps (0)", self._volume_show_errors, compact=True)
+        self.volume_gaps_btn.pack(side="right", padx=(8, 0))
+        self.volume_paths_btn = self._button(shortcuts, "All paths", lambda: self._volume_switch_view("paths"), compact=True)
+        self.volume_paths_btn.pack(side="right", padx=(8, 0))
+        self.volume_paths_btn.configure(state="disabled")
         self.volume_results_status = tk.Label(left, text="Run an inventory to inspect paths.",
                                                bg=PANEL, fg=MUTED, anchor="w",
                                                font=("Segoe UI", 9))
@@ -971,7 +998,8 @@ class CortexPCCGui:
         tree_host = tk.Frame(left, bg=PANEL)
         tree_host.pack(fill="both", expand=True, padx=12, pady=(0, 6))
         self.volume_tree = ttk.Treeview(tree_host, columns=("path", "kind", "size"),
-                                         show="headings", selectmode="browse")
+                                         show="headings", selectmode="browse",
+                                         style="VaultInventory.Treeview")
         for col, title, width, stretch in (("path", "Relative path", 410, True),
                                            ("kind", "Type", 90, False),
                                            ("size", "Size", 90, False)):
@@ -994,7 +1022,7 @@ class CortexPCCGui:
                      compact=True).pack(side="left", padx=(0, 6))
         self._button(selection_actions, "Reveal", self._volume_reveal_selected,
                      compact=True).pack(side="left", padx=(0, 6))
-        self._button(selection_actions, "Access Gaps", self._volume_show_errors,
+        self._button(selection_actions, "Browse Access Gaps", self._volume_show_errors,
                      compact=True).pack(side="left")
         body = tk.Frame(right, bg="#07090b", highlightthickness=1, highlightbackground=BORDER)
         body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
@@ -1188,7 +1216,54 @@ class CortexPCCGui:
         self.volume_detail.insert("1.0", text)
         self.volume_detail.configure(state="disabled")
 
+    def _volume_switch_view(self, mode: str, *, refresh: bool = True) -> None:
+        if mode not in ("paths", "gaps"):
+            raise ValueError("Unknown inventory view")
+        self._volume_view_mode = mode
+        self._volume_page = 0
+        self.volume_query_var.set("")
+        self.volume_paths_btn.configure(state="normal" if mode == "gaps" else "disabled")
+        self.volume_gaps_btn.configure(state="disabled" if mode == "gaps" else "normal")
+        self.volume_results_heading.configure(
+            text="ACCESS GAPS · SEARCHABLE" if mode == "gaps" else "RESULTS · FILES & DIRECTORIES")
+        if mode == "gaps":
+            titles = (("path", "Inaccessible path", 350, True),
+                      ("kind", "Operation", 96, False), ("size", "Diagnostic", 260, True))
+        else:
+            titles = (("path", "Relative path", 410, True),
+                      ("kind", "Type", 90, False), ("size", "Size", 90, False))
+        for column, title, width, stretch in titles:
+            self.volume_tree.heading(column, text=title)
+            self.volume_tree.column(column, width=width, stretch=stretch)
+        self.volume_tree.delete(*self.volume_tree.get_children())
+        self._volume_rows.clear()
+        self._volume_show_overview()
+        if refresh:
+            self._show_volume_inventory()
+
+    def _volume_show_overview(self) -> None:
+        report = self._volume_result or {}
+        counts = report.get("counts") or {}
+        state = str(report.get("state", "not_started"))
+        errors = int(report.get("errors") or 0)
+        completed = report.get("completed_utc")
+        self._volume_set_detail(
+            f"Volume: {report.get('root', self._volume_root)}\n"
+            f"Identity: {report.get('volume_id', self._volume_id)}\n"
+            f"Index: {self._volume_db_path}\n\n"
+            f"State: {state}{' · access gaps recorded' if state == 'complete' and errors else ''}\n"
+            f"Entries: {int(report.get('entries') or 0):,} "
+            f"({int(counts.get('file') or 0):,} files, {int(counts.get('directory') or 0):,} directories)\n"
+            f"Unprocessed directories: {int(report.get('pending_directories') or 0):,}\n"
+            f"Unreadable locations: {errors:,}\n"
+            f"Completed: {completed or 'Not yet complete'}\n\n"
+            "Access Gaps provides a searchable, paged diagnostic browser.\n"
+            "Discovery does not alter source files or the existing Vault catalog."
+        )
+
     def _volume_apply_quick_filter(self, value: str) -> None:
+        if self._volume_view_mode != "paths":
+            self._volume_switch_view("paths", refresh=False)
         self.volume_query_var.set(value)
         self._volume_page = 0
         self._show_volume_inventory()
@@ -1217,28 +1292,44 @@ class CortexPCCGui:
         threading.Thread(target=work, daemon=True).start()
 
     def _volume_refresh_status(self, report: dict[str, Any]) -> None:
+        """Reject stale background snapshots so progress and inspector agree."""
+        previous = self._volume_result or {}
+        old_stamp, new_stamp = previous.get("updated_utc") or "", report.get("updated_utc") or ""
+        rank = {"not_started": 0, "running": 1, "paused": 2, "complete": 3}
+        if old_stamp and new_stamp and (new_stamp < old_stamp or
+             (new_stamp == old_stamp and rank.get(str(report.get("state")), 0) <
+              rank.get(str(previous.get("state")), 0))):
+            return
         self._volume_result = report
         state = str(report.get("state", "not_started"))
         count = int(report.get("entries") or 0)
         errors = int(report.get("errors") or 0)
         pending = int(report.get("pending_directories") or 0)
         counts = report.get("counts") or {}
+        if self._volume_running:
+            if not self.volume_progress.winfo_manager():
+                self.volume_progress.pack(fill="x", padx=12, pady=(0, 5), before=self.volume_counts)
+        else:
+            self.volume_progress.stop()
+            self.volume_progress.pack_forget()
         display = ("Interrupted / resumable" if state == "running" and not self._volume_running else
+                   "PAUSING · finishing committed batches" if state == "running" and self._vault_cancel else
                    "SCANNING" if state == "running" else
                    "PAUSED / RESUMABLE" if state == "paused" else
                    "COMPLETE WITH ACCESS GAPS" if state == "complete" and errors else
                    "COMPLETE" if state == "complete" else "Not indexed")
-        self.volume_status.configure(text=f"{display} · {count:,} indexed", fg=CYAN if self._volume_running else
-                                     YELLOW if pending or errors else GREEN if state == "complete" else MUTED)
+        self.volume_status.configure(text=f"{display} · {count:,} indexed",
+                                     fg=CYAN if self._volume_running and not self._vault_cancel else
+                                        YELLOW if pending or errors else GREEN if state == "complete" else MUTED)
         self.volume_counts.configure(
             text=f"{count:,} entries · {int(counts.get('file') or 0):,} files · "
                  f"{int(counts.get('directory') or 0):,} folders · "
-                 f"{int(counts.get('symlink') or 0):,} links · {errors:,} errors · "
+                 f"{int(counts.get('symlink') or 0):,} links · {errors:,} access gaps · "
                  f"{pending:,} directories pending")
-        if state == "complete":
-            self.volume_start_btn.configure(text="Rebuild Index")
-        else:
-            self.volume_start_btn.configure(text="Start / Resume Index")
+        self.volume_gaps_btn.configure(text=f"Access Gaps ({errors:,})")
+        self.volume_start_btn.configure(text="Rebuild Index" if state == "complete" else "Start / Resume Index")
+        if not self.volume_tree.selection():
+            self._volume_show_overview()
 
     def _volume_selected_path(self) -> Path | None:
         selected = self.volume_tree.selection()
@@ -1258,6 +1349,16 @@ class CortexPCCGui:
         if entry is None:
             return
         path = self._volume_selected_path()
+        if self._volume_view_mode == "gaps":
+            self._volume_set_detail(
+                f"Inaccessible path: {entry.get('path', '')}\n"
+                f"Full path: {path}\n\n"
+                f"Failed operation: {entry.get('operation', '')}\n\n"
+                f"Diagnostic: {entry.get('message', '')}\n\n"
+                "This entry was recorded as inaccessible during metadata discovery. "
+                "No automated permission changes or elevated retry will occur."
+            )
+            return
         stamp = entry.get("modified_ns")
         modified = (datetime.fromtimestamp(int(stamp) / 1_000_000_000).isoformat(sep=" ", timespec="seconds")
                     if stamp is not None else "Unknown")
@@ -1283,16 +1384,9 @@ class CortexPCCGui:
             reveal_file(path)
 
     def _volume_show_errors(self) -> None:
-        if not self._volume_db_path or not self._volume_id or not self._volume_db_path.is_file():
-            return
-        db_path, volume_id = self._volume_db_path, self._volume_id
-        def work() -> None:
-            try:
-                rows = persistent_volume_errors(db_path, volume_id=volume_id, limit=30)
-                self._event_q.put(("volume-errors-done", rows))
-            except Exception as exc:
-                self._event_q.put(("volume-errors-error", str(exc)))
-        threading.Thread(target=work, daemon=True).start()
+        """Open the paged error browser rather than truncating diagnostics to 30 rows."""
+        if self._volume_db_path and self._volume_db_path.is_file():
+            self._volume_switch_view("gaps")
 
     @staticmethod
     def _human_bytes(value: int) -> str:
@@ -1462,6 +1556,8 @@ class CortexPCCGui:
         self._vault_cancel = False
         self.volume_start_btn.configure(state="disabled")
         self.volume_cancel_btn.configure(state="normal")
+        if not self.volume_progress.winfo_manager():
+            self.volume_progress.pack(fill="x", padx=12, pady=(0, 5), before=self.volume_counts)
         self.volume_progress.start(18)
         self.volume_status.configure(text=f"Scanning {self._volume_root} · committed batches are searchable", fg=CYAN)
         self._append_log(f"[INFO] Explicit persistent volume inventory {'rebuild' if restart else 'start/resume'}: "
@@ -1501,6 +1597,7 @@ class CortexPCCGui:
             self.volume_results_status.configure(text="No index yet. Start a scan to populate persistent results.", fg=MUTED)
             return
         query = self.volume_query_var.get()
+        mode = self._volume_view_mode
         self._volume_view_generation += 1
         if self._volume_filter_busy:
             # Coalesce repeated button presses and live refreshes; never flood SQLite
@@ -1515,10 +1612,11 @@ class CortexPCCGui:
 
         def work() -> None:
             try:
-                view = persistent_volume_query(db_path, volume_id=volume_id,
+                query_fn = persistent_volume_gap_query if mode == "gaps" else persistent_volume_query
+                view = query_fn(db_path, volume_id=volume_id,
                     query=query, page=page, page_size=self._volume_page_size)
                 status = persistent_volume_status(db_path, root, volume_id=volume_id)
-                self._event_q.put(("volume-view-done", (generation, view, status)))
+                self._event_q.put(("volume-view-done", (generation, mode, view, status)))
             except Exception as exc:
                 self._event_q.put(("volume-view-error", (generation, str(exc))))
 
@@ -4007,31 +4105,43 @@ class CortexPCCGui:
                     self._vault_busy = False
                     self._volume_running = False
                     self.volume_progress.stop()
+                    self.volume_progress.pack_forget()
                     self.volume_start_btn.configure(state="normal")
                     self.volume_cancel_btn.configure(state="disabled")
                     self.volume_status.configure(text="Inventory stopped · committed batches remain resumable", fg=RED)
                     self._append_log(f"[FAIL] Persistent drive inventory: {payload}\n", "fail")
                     self._popup("Volume Inventory", str(payload), kind="error")
                 elif kind == "volume-view-done":
-                    generation, view, report = payload
+                    generation, mode, view, report = payload
                     self._volume_filter_busy = False
                     if self._volume_filter_pending:
                         self._volume_filter_pending = False
                         self._show_volume_inventory()
                         continue
-                    if int(generation) != self._volume_view_generation:
+                    if int(generation) != self._volume_view_generation or mode != self._volume_view_mode:
                         continue
                     self._volume_refresh_status(report)
                     rows = view["rows"]
+                    selected = self.volume_tree.selection()
+                    former = self._volume_rows.get(selected[0]) if selected else None
+                    previous_key = ((former.get("path"), former.get("operation", "")) if former else None)
                     self.volume_tree.delete(*self.volume_tree.get_children())
                     self._volume_rows.clear()
+                    selected_iid = None
                     for index, entry in enumerate(rows):
                         iid = f"volume:{index}"
                         self._volume_rows[iid] = entry
-                        size = (self._human_bytes(int(entry["size_bytes"]))
-                                if entry.get("size_bytes") is not None else "—")
-                        self.volume_tree.insert("", "end", iid=iid,
-                            values=(entry.get("path", ""), entry.get("type", ""), size))
+                        if mode == "gaps":
+                            values = (entry.get("path", ""), entry.get("operation", ""), entry.get("message", ""))
+                            item_key = (entry.get("path"), entry.get("operation", ""))
+                        else:
+                            size = (self._human_bytes(int(entry["size_bytes"]))
+                                    if entry.get("size_bytes") is not None else "—")
+                            values = (entry.get("path", ""), entry.get("type", ""), size)
+                            item_key = (entry.get("path"), "")
+                        self.volume_tree.insert("", "end", iid=iid, values=values)
+                        if item_key == previous_key:
+                            selected_iid = iid
                     total = int(view["total"])
                     current_page = int(view["page"])
                     if not rows and current_page > 0:
@@ -4042,18 +4152,15 @@ class CortexPCCGui:
                     self.volume_next_btn.configure(state="normal" if view["has_next"] else "disabled")
                     pages = max(1, (total + self._volume_page_size - 1) // self._volume_page_size)
                     self.volume_page_label.configure(text=f"Page {current_page + 1:,} / {pages:,}")
+                    label = "access gaps" if mode == "gaps" else "paths"
                     self.volume_results_status.configure(
-                        text=f"{total:,} matching paths · {len(rows):,} on this page · "
-                             f"{int(report.get('entries') or 0):,} indexed", fg=MUTED)
-                    state = report.get("state", "not_started")
-                    self._volume_set_detail(
-                        f"Volume: {report.get('root')}\nIdentity: {report.get('volume_id', self._volume_id)}\n"
-                        f"Index: {self._volume_db_path}\n\nState: {state}\n"
-                        f"Entries: {int(report.get('entries') or 0):,}\n"
-                        f"Unprocessed directories: {int(report.get('pending_directories') or 0):,}\n"
-                        f"Unreadable locations: {int(report.get('errors') or 0):,}\n\n"
-                        "Search works during scanning. Select a row for metadata and safe path actions.\n"
-                        "Source files and the existing Vault catalog are not modified.")
+                        text=f"{total:,} matching {label} · {len(rows):,} on this page · "
+                             f"{int((self._volume_result or {}).get('entries') or 0):,} indexed", fg=MUTED)
+                    if selected_iid is not None:
+                        self.volume_tree.selection_set(selected_iid)
+                        self._volume_selected()
+                    else:
+                        self._volume_show_overview()
                 elif kind == "volume-view-error":
                     generation, detail = payload
                     self._volume_filter_busy = False
@@ -4063,14 +4170,6 @@ class CortexPCCGui:
                         continue
                     if int(generation) == self._volume_view_generation:
                         self.volume_results_status.configure(text=f"Index query failed: {detail}", fg=RED)
-                elif kind == "volume-errors-done":
-                    if payload:
-                        lines = [f"{row['path']} [{row['operation']}]: {row['message']}" for row in payload]
-                        self._volume_set_detail("Unreadable inventory locations (first 30):\n\n" + "\n\n".join(lines))
-                    else:
-                        self._volume_set_detail("No unreadable locations recorded in the current inventory index.")
-                elif kind == "volume-errors-error":
-                    self._volume_set_detail(f"Could not query access gaps: {payload}")
                 elif kind == "vault-progress":
                     files = int((payload or {}).get("files") or 0)
                     hashed = int((payload or {}).get("hashed") or 0)

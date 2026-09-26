@@ -166,6 +166,37 @@ def query_entries(db_path: Path | str, *, volume_id: str, query: str = "", page:
                 "page_size": page_size, "query": needle, "has_next": (page + 1) * page_size < total}
 
 
+
+def query_access_gaps(db_path: Path | str, *, volume_id: str, query: str = "", page: int = 0,
+                      page_size: int = PAGE_SIZE) -> dict[str, Any]:
+    """Read-only, bounded inspection of *all* access gaps, not a first-N sample.
+
+    Filtering treats %, _, and backslashes literally. Every page is read via a
+    separate SQLite read-only connection; source files and index state are not changed.
+    """
+    if page < 0 or not 1 <= page_size <= 500:
+        raise ValueError("Invalid access-gap page")
+    with closing(_connection(Path(db_path), writable=False)) as conn:
+        if _stored_volume_id(conn) != volume_id:
+            raise ValueError("Inventory belongs to a different volume")
+        needle = query.strip()
+        if needle:
+            like = "%" + _escape_like(needle) + "%"
+            predicate = "(path LIKE ? ESCAPE '\\' COLLATE NOCASE OR operation LIKE ? ESCAPE '\\' COLLATE NOCASE OR message LIKE ? ESCAPE '\\' COLLATE NOCASE)"
+            params: tuple[str, ...] = (like, like, like)
+        else:
+            predicate, params = "1=1", ()
+        total = int(conn.execute(f"SELECT COUNT(*) FROM errors WHERE {predicate}", params).fetchone()[0])
+        rows = conn.execute(
+            f"SELECT path,operation,message FROM errors WHERE {predicate} "
+            "ORDER BY path COLLATE NOCASE,path,operation LIMIT ? OFFSET ?",
+            (*params, page_size, page * page_size),
+        ).fetchall()
+        return {"total": total, "rows": [dict(row) for row in rows], "page": page,
+                "page_size": page_size, "query": needle,
+                "has_next": (page + 1) * page_size < total}
+
+
 def _record_error(conn: sqlite3.Connection, path: str, operation: str, exc: OSError) -> None:
     conn.execute("INSERT INTO errors(path,operation,message) VALUES(?,?,?) ON CONFLICT(path,operation) "
                  "DO UPDATE SET message=excluded.message", (path or ".", operation, f"{type(exc).__name__}: {exc}"))

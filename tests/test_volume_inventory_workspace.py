@@ -40,6 +40,16 @@ class InventoryWorkspaceTests(unittest.TestCase):
         view.select_inventory_entries(self.report, query="cortex")
         self.assertEqual(self.report["entries"], snapshot)
 
+    def test_gui_access_gap_view_and_completion_progress_contract(self):
+        source = (ROOT / "tools/control/CortexPCCGui.py").read_text(encoding="utf-8")
+        backend = (ROOT / "tools/control/CortexPersistentVolumeInventory.py").read_text(encoding="utf-8")
+        self.assertIn("def query_access_gaps(", backend)
+        self.assertIn('persistent_volume_gap_query if mode == "gaps" else persistent_volume_query', source)
+        self.assertIn('self._volume_switch_view("gaps")', source)
+        self.assertIn('self.volume_progress.pack_forget()', source)
+        self.assertIn('new_stamp < old_stamp', source)
+        self.assertIn('self._volume_show_overview()', source)
+
     def test_gui_uses_dedicated_sections_and_async_filter_events(self):
         text = (ROOT / "tools/control/CortexPCCGui.py").read_text(encoding="utf-8")
         for name in ("Inventory", "Catalog", "Intake", "Storage", "Health"):
@@ -49,7 +59,8 @@ class InventoryWorkspaceTests(unittest.TestCase):
         self.assertIn('"volume-view-done"', text)
         self.assertIn('self._volume_view_generation', text)
         self.assertIn('persistent_volume_scan(volume_root, db_path, volume_id=volume_id,', text)
-        self.assertIn('persistent_volume_query(db_path, volume_id=volume_id,', text)
+        self.assertIn('query_fn = persistent_volume_gap_query if mode == "gaps" else persistent_volume_query', text)
+        self.assertIn('view = query_fn(db_path, volume_id=volume_id,', text)
         self.assertIn('self._volume_filter_pending', text)
         self.assertNotIn('value=min(n, 2_000_000)', text)
         self.assertIn('self.volume_progress.start(18)', text)

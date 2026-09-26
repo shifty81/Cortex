@@ -577,7 +577,7 @@ class PCC60PassTests(TempRoot):
             "Command Registry",
             "_scrollable_page_body",
             "_responsive_action_grid",
-            'GUI_VERSION = "PCC-GUI-0.15.1"',
+            'GUI_VERSION = "PCC-GUI-0.15.2"',
         ):
             self.assertIn(token, source)
 
@@ -690,7 +690,7 @@ class PCC60PassTests(TempRoot):
     def test_68_console_uses_python_cortex_bridge_without_building_on_prompt(self):
         source=(TOOLS/"CortexPCCGui.py").read_text(encoding="utf-8")
         bridge=(TOOLS/"CortexPythonBridge.py").read_text(encoding="utf-8")
-        self.assertIn('GUI_VERSION = "PCC-GUI-0.15.1"', source)
+        self.assertIn('GUI_VERSION = "PCC-GUI-0.15.2"', source)
         self.assertIn('def _cortex_runtime_root', source)
         self.assertIn('CortexPythonBridge.py', source)
         self.assertIn('environment_root=cortex_root', source)
@@ -750,7 +750,7 @@ class PCC60PassTests(TempRoot):
             "--git-name",
             "--git-email",
             "--git-scope",
-            'GUI_VERSION = "PCC-GUI-0.15.1"',
+            'GUI_VERSION = "PCC-GUI-0.15.2"',
         ):
             self.assertIn(token, source)
         pcc_source=(TOOLS/"CortexPCC.py").read_text(encoding="utf-8")
