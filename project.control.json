@@ -540,7 +540,7 @@
     },
     {
       "key": "full",
-      "label": "Cortex portable source build/test gate (PCC full adds Vault + GREEN certification)",
+      "label": "Cortex full source build/test and GREEN fingerprint gate (Vault recovery verification is separate)",
       "stages": [
         "pcc.selftest",
         "cargo.metadata",

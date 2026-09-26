@@ -1,0 +1,408 @@
+{
+  "schema": "cortex.incremental_patch_manifest.v1",
+  "patch_id": "CORTEX-P0-P2-W9-WINDOWS-FULL-REGRESSION-REPAIR-CUMULATIVE-OVER-R8J-A",
+  "prerequisite": "Published R8J-A main 82d41230673ef2a179dc6fb2f1918493ad68837e OR already-installed W8; one cumulative replacement; no B1/W1-W8 prerequisite chain",
+  "operation": "Repository-root overwrite of declared files only; cumulative W8 + Windows control-test repair",
+  "visible_gui_version": "PCC-GUI-0.15.6",
+  "inventory_schema_migration": false,
+  "inventory_rebuild": false,
+  "existing_inventory_preserved": true,
+  "source_tree_movement": false,
+  "vault_catalog_mutation": false,
+  "automatic_registration": false,
+  "recovery_full_certified": false,
+  "windows_full": "W8 failed 2026-09-26 18:42 at expanded control discovery; W9 Windows FULL retest pending",
+  "p0_p2_scope": "W8 P0-P2 testing preview unchanged; Windows-only regression-fixture repair; does not claim all P0-P2 delivered",
+  "files": [
+    {
+      "path": "docs/CORTEX_P0_P2_STATUS_MATRIX.json",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "ef9e4ec9a4433c8a12c520b7cba2f1dfb253fdcf317e69c3bf924f0a2dcadabd"
+      ],
+      "replacement_sha256": "ef9e4ec9a4433c8a12c520b7cba2f1dfb253fdcf317e69c3bf924f0a2dcadabd",
+      "bytes": 1257
+    },
+    {
+      "path": "docs/CORTEX_P0_P2_TESTING_HANDOFF.md",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "10b41d7f4e7e56bae673c498e3b6a2b3121db92d5d8b7e985bf84f033c5a51af"
+      ],
+      "replacement_sha256": "ad39ec13944700de8181784814486247256965b79c1da4f6e216f1a70ba0446b",
+      "bytes": 4735
+    },
+    {
+      "path": "docs/CORTEX_R8J_B1_W7_ENTIRE_PROJECT_AUDIT.md",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "8f1d77cb92ebc4e357c281fbc901da7af9aec1b06c98e48aa2c5c9a14c769ad1"
+      ],
+      "replacement_sha256": "8f1d77cb92ebc4e357c281fbc901da7af9aec1b06c98e48aa2c5c9a14c769ad1",
+      "bytes": 13871
+    },
+    {
+      "path": "docs/CORTEX_R8J_B1_W7_GAP_MATRIX.json",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "e4213eedcc747224c16736d47a6ddadb9230b7ed03f2d48077de1e578bdbfb0f"
+      ],
+      "replacement_sha256": "e4213eedcc747224c16736d47a6ddadb9230b7ed03f2d48077de1e578bdbfb0f",
+      "bytes": 3701
+    },
+    {
+      "path": "docs/CORTEX_W9_WINDOWS_FULL_FAILURE_RECONCILIATION.md",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [],
+      "replacement_sha256": "4807fa079fd7574bc6dd56faf7156af91c886b2a6771ea3aebcf8bee5f094d50",
+      "bytes": 3349
+    },
+    {
+      "path": "docs/QUALITY_GATE_CONTRACT.md",
+      "action": "replace",
+      "base_sha256": "4b487cfc77f8896e7d534a13447e935f739bd81eaacc984645e844ff59dc9cde",
+      "acceptable_prior_sha256": [
+        "c186c04344145f7d53b37fc98381488864cc16f0f42fc9bdc80e26ba8ac5b4f2"
+      ],
+      "replacement_sha256": "c186c04344145f7d53b37fc98381488864cc16f0f42fc9bdc80e26ba8ac5b4f2",
+      "bytes": 4728
+    },
+    {
+      "path": "docs/R8J_B1_W3_PROJECT_WIDE_AUDIT.md",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "3ba2860e1d65718e2c04c0e0f72414caa4eb9d5eb24f427b6086ad44633b5429"
+      ],
+      "replacement_sha256": "3ba2860e1d65718e2c04c0e0f72414caa4eb9d5eb24f427b6086ad44633b5429",
+      "bytes": 4153
+    },
+    {
+      "path": "docs/R8J_B1_W4_CUMULATIVE_AUDIT_AND_GAP_MATRIX.md",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "2a83e4f3b5b9fde10cee590adb55e2057648bafe4ef73e3013b987d5080566be"
+      ],
+      "replacement_sha256": "2a83e4f3b5b9fde10cee590adb55e2057648bafe4ef73e3013b987d5080566be",
+      "bytes": 11366
+    },
+    {
+      "path": "docs/R8J_B1_W5_FINAL_ACCEPTANCE_AND_GAPS.md",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "feb2f25b915030a6262c98884a05cab509b4fc6adbc905ce8adb369d9a936e60"
+      ],
+      "replacement_sha256": "feb2f25b915030a6262c98884a05cab509b4fc6adbc905ce8adb369d9a936e60",
+      "bytes": 4191
+    },
+    {
+      "path": "docs/R8J_B1_W6_SCANNER_OWNERSHIP_AUDIT.md",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "cd767585039403c3bf1eb380d90afd851b1016b34b1f96347caef04f8e8f3d75"
+      ],
+      "replacement_sha256": "cd767585039403c3bf1eb380d90afd851b1016b34b1f96347caef04f8e8f3d75",
+      "bytes": 3977
+    },
+    {
+      "path": "docs/R8J_B_RECURSIVE_REFRESH.md",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "1824d42f1a6fcadae2967da7747ab58fe731bcee0863a5b8eb40a34b9023eb21",
+        "186d80a49ec7e6c27567ea960e280d864e6acf934bd46fe4830ee1f0f75182a4",
+        "8cee5cc92b6895d0388f18f080451895b240b0b89078f41714b53bd43cf0be08",
+        "d4511d439597fc1d94edf477d6009e350e1739e77b58ad965c1cb4744c15eb79",
+        "d31be07ca6593d7f82a27973a422f1fd042897ba724fcb3892abc5ce67f44887",
+        "f4b3d3d6ce17bad8500b714d46fbc41f2d9875e8b707579aa9169428d36e7d5e",
+        "9eadf079b097edd820dabf776d48774d699979e4e774683e90393728fcaa4d57"
+      ],
+      "replacement_sha256": "9eadf079b097edd820dabf776d48774d699979e4e774683e90393728fcaa4d57",
+      "bytes": 9144
+    },
+    {
+      "path": "project.control.json",
+      "action": "replace",
+      "base_sha256": "5508576dd6129491b3d474ff2868c0c4886142357fe4aede922873d8853c5f64",
+      "acceptable_prior_sha256": [
+        "64188bab54a308ded4af8656ac8017989426c92f9ab6cfa411f1b5828dafad3c"
+      ],
+      "replacement_sha256": "64188bab54a308ded4af8656ac8017989426c92f9ab6cfa411f1b5828dafad3c",
+      "bytes": 15294
+    },
+    {
+      "path": "tests/test_inventory_backup.py",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "0ea35d77a89746da8821bf8d0f0c9ccba6f982319299723ea6f0a3864ddf5d3d"
+      ],
+      "replacement_sha256": "0ea35d77a89746da8821bf8d0f0c9ccba6f982319299723ea6f0a3864ddf5d3d",
+      "bytes": 3025
+    },
+    {
+      "path": "tests/test_inventory_index_audit.py",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "7ba8cdafeeb77975b555c1f8dbf6b0bcc8bbb599f3c3ffd40cd19ece563973b9",
+        "24e4ae39be8e52b5e6f0ab094a7412b15a7663feb3d11235a8b2381cf12c266b"
+      ],
+      "replacement_sha256": "24e4ae39be8e52b5e6f0ab094a7412b15a7663feb3d11235a8b2381cf12c266b",
+      "bytes": 4608
+    },
+    {
+      "path": "tests/test_inventory_project_review.py",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "ba6a353681ba289a5f737cf7f82174d9fd93fdf8b6a5b4d5ab8f3479ff0914a4"
+      ],
+      "replacement_sha256": "ba6a353681ba289a5f737cf7f82174d9fd93fdf8b6a5b4d5ab8f3479ff0914a4",
+      "bytes": 4253
+    },
+    {
+      "path": "tests/test_inventory_recursive_refresh.py",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "0a8abda8da4511d9a84e607d67c21687f4b18b35788e27799d8e19bfd2a21e3a",
+        "99efbd48606de9be8e9fa674a3524342e022191df2fcd9ef90b58d49b768addd",
+        "d028ae06abd1a2328b7a3e41ff7ce0c7db83b2373da7d12c2e55206020d501a3",
+        "f3c207a12ff1f2d342e2a37789008d9f3ac25c8a081f5c2e7cf233b9287233c5"
+      ],
+      "replacement_sha256": "f3c207a12ff1f2d342e2a37789008d9f3ac25c8a081f5c2e7cf233b9287233c5",
+      "bytes": 19523
+    },
+    {
+      "path": "tests/test_inventory_scan_lease.py",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "c4ad77a1a68f10ff8e4b40314117ffe3f086aa8d8e595e5a0570088d2361991d"
+      ],
+      "replacement_sha256": "c4ad77a1a68f10ff8e4b40314117ffe3f086aa8d8e595e5a0570088d2361991d",
+      "bytes": 5850
+    },
+    {
+      "path": "tests/test_volume_inventory_pcc_integration.py",
+      "action": "replace",
+      "base_sha256": "51ab08a11540be3e6c37549e2d02c2a9f403a435db889f12b86095fd84a16a0b",
+      "acceptable_prior_sha256": [
+        "316b9c64ebf84b1967339de2ae7570327273f7049c959170d2a8d3589d8117a9",
+        "51ab08a11540be3e6c37549e2d02c2a9f403a435db889f12b86095fd84a16a0b"
+      ],
+      "replacement_sha256": "316b9c64ebf84b1967339de2ae7570327273f7049c959170d2a8d3589d8117a9",
+      "bytes": 6088
+    },
+    {
+      "path": "tests/test_volume_inventory_workspace.py",
+      "action": "replace",
+      "base_sha256": "3ddcc174c9ef598caf0b4dff625ca470e3f7b2eac8c120d03d419651fee36c70",
+      "acceptable_prior_sha256": [
+        "3ddcc174c9ef598caf0b4dff625ca470e3f7b2eac8c120d03d419651fee36c70",
+        "5e3bcad39ae41d9acb0f0d56eff766621103c9c2b0a28aab6ff707aaec031b17"
+      ],
+      "replacement_sha256": "5e3bcad39ae41d9acb0f0d56eff766621103c9c2b0a28aab6ff707aaec031b17",
+      "bytes": 5654
+    },
+    {
+      "path": "tools/control/CortexInventoryBackup.py",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "881dabb14e041f4e0db5719bd452bde3bf5881927f6cfadd12f54bf7c88089aa"
+      ],
+      "replacement_sha256": "881dabb14e041f4e0db5719bd452bde3bf5881927f6cfadd12f54bf7c88089aa",
+      "bytes": 6038
+    },
+    {
+      "path": "tools/control/CortexInventoryIndexAudit.py",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "d38593b961715c71be4e3078e26697fcf61563aae79acb6dd73c1bdd0e834d2c",
+        "490a985d3620cf75d125a3ba38c4adadeea7c04b0d5ed8146a4389ce93c17441"
+      ],
+      "replacement_sha256": "490a985d3620cf75d125a3ba38c4adadeea7c04b0d5ed8146a4389ce93c17441",
+      "bytes": 6226
+    },
+    {
+      "path": "tools/control/CortexInventoryProjectReview.py",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "24fce28243161499fb508b9bfed8db67681b8bacc8d66c58227d9ffa1334d0e1"
+      ],
+      "replacement_sha256": "24fce28243161499fb508b9bfed8db67681b8bacc8d66c58227d9ffa1334d0e1",
+      "bytes": 9344
+    },
+    {
+      "path": "tools/control/CortexPCC.py",
+      "action": "replace",
+      "base_sha256": "fa3baaf847b3a2fa655855bc5c0b526b26ac05ae78cd0b4dc48d773870fe97e0",
+      "acceptable_prior_sha256": [
+        "37bd3ccbcfaa97939347e7d6226a07b2cfc15be0083f2f3b1d8d54d3ad2f4f0c",
+        "a325ca49b4177f8ac1bf72f27304acc36dcb619cf957053855c7e6088b4839c8",
+        "fa3baaf847b3a2fa655855bc5c0b526b26ac05ae78cd0b4dc48d773870fe97e0",
+        "066159eadc4c2399c326eefb9e23270748f866f1ccec91f25ea5b13ac8f0f0c2"
+      ],
+      "replacement_sha256": "066159eadc4c2399c326eefb9e23270748f866f1ccec91f25ea5b13ac8f0f0c2",
+      "bytes": 78362
+    },
+    {
+      "path": "tools/control/CortexPCCGui.py",
+      "action": "replace",
+      "base_sha256": "cf9a71dbd07a6c4f416c4dff3d1694e140d2e08dd2d2e8d5b4adc305ed112597",
+      "acceptable_prior_sha256": [
+        "250547191ae4ac596fa3fdc6507f64b5026c7bca712c74e2b796175d99879410",
+        "b3a7605402542385d2eecd01e0e11b8cd86d76d1e7c029991e53d22472a57a41",
+        "b9e5cb5e79adca3289931ff3d4f558546eabb66e845c346a495bea4c26f1f8bc",
+        "c278e5d8132956fef8b0d3cda3d498ba5e9b9c24f8ec7064cee006356cf842ad",
+        "cf9a71dbd07a6c4f416c4dff3d1694e140d2e08dd2d2e8d5b4adc305ed112597",
+        "f89a0219775f5d11c9aaf61a4021fbeba20474447c3b43b272466785906c06e1",
+        "20aa8138d633ada280af4214ba1d1b48c01022933ea9c9d7ab3541518332d90b",
+        "b20c8c8932d0f7289f6c020bd44b71eb7aa62aab08d53a5a71254cd7d902e6b8"
+      ],
+      "replacement_sha256": "753ae8f0f5bd9d481830f91684ce40ad017f12a05d81e820bb12ab67030d37ba",
+      "bytes": 236723
+    },
+    {
+      "path": "tools/control/CortexPersistentVolumeInventory.py",
+      "action": "replace",
+      "base_sha256": "1c0dd86564f5cd43a4abea2484e141fd52546b7d1b1ab7408d96d10998739215",
+      "acceptable_prior_sha256": [
+        "0344b55b23e98b0c1490b075062e59c86b58d7cf98e0ad0424caff0c6017fed5",
+        "1a2e51e0459e8e78cecd630b6fc0fb9112fc1bcf6549538d1985ee31070faab6",
+        "1c0dd86564f5cd43a4abea2484e141fd52546b7d1b1ab7408d96d10998739215",
+        "2c5128916fcf7e625760ee02d3fcf354a91420c4d9ad370c53c5e8416a778486",
+        "aac981daf279d18257776e0187af9a230e396be43689bdac0a7204f3973efc9b",
+        "3dd55b4394cc7b1d26e9c8515b41238c53f777a794958337b02514d473cded1b",
+        "b59a52d4d755d48aa941a60be8bae60502796ab02cce061a783d9f39228a598c"
+      ],
+      "replacement_sha256": "b59a52d4d755d48aa941a60be8bae60502796ab02cce061a783d9f39228a598c",
+      "bytes": 56156
+    },
+    {
+      "path": "tools/control/PCCSurfaceCommon.py",
+      "action": "replace",
+      "base_sha256": "11f05958a92c64e5b3c174225017430366966b5a80fa10dbf5c2963b3ef39784",
+      "acceptable_prior_sha256": [
+        "11f05958a92c64e5b3c174225017430366966b5a80fa10dbf5c2963b3ef39784",
+        "b8044c95cc39e53613aece93fe845fb013dcbe449acc9948bc1766922719a5ba"
+      ],
+      "replacement_sha256": "b8044c95cc39e53613aece93fe845fb013dcbe449acc9948bc1766922719a5ba",
+      "bytes": 34825
+    },
+    {
+      "path": "tools/control/tests/test_cortex_pcc.py",
+      "action": "replace",
+      "base_sha256": "0c390fedb5a9479bf2cea47304a35460c6a4b1b1b60a0a4e35f0040da85d13f8",
+      "acceptable_prior_sha256": [
+        "0c390fedb5a9479bf2cea47304a35460c6a4b1b1b60a0a4e35f0040da85d13f8",
+        "13bc35361e2eaa51fb1431e386c8ab604582e03a00e626065adb240086dcaf9e",
+        "6ebcf93a6692ae2acfcdf0ac50e5331a847d1d949c8731082eb8c732c008513d",
+        "8786901f668c6ba35c79bfd8036769b9bd849ad3c66263c9df9aa111cbfe8dd6",
+        "b7d25db1948d6fb51fbd28af8ed2328915d8433083c10dbdb02904dafcad4119",
+        "6a45a9c70a4fa48477422d9418af1e7817a72f621c5e8f6277289cd51e32df86",
+        "e2d16c8520619ec3e058b0ad45d366d2fd00a7f02a48afdf1d17e20b2c716d2d",
+        "b490011653fc572bdefffb1d041e77fe33aeb00a235007e48030dbbe260a58c9"
+      ],
+      "replacement_sha256": "b490011653fc572bdefffb1d041e77fe33aeb00a235007e48030dbbe260a58c9",
+      "bytes": 38180
+    },
+    {
+      "path": "tools/control/tests/test_cortex_source_compare.py",
+      "action": "replace",
+      "base_sha256": "2c0d1bb8078ee2ee3d44c46c6d555e27fdbddffa614e9f819bb98f83f65a2af0",
+      "acceptable_prior_sha256": [
+        "2c0d1bb8078ee2ee3d44c46c6d555e27fdbddffa614e9f819bb98f83f65a2af0"
+      ],
+      "replacement_sha256": "601f9dd41c6ecc9a6011162c7c2e2362673ab3d0265150e7f048b81d10552e43",
+      "bytes": 6180
+    },
+    {
+      "path": "tools/control/tests/test_gui_version_contract.py",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "a32f1038ace46c64b7fb4e34390d948f6d839f53e76eee9bf3503556cd5e778c"
+      ],
+      "replacement_sha256": "a32f1038ace46c64b7fb4e34390d948f6d839f53e76eee9bf3503556cd5e778c",
+      "bytes": 1442
+    },
+    {
+      "path": "tools/control/tests/test_pcc_console_chat_runtime.py",
+      "action": "replace",
+      "base_sha256": "e36190e0b677ea9d4f324ceaf22996b4c954b207c88651ed1ba97ed38325913a",
+      "acceptable_prior_sha256": [
+        "0a5aa83445489bc3b59b6583ab3fa24cfbd9365b28f58207997aef810ef66104",
+        "7496219169120f305efc0b7c1b2efe3dd05fddb9356607a2e4da576a4b002b07",
+        "b75e4c932c572895f3a677886c109fa54126ab064012ad699f1f7a3bc81ba911",
+        "c22d89c3c7d3cce3068851765eb1efd7b33f69d8c52695134c471a35ee931a1f",
+        "e36190e0b677ea9d4f324ceaf22996b4c954b207c88651ed1ba97ed38325913a",
+        "a5426c8eefed3c59c84a19db4a3e61f07e2469a2737a3057b104b1176ed6ee8a",
+        "ed6d69f766efb9d35307d6fdacb73a4381592d361eafabdb150d16d6efbdeaf7",
+        "478b61c08fb83eeb74f9c89cc36c2fce905c8523fc9166cccbf6167c5cecb832"
+      ],
+      "replacement_sha256": "478b61c08fb83eeb74f9c89cc36c2fce905c8523fc9166cccbf6167c5cecb832",
+      "bytes": 2569
+    },
+    {
+      "path": "tools/control/tests/test_pcc_failure_evidence_performance.py",
+      "action": "replace",
+      "base_sha256": "7b08688ed9442a6b3c5a96fc49b83541cf3a873f91b909d8310612d7e20f258b",
+      "acceptable_prior_sha256": [
+        "06be2b3b4c34663ca0e12e52b86bd118f7d54b45821ede5eedee9d6568797f64",
+        "3b07b70b3b2ce1f07013690716a26e4ddb4aac35155f528ac9be852b3654ae64",
+        "7b08688ed9442a6b3c5a96fc49b83541cf3a873f91b909d8310612d7e20f258b",
+        "db4e5786fd404fda3b31044e38d318aacb1682b3dbd145a412842dc27c17a54e",
+        "fe94bd2f040e882f8b9ec3c838db8143b3787a0cc1cf4948b71f3d285247f267",
+        "9480ac65a86d9f57c62182ed1ff14f0ae070d552de39c8fb08796fc9bf1b829e",
+        "3474b01a800b13ecf9a6b1562b5705eebc4270159dce373518285e7c965f5a79",
+        "556828bfa706d91b9663b1aa0ba1a571b3eac4760f509d58c81c72d11ccf46ca"
+      ],
+      "replacement_sha256": "556828bfa706d91b9663b1aa0ba1a571b3eac4760f509d58c81c72d11ccf46ca",
+      "bytes": 1416
+    },
+    {
+      "path": "tools/control/tests/test_pcc_portable_volume.py",
+      "action": "replace",
+      "base_sha256": "f9da7517dccae203ca805d4c8dfd23022e43d5df18b359f29e65de6680c473ff",
+      "acceptable_prior_sha256": [
+        "f9da7517dccae203ca805d4c8dfd23022e43d5df18b359f29e65de6680c473ff"
+      ],
+      "replacement_sha256": "ef06e54ced466ca1484678a0c99ff7a9b020d0270a9c49ffcb53f93569105032",
+      "bytes": 10375
+    },
+    {
+      "path": "tools/control/tests/test_r8j_project_wide_audit.py",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [
+        "4d25f8b948d59912d8bbf53af3ce17bd2598a1ef2fded9a3e7b3c083e6bd7aa2",
+        "98282bd6b4e2288e1de556253a18fed7f7ef6eb65dd6c8630e1173d9f7b687e9",
+        "a6fd9a1c8ad75465d43b9f8c57d63bc07e5483b986b8edede80c5954fb7c4d0f",
+        "36412ed7d6dd4d8c0a273d23179f583d4b5ed6eb306ac558fdfc051e4a2ff11e"
+      ],
+      "replacement_sha256": "4fde39e07a48ee29bbe7df852ed6429c04933a19030e9472835a842501b943ad",
+      "bytes": 8241
+    }
+  ],
+  "failure_bundle": "Cortex_DebugBundle_20260926-184249_FULL_FAIL.zip",
+  "corrections": [
+    "close SQLite fixture handle before Windows tempfile teardown",
+    "source-compare fixture writes exact LF bytes on Windows",
+    "portable registry fixture distinguishes stale old drive from live independent root"
+  ],
+  "payload_count": 33,
+  "status": "LOCAL TESTED; WINDOWS FULL PENDING; no live source/state mutation"
+}

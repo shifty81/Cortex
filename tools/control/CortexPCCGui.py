@@ -51,7 +51,11 @@ from CortexPersistentVolumeInventory import (
     run_scan as persistent_volume_scan,
     query_access_gaps as persistent_volume_gap_query,
     refresh_directory as persistent_volume_refresh_directory,
+    refresh_tree as persistent_volume_refresh_tree,
+    recursive_refresh_status as persistent_recursive_refresh_status,
+    abandon_recursive_refresh as persistent_abandon_recursive_refresh,
 )
+from CortexInventoryProjectReview import build_preview as inventory_project_preview, export_preview as inventory_review_export
 from PCCRepoHygiene import prepare as repo_hygiene_prepare
 from PCCVaultIntakeAudit import (
     audit_dir as vault_intake_audit_dir,
@@ -74,7 +78,7 @@ from PCCVaultStorage import (
     verify_latest_mirror as vault_verify_latest_mirror,
 )
 
-GUI_VERSION = "PCC-GUI-0.15.4"
+GUI_VERSION = "PCC-GUI-0.15.6"
 
 BG = "#090b0e"
 PANEL = "#11151a"
@@ -156,6 +160,7 @@ class CortexPCCGui:
         self._vault_metrics: dict[str, Any] = {}
         self._volume_result: dict[str, Any] | None = None
         self._volume_running = False
+        self._tree_refresh_busy = False
         self._volume_view_generation = 0
         self._volume_root: Path | None = None
         self._volume_db_path: Path | None = None
@@ -942,6 +947,29 @@ class CortexPCCGui:
         tk.Label(actions, text="Updates this metadata index only · refresh does not rebuild the drive",
                  bg=BG, fg=MUTED, font=("Segoe UI", 9), anchor="w").pack(side="left", fill="x", expand=True)
 
+        tree_actions = tk.Frame(parent, bg=BG)
+        tree_actions.pack(fill="x", pady=(0, 5))
+        self.volume_tree_refresh_btn = self._button(
+            tree_actions, "Refresh Selected Tree", lambda: self._refresh_volume_tree(None), compact=True)
+        self.volume_tree_refresh_btn.pack(side="left", padx=(0, 6))
+        self.volume_tree_resume_btn = self._button(
+            tree_actions, "Resume Tree Refresh", lambda: self._refresh_volume_tree("__resume__"), compact=True)
+        self.volume_tree_resume_btn.pack(side="left", padx=(0, 6))
+        self.volume_tree_pause_btn = self._button(
+            tree_actions, "Pause Tree Refresh", self._pause_volume_tree, compact=True)
+        self.volume_tree_pause_btn.pack(side="left", padx=(0, 10))
+        self.volume_tree_pause_btn.configure(state="disabled")
+        self.volume_tree_abandon_btn = self._button(
+            tree_actions, "Discard Paused Queue", self._abandon_volume_tree, compact=True)
+        self.volume_tree_abandon_btn.pack(side="left", padx=(0, 10))
+        self.volume_project_preview_btn = self._button(
+            tree_actions, "Preview Project Candidates", self._start_inventory_project_preview, compact=True)
+        self.volume_project_preview_btn.pack(side="left", padx=(0, 6))
+        self.volume_tree_status = tk.Label(parent,
+            text="Recursive reconciliation is explicit · one selected project subtree · no source edits",
+            bg=BG, fg=MUTED, font=("Segoe UI", 9), anchor="w", justify="left", wraplength=980)
+        self.volume_tree_status.pack(fill="x", pady=(0, 5))
+
         panes = tk.PanedWindow(parent, orient="horizontal", bg=BG, sashwidth=6,
                                sashrelief="flat", bd=0)
         panes.pack(fill="both", expand=True)
@@ -1626,6 +1654,118 @@ class CortexPCCGui:
             except Exception as exc:
                 self._event_q.put(("volume-refresh-error", str(exc)))
         threading.Thread(target=work, daemon=True).start()
+
+    def _refresh_volume_tree(self, relative: str | None) -> None:
+        """Run one scoped, durable recursive reconciliation off the GUI thread."""
+        if self._vault_busy or self._volume_running or self._tree_refresh_busy:
+            self._popup("Recursive Inventory Refresh", "Finish the current Vault operation first.", kind="warning")
+            return
+        if not self._volume_root or not self._volume_db_path or not self._volume_id:
+            self._popup("Recursive Inventory Refresh", "The marked portable volume is unavailable.", kind="warning")
+            return
+        root, db, volume_id = self._volume_root, self._volume_db_path, self._volume_id
+        if relative == "__resume__":
+            try:
+                job = persistent_recursive_refresh_status(db, volume_id=volume_id)
+            except Exception as exc:
+                self._popup("Recursive Inventory Refresh", str(exc), kind="error")
+                return
+            if job.get("state") not in ("paused", "running"):
+                self._popup("Recursive Inventory Refresh", "No unfinished recursive refresh is available.", kind="warning")
+                return
+            relative = None  # authoritative root is read from the durable job
+        else:
+            if not self._volume_result or self._volume_result.get("state") != "complete":
+                self._popup("Recursive Inventory Refresh", "Finish the initial inventory before starting a new tree refresh.", kind="warning")
+                return
+            if self._volume_view_mode != "paths":
+                self._popup("Recursive Inventory Refresh", "Select a directory in All paths first.", kind="warning")
+                return
+            selected = self.volume_tree.selection()
+            entry = self._volume_rows.get(selected[0]) if selected else None
+            if not entry or entry.get("type") != "directory" or entry.get("boundary"):
+                self._popup("Recursive Inventory Refresh", "Select a traversable project directory.", kind="warning")
+                return
+            relative = str(entry["path"])
+        self._vault_busy = True
+        self._tree_refresh_busy = True
+        self._vault_cancel = False
+        self.volume_tree_refresh_btn.configure(state="disabled")
+        self.volume_tree_resume_btn.configure(state="disabled")
+        self.volume_tree_pause_btn.configure(state="normal")
+        self.volume_tree_status.configure(text=f"Reconciling {relative or 'saved tree'}…", fg=CYAN)
+
+        def work() -> None:
+            try:
+                result = persistent_volume_refresh_tree(root, db, volume_id=volume_id,
+                    relative=relative, cancelled=lambda: self._vault_cancel,
+                    progress=lambda payload: self._event_q.put(("volume-tree-progress", payload)))
+                status = persistent_volume_status(db, root, volume_id=volume_id)
+                self._event_q.put(("volume-tree-done", (result, status)))
+            except Exception as exc:
+                self._event_q.put(("volume-tree-error", str(exc)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _abandon_volume_tree(self) -> None:
+        if self._vault_busy or self._tree_refresh_busy:
+            self._popup("Recursive Refresh", "Wait for the active operation to finish.", kind="warning")
+            return
+        if not self._volume_db_path or not self._volume_id:
+            return
+        try:
+            job = persistent_recursive_refresh_status(self._volume_db_path, volume_id=self._volume_id)
+            if job.get('state') not in ('paused', 'running'):
+                self._popup("Recursive Refresh", "No paused or interrupted queue exists.", kind="warning")
+                return
+        except Exception as exc:
+            self._popup("Recursive Refresh", str(exc), kind="error")
+            return
+        if not self._popup("Discard Unfinished Tree Queue",
+                           "Discard only the unfinished recursive work queue?\n\n"
+                           "All committed inventory records are retained. If the selected root "
+                           "disappeared, refresh its parent afterward. No source files are changed.",
+                           kind="warning", confirm=True):
+            return
+        self._vault_busy = True
+        db, volume_id = self._volume_db_path, self._volume_id
+        def work() -> None:
+            try:
+                result = persistent_abandon_recursive_refresh(db, volume_id=volume_id)
+                self._event_q.put(('volume-tree-abandoned',result))
+            except Exception as exc:
+                self._event_q.put(('volume-tree-error',str(exc)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _start_inventory_project_preview(self) -> None:
+        """Background, metadata-only proposal; no source read or registry writes."""
+        if self._vault_busy or self._volume_running or self._tree_refresh_busy:
+            self._popup("Project Candidate Preview", "Finish the current inventory operation first.", kind="warning")
+            return
+        if not self._volume_result or self._volume_result.get("state") != "complete":
+            self._popup("Project Candidate Preview", "Complete or resume the initial inventory first.", kind="warning")
+            return
+        if not self._volume_root or not self._volume_db_path or not self._volume_id:
+            self._popup("Project Candidate Preview", "Portable inventory is unavailable.", kind="warning")
+            return
+        self._vault_busy = True
+        self.volume_project_preview_btn.configure(state="disabled")
+        self.volume_tree_status.configure(text="Reviewing indexed project markers in background…", fg=CYAN)
+        root, db, volume, vid = self.root_path, self._volume_db_path, self._volume_root, self._volume_id
+        def work() -> None:
+            try:
+                report = inventory_project_preview(db, volume, volume_id=vid)
+                path = inventory_review_export(report, root)
+                self._event_q.put(("inventory-project-preview-done", (report, path)))
+            except Exception as exc:
+                self._event_q.put(("inventory-project-preview-error", str(exc)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _pause_volume_tree(self) -> None:
+        if not self._tree_refresh_busy:
+            return
+        self._vault_cancel = True
+        self.volume_tree_pause_btn.configure(state="disabled")
+        self.volume_tree_status.configure(text="Pause requested · finishing the current directory…", fg=YELLOW)
 
     def _cancel_volume_inventory(self) -> None:
         if not self._volume_running:
@@ -4192,6 +4332,69 @@ class CortexPCCGui:
                     self.volume_refresh_folder_btn.configure(state="normal")
                     self.volume_results_status.configure(text=f"Refresh failed: {payload}", fg=RED)
                     self._append_log(f"[FAIL] Inventory refresh: {payload}\n", "fail")
+                elif kind == "volume-tree-progress":
+                    if self._tree_refresh_busy:
+                        self.volume_tree_status.configure(
+                            text=f"Tree: {payload.get('refreshed',0):,} folders checked · "
+                                 f"{payload.get('pending',0):,} queued · "
+                                 f"+{payload.get('added',0)} / ~{payload.get('changed',0)} / -{payload.get('removed',0)}",
+                            fg=YELLOW if self._vault_cancel else CYAN)
+                elif kind == "volume-tree-done":
+                    self._vault_busy = False
+                    self._tree_refresh_busy = False
+                    self.volume_tree_refresh_btn.configure(state="normal")
+                    self.volume_tree_resume_btn.configure(state="normal")
+                    self.volume_tree_pause_btn.configure(state="disabled")
+                    job, status = payload
+                    # A finished work queue with inaccessible locations is not
+                    # equivalent to complete filesystem coverage. Reflect the
+                    # access-gap truth in the job badge as well as the overview.
+                    partial = (job.get('state') != 'complete' or int(job.get('unreadable', 0)) > 0)
+                    outcome_label = ('complete with access gaps' if job.get('state') == 'complete' and partial
+                                     else job.get('state'))
+                    detail = (f"Tree {outcome_label}: {job.get('refreshed',0):,} folders checked, "
+                              f"{job.get('pending',0):,} queued · "
+                              f"+{job.get('added',0)} / ~{job.get('changed',0)} / -{job.get('removed',0)} · "
+                              f"{job.get('unreadable',0)} inaccessible folders")
+                    self.volume_tree_status.configure(text=detail, fg=YELLOW if partial else GREEN)
+                    self._volume_refresh_status(status)
+                    self._show_volume_inventory()
+                    self._append_log(f"[{'WARN' if partial else 'PASS'}] {detail}. Metadata only; source untouched.\n",
+                                     'warn' if partial else 'pass')
+                elif kind == "volume-tree-abandoned":
+                    self._vault_busy = False
+                    self.volume_tree_status.configure(text="Unfinished queue discarded; committed index retained. Refresh the parent if needed.", fg=YELLOW)
+                    self._append_log("[WARN] Recursive refresh queue discarded by explicit approval. Indexed records retained.\n", "warn")
+                elif kind == "volume-tree-error":
+                    self._vault_busy = False
+                    self._tree_refresh_busy = False
+                    self.volume_tree_refresh_btn.configure(state="normal")
+                    self.volume_tree_resume_btn.configure(state="normal")
+                    self.volume_tree_pause_btn.configure(state="disabled")
+                    self.volume_tree_status.configure(text=f"Tree refresh stopped: {payload}", fg=RED)
+                    self._append_log(f"[FAIL] Recursive inventory refresh: {payload}\n", "fail")
+                elif kind == "inventory-project-preview-done":
+                    self._vault_busy = False
+                    self.volume_project_preview_btn.configure(state="normal")
+                    report, path = payload
+                    self.volume_tree_status.configure(
+                        text=f"Preview ready: {report.get('candidate_count', 0):,} candidates · "
+                             f"{report.get('same_name_group_count', 0):,} same-name groups · review required",
+                        fg=CYAN)
+                    self._volume_set_detail(
+                        f"METADATA-ONLY PROJECT PREVIEW\n\n"
+                        f"Candidates: {report.get('candidate_count', 0):,}\n"
+                        f"Same-name groups (not confirmed duplicates): {report.get('same_name_group_count', 0):,}\n"
+                        f"Index access gaps: {report.get('index_access_gaps', 0):,}\n"
+                        f"Review artifact: {path}\n\n"
+                        "No project was automatically registered, moved, merged or modified.\n"
+                        "Inspect the JSON proposal before taking any organization action.")
+                    self._append_log(f"[PASS] Indexed project preview: {path}\n", "pass")
+                elif kind == "inventory-project-preview-error":
+                    self._vault_busy = False
+                    self.volume_project_preview_btn.configure(state="normal")
+                    self.volume_tree_status.configure(text=f"Project preview unavailable: {payload}", fg=RED)
+                    self._append_log(f"[FAIL] Indexed project preview: {payload}\n", "fail")
                 elif kind == "volume-view-done":
                     generation, mode, view, report = payload
                     self._volume_filter_busy = False

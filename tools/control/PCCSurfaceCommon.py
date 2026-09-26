@@ -15,13 +15,31 @@ from PCCSharedEnvironment import apply_shared_toolchain_environment
 from typing import Any, Iterable, Sequence
 
 from PCCProjectDiscovery import discover_project_contract_data, discovery_summary
-from PCCVolumeAuthority import resolve_volume_context
+from PCCVolumeAuthority import resolve_volume_context, volume_relative, resolve_volume_path
 
 SURFACE_VERSION = "PCC-SURFACE-0.5-LIVE-R1"
 
 
 class SurfaceError(RuntimeError):
     pass
+
+
+def portable_relative_to_runtime_volume(root: Path) -> str | None:
+    """Return a portable identity only for paths inside the marked volume.
+
+    A machine-local project must retain its independent absolute-path identity.
+    Inspecting this identity does not create markers or write the registry.
+    """
+    try:
+        ctx = resolve_volume_context(create=False)
+        return volume_relative(root, ctx)
+    except (ValueError, OSError, RuntimeError):
+        return None
+
+
+def resolve_portable_volume_path(relative: str) -> Path:
+    """Rebind a saved volume-relative project path to the current mount letter."""
+    return resolve_volume_path(relative, resolve_volume_context(create=False))
 
 
 def resolve_root(raw: str | os.PathLike[str] | None = None) -> Path:
@@ -130,24 +148,39 @@ class ProjectRegistry:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
+    def legacy_default_path() -> Path:
+        """Legacy machine-local registry is read-only compatibility input."""
+        if os.name == "nt":
+            base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+            return base / "ProjectControlCenter" / "project_registry.json"
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+        return base / "project-control-center" / "project_registry.json"
+
+    @staticmethod
     def default_path() -> Path:
         env = os.environ.get("PCC_PROJECT_REGISTRY")
         if env:
             return Path(env).expanduser().resolve()
         try:
-            ctx = resolve_volume_context(create=True)
+            # Loading the registry must not provision unrelated volume directories.
+            # __init__ creates only the registry's own parent if necessary.
+            ctx = resolve_volume_context(create=False)
             return ctx.registry_root / "project_registry.json"
         except Exception:
             # Compatibility fallback for non-portable/unit-test environments only.
-            if os.name == "nt":
-                base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-                return base / "ProjectControlCenter" / "project_registry.json"
-            base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-            return base / "project-control-center" / "project_registry.json"
+            return ProjectRegistry.legacy_default_path()
 
     @staticmethod
     def _registry_id(root: Path) -> str:
-        key = os.path.normcase(str(root.resolve()))
+        relative = portable_relative_to_runtime_volume(root)
+        if relative is not None:
+            try:
+                volume_id = resolve_volume_context(create=False).volume_id
+            except (ValueError, OSError, RuntimeError):
+                volume_id = "portable-volume"
+            key = "portable:" + volume_id + ":" + relative.casefold()
+        else:
+            key = "local:" + os.path.normcase(str(root.resolve()))
         return hashlib.sha256(key.encode("utf-8", errors="replace")).hexdigest()[:16]
 
     def passport_path(self, root: Path) -> Path:
@@ -204,13 +237,56 @@ class ProjectRegistry:
     def entries(self) -> list[RegisteredProject]:
         data = self._read()
         rows: list[RegisteredProject] = []
-        for item in data.get("projects", []) or []:
+        seen: set[tuple[str, str]] = set()
+        portable_items = [x for x in (data.get("projects", []) or []) if isinstance(x, dict)]
+        # Reading a portable registry must not hide unrelated machine-local
+        # registrations; it also must not rewrite or migrate either registry.
+        all_items = list(portable_items)
+        try:
+            is_default = self.path.resolve() == self.default_path().resolve()
+            legacy_path = self.legacy_default_path()
+            if is_default and legacy_path.resolve() != self.path.resolve() and legacy_path.is_file():
+                legacy = json.loads(legacy_path.read_text(encoding="utf-8-sig"))
+                if isinstance(legacy, dict) and isinstance(legacy.get("projects"), list):
+                    for item in legacy["projects"]:
+                        if not isinstance(item, dict):
+                            continue
+                        old_root = str(item.get("root") or "").replace("\\", "/")
+                        old_project = str(item.get("projectId") or "").casefold()
+                        duplicate = False
+                        for current in portable_items:
+                            rel = str(current.get("portableRelativeRoot") or "").strip("/")
+                            if not rel or old_project != str(current.get("projectId") or "").casefold():
+                                continue
+                            current_path = str(current.get("root") or "").replace("\\", "/")
+                            same_tail = old_root.casefold().endswith("/" + rel.casefold())
+                            if same_tail and (old_root.casefold() == current_path.casefold() or not Path(old_root).exists()):
+                                duplicate = True
+                                break
+                        if not duplicate:
+                            all_items.append(item)
+        except (OSError, ValueError, RuntimeError, TypeError):
+            # An unreadable historical registry cannot invalidate the portable one.
+            pass
+        for item in all_items:
             if not isinstance(item, dict):
                 continue
             raw_root = str(item.get("root") or "").strip()
             if not raw_root:
                 continue
             root = Path(raw_root).expanduser()
+            relative = str(item.get("portableRelativeRoot") or "").strip()
+            if relative:
+                try:
+                    root = resolve_portable_volume_path(relative)
+                except (ValueError, OSError, RuntimeError):
+                    # Do not guess a replacement root when the volume is absent.
+                    pass
+            identity = (("portable", relative.casefold()) if relative else
+                        ("local", os.path.normcase(str(root)).casefold()))
+            if identity in seen:
+                continue
+            seen.add(identity)
             rows.append(RegisteredProject(
                 registry_id=str(item.get("registryId") or self._registry_id(root)),
                 project_id=str(item.get("projectId") or root.name),
@@ -240,18 +316,25 @@ class ProjectRegistry:
             "root": str(root),
             "lastOpenedUtc": now if make_active else "",
         }
+        portable_rel = portable_relative_to_runtime_volume(root)
+        if portable_rel is not None:
+            record["portableRelativeRoot"] = portable_rel
+        kept: list[dict[str, Any]] = []
         found = False
-        for i, item in enumerate(projects):
-            if str(item.get("registryId") or "") == rid or os.path.normcase(str(item.get("root") or "")) == os.path.normcase(str(root)):
-                previous = str(item.get("lastOpenedUtc") or "")
-                if not make_active:
-                    record["lastOpenedUtc"] = previous
-                projects[i] = record
-                found = True
-                break
-        if not found:
-            projects.append(record)
-        data["projects"] = projects
+        for item in projects:
+            matched = (str(item.get("registryId") or "") == rid
+                       or os.path.normcase(str(item.get("root") or "")) == os.path.normcase(str(root))
+                       or (portable_rel is not None and item.get("portableRelativeRoot") == portable_rel))
+            if not matched:
+                kept.append(item)
+                continue
+            if not found and not make_active:
+                record["lastOpenedUtc"] = str(item.get("lastOpenedUtc") or "")
+            if str(data.get("activeProject") or "") == str(item.get("registryId") or ""):
+                data["activeProject"] = rid
+            found = True
+        kept.append(record)
+        data["projects"] = kept
         if make_active:
             data["activeProject"] = rid
         self._write(data)
@@ -602,9 +685,14 @@ def _surface_category(command: str) -> str:
 
 def _surface_risk(command: str) -> str:
     key = command.casefold()
+    if key in {"repair-current", "repair-current-full", "git-identity", "volume-init", "contract-migrate",
+               "git-fetch", "debug-bundle", "source-rollup", "full", "fast"}:
+        # These commands write governed source, Git metadata, diagnostics or build
+        # artifacts; they must not be presented as read-only operations.
+        return "local_mutation"
     mutating_tokens = (
         "apply", "prepare", "mirror", "stage", "restore", "purge", "prune-apply",
-        "commit", "push", "pull", "setup", "build", "launch", "format", "fix",
+        "commit", "push", "pull", "setup", "trust", "build", "launch", "format", "fix",
     )
     if any(token in key for token in mutating_tokens):
         return "local_mutation"
@@ -622,6 +710,7 @@ def _surface_label(command: str) -> str:
         "commit-push-green": "Commit + Push Certified GREEN",
         "git-identity": "Configure Git Identity",
         "git-identity-status": "Git Identity Status",
+        "git-trust": "Trust Current Checkout",
     }
     return special.get(command, command.replace("-", " ").replace(".", " ").title())
 

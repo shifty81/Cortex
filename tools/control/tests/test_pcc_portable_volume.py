@@ -118,13 +118,43 @@ class PortableVolumeTests(unittest.TestCase):
                     "lastOpenedUtc": "",
                 }],
             }), encoding="utf-8")
+            # The user's *real* checkout can be G:/Cortex while the fixture
+            # claims E:/Cortex is its portable location. Do not let this test
+            # mistake an existing independent G: checkout for a stale record.
+            # Model only the historical G:/Cortex record as absent, leaving
+            # every other filesystem existence check authoritative.
+            real_exists = Path.exists
+            def fixture_exists(path):
+                if str(path).replace("\\", "/").casefold() == "g:/cortex":
+                    return False
+                return real_exists(path)
             with mock.patch.object(surface.ProjectRegistry, "default_path", return_value=portable_path), \
                  mock.patch.object(surface.ProjectRegistry, "legacy_default_path", return_value=legacy_path), \
-                 mock.patch.object(surface, "resolve_portable_volume_path", return_value=Path("E:/Cortex")):
+                 mock.patch.object(surface, "resolve_portable_volume_path", return_value=Path("E:/Cortex")), \
+                 mock.patch.object(Path, "exists", autospec=True, side_effect=fixture_exists):
                 registry = surface.ProjectRegistry()
                 rows = registry.entries()
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0].registry_id, "portable-id")
+
+    def test_live_same_named_legacy_root_is_not_silently_merged(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            portable_path = td / "portable.json"
+            legacy_path = td / "legacy.json"
+            independent_root = td / "independent-volume" / "Cortex"
+            independent_root.mkdir(parents=True)
+            portable_path.write_text(json.dumps({"schema": surface.ProjectRegistry.SCHEMA,
+                "projects": [{"registryId": "portable-id", "projectId": "cortex", "name": "Cortex",
+                              "kind": "rust-workspace", "root": "E:/Cortex", "portableRelativeRoot": "Cortex"}]}), encoding="utf-8")
+            legacy_path.write_text(json.dumps({"schema": surface.ProjectRegistry.SCHEMA,
+                "projects": [{"registryId": "independent-id", "projectId": "cortex", "name": "Cortex",
+                              "kind": "rust-workspace", "root": str(independent_root)}]}), encoding="utf-8")
+            with mock.patch.object(surface.ProjectRegistry, "default_path", return_value=portable_path), \
+                 mock.patch.object(surface.ProjectRegistry, "legacy_default_path", return_value=legacy_path), \
+                 mock.patch.object(surface, "resolve_portable_volume_path", return_value=Path("E:/Cortex")):
+                rows = surface.ProjectRegistry().entries()
+            self.assertEqual({row.registry_id for row in rows}, {"portable-id", "independent-id"})
 
     def test_machine_local_registration_is_not_hidden_by_portable_merge(self) -> None:
         with tempfile.TemporaryDirectory() as td:

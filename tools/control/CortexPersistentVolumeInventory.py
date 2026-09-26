@@ -7,6 +7,7 @@ The durable directory queue permits idempotent resumption after cancellation/cra
 from __future__ import annotations
 
 import os
+import errno
 from contextlib import closing, contextmanager
 import re
 import sqlite3
@@ -278,7 +279,15 @@ def _record_entry(conn: sqlite3.Connection, item: tuple[str, str, str, int | Non
     conn.execute("DELETE FROM errors WHERE path=? AND operation='stat'", (path,))
 
 
-def _flush(conn: sqlite3.Connection, additions: dict[str, int], current: str, *, state: str = "running") -> None:
+def _flush(conn: sqlite3.Connection, additions: dict[str, int], current: str, *,
+           state: str = "running", scan_token: str | None = None) -> None:
+    # The heartbeat is committed in the same transaction as the progress counters.
+    # A worker that has lost its lease must never continue publishing scan batches.
+    if scan_token is not None:
+        held = conn.execute("UPDATE inventory_scan_owner SET updated_utc=? WHERE id=1 AND token=?",
+                            (_utc(), scan_token))
+        if held.rowcount != 1:
+            raise RuntimeError("Inventory scanner no longer owns the durable scan lease")
     conn.execute("UPDATE scan_state SET state=?,updated_utc=?,indexed_files=indexed_files+?, "
                  "indexed_directories=indexed_directories+?,indexed_symlinks=indexed_symlinks+?, "
                  "indexed_other=indexed_other+?,last_directory=? WHERE id=1",
@@ -315,35 +324,58 @@ def run_scan(volume_root: Path | str, db_path: Path | str, *, volume_id: str,
     drive = os.path.normcase(os.path.splitdrive(str(root))[0])
     root_device = root.stat().st_dev
     conn = _connection(db_path, writable=True)
+    scan_token: str | None = None
     try:
         _initialize(conn, volume_id)
+        # BEGIN IMMEDIATE serializes lease claims across Cortex processes. Merely
+        # checking scan_state='running' is insufficient: that state is retained
+        # after process death and was previously accepted by *both* live workers.
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='recursive_refresh'").fetchone():
+            job = conn.execute("SELECT state FROM recursive_refresh WHERE id=1").fetchone()
+            if job and job[0] in ('running', 'paused'):
+                raise RuntimeError("Finish or resume the recursive refresh before starting the inventory scanner")
+        initial = conn.execute("SELECT state FROM scan_state WHERE id=1").fetchone()
+        if initial is not None and initial[0] == "complete" and not restart:
+            result = _status(conn, root)
+            conn.rollback()  # a completed index is a read-only no-op; no lease table added
+            return result
+        # This auxiliary table is additive within the existing dedicated index;
+        # no entries, counters, Vault catalog or schema version are rebuilt.
+        conn.execute("CREATE TABLE IF NOT EXISTS inventory_scan_owner ("
+                     "id INTEGER PRIMARY KEY CHECK(id=1), owner_pid INTEGER NOT NULL, "
+                     "token TEXT NOT NULL, updated_utc TEXT NOT NULL)")
+        prior = conn.execute("SELECT owner_pid FROM inventory_scan_owner WHERE id=1").fetchone()
+        if prior is not None and _owner_alive(int(prior['owner_pid'])):
+            raise RuntimeError("Inventory scanner is already active in another Cortex worker")
+        scan_token = uuid.uuid4().hex
+        conn.execute("INSERT INTO inventory_scan_owner(id,owner_pid,token,updated_utc) "
+                     "VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                     "owner_pid=excluded.owner_pid,token=excluded.token,updated_utc=excluded.updated_utc",
+                     (os.getpid(), scan_token, _utc()))
         if restart:
             conn.execute("DELETE FROM entries")
             conn.execute("DELETE FROM directories")
             conn.execute("DELETE FROM errors")
             conn.execute("DELETE FROM scan_state")
-            conn.commit()
-        initial = conn.execute("SELECT state FROM scan_state WHERE id=1").fetchone()
+            initial = None
         if initial is None:
             stamp = _utc()
             conn.execute("INSERT INTO scan_state(id,state,started_utc,updated_utc) VALUES(1,'running',?,?)", (stamp, stamp))
             conn.execute("INSERT INTO directories(path) VALUES('')")
-            conn.commit()
-        elif initial[0] == "complete":
-            return _status(conn, root)  # rescan requires explicit restart=True
         else:
             conn.execute("UPDATE scan_state SET state='running',updated_utc=? WHERE id=1", (_utc(),))
-            conn.commit()
+        conn.commit()
         last_emit = 0.0
         since_commit = 0
         additions = {kind: 0 for kind in ("file", "directory", "symlink", "other")}
         while True:
             if cancelled and cancelled():
-                _flush(conn, additions, "", state="paused")
+                _flush(conn, additions, "", state="paused", scan_token=scan_token)
                 break
             pending = conn.execute("SELECT id,path FROM directories WHERE finished=0 ORDER BY id LIMIT 1").fetchone()
             if pending is None:
-                _flush(conn, additions, "", state="complete")
+                _flush(conn, additions, "", state="complete", scan_token=scan_token)
                 conn.execute("UPDATE scan_state SET completed_utc=? WHERE id=1", (_utc(),))
                 conn.commit()
                 break
@@ -387,18 +419,22 @@ def run_scan(volume_root: Path | str, db_path: Path | str, *, volume_id: str,
                             _record_error(conn, rel, "stat", exc)
                         since_commit += 1
                         if since_commit >= batch_size:
-                            _flush(conn, additions, relative)
+                            _flush(conn, additions, relative, scan_token=scan_token)
                             since_commit = 0
                             if progress and time.monotonic() - last_emit >= .35:
                                 progress(_status(conn, root))
                                 last_emit = time.monotonic()
+                # Successful enumeration supersedes an older transient scandir
+                # error (including the special volume-root display key '.').
+                # Keep stat errors for children which are still inaccessible.
+                conn.execute("DELETE FROM errors WHERE path=? AND operation='scandir'", (relative or '.',))
             except OSError as exc:
                 _record_error(conn, relative, "scandir", exc)
             if interrupted:
-                _flush(conn, additions, relative, state="paused")
+                _flush(conn, additions, relative, state="paused", scan_token=scan_token)
                 break  # keep unfinished directory pending, with durable batch records
             conn.execute("UPDATE directories SET finished=1 WHERE id=?", (qid,))
-            _flush(conn, additions, relative)
+            _flush(conn, additions, relative, scan_token=scan_token)
             if progress and time.monotonic() - last_emit >= .35:
                 progress(_status(conn, root))
                 last_emit = time.monotonic()
@@ -410,6 +446,21 @@ def run_scan(volume_root: Path | str, db_path: Path | str, *, volume_id: str,
         conn.rollback()
         raise
     finally:
+        if scan_token is not None:
+            # Release only our own token; a later owner may have recovered a
+            # genuinely dead worker. Unexpected worker failure leaves the durable
+            # scan queue paused rather than falsely advertising an active scan.
+            try:
+                conn.rollback()
+                conn.execute("BEGIN IMMEDIATE")
+                released = conn.execute("DELETE FROM inventory_scan_owner WHERE id=1 AND token=?",
+                                        (scan_token,))
+                if released.rowcount:
+                    conn.execute("UPDATE scan_state SET state='paused',completed_utc=NULL,updated_utc=? "
+                                 "WHERE id=1 AND state='running'", (_utc(),))
+                conn.commit()
+            except sqlite3.Error:
+                conn.rollback()
         conn.close()
 
 
@@ -437,10 +488,16 @@ def _delete_indexed_tree(conn: sqlite3.Connection, relative: str, changes: dict[
     conn.execute(f"DELETE FROM entries WHERE {predicate}", args)
     conn.execute(f"DELETE FROM directories WHERE {predicate}", args)
     conn.execute(f"DELETE FROM errors WHERE {predicate}", args)
+    # A recursive job may already have queued descendants. Prune those work items
+    # in the same transaction as the removed metadata, rather than repeatedly
+    # retrying paths which the parent has now proved no longer exist.
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='recursive_refresh_queue'").fetchone():
+        conn.execute(f"DELETE FROM recursive_refresh_queue WHERE {predicate}", args)
 
 
 def refresh_directory(volume_root: Path | str, db_path: Path | str, *, volume_id: str,
-                      relative: str = "", cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
+                      relative: str = "", cancelled: Callable[[], bool] | None = None,
+                      _recursive: bool = False) -> dict[str, Any]:
     """R8J-A: atomically reconcile one explicit directory, without rebuilding a volume.
 
     Stage immediate children in a connection-local SQLite TEMP table; no multi-million-row
@@ -480,16 +537,29 @@ def refresh_directory(volume_root: Path | str, db_path: Path | str, *, volume_id
         _initialize(conn, volume_id)
         if _stored_volume_id(conn) != volume_id:
             raise ValueError("Inventory belongs to a different volume")
+        # Validate active scan/tree authority under the SAME writer reservation as
+        # the eventual directory reconciliation, not in a stale pre-lock read.
+        conn.execute("BEGIN IMMEDIATE")
         current = conn.execute("SELECT state FROM scan_state WHERE id=1").fetchone()
-        if current is None or current[0] != "complete":
-            raise RuntimeError("Refresh requires a completed inventory; pause/resume the initial scan first")
+        active = None
+        if conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='recursive_refresh'").fetchone():
+            active = conn.execute("SELECT state,owner_pid FROM recursive_refresh WHERE id=1").fetchone()
+        if _recursive:
+            if not active or active['state'] != 'running' or active['owner_pid'] != os.getpid():
+                raise RuntimeError("Recursive directory refresh has no active owned session")
+            if current is None or current[0] not in ('complete', 'paused'):
+                raise RuntimeError("Inventory scanner must be stopped before recursive refresh")
+        else:
+            if active and active['state'] in ('running', 'paused'):
+                raise RuntimeError("Finish the recursive refresh before using single-directory refresh")
+            if current is None or current[0] != "complete":
+                raise RuntimeError("Refresh requires a completed inventory; pause/resume the initial scan first")
         if rel:
             host = conn.execute("SELECT type,boundary FROM entries WHERE path=?", (rel,)).fetchone()
             if host is None or host["type"] != "directory" or host["boundary"]:
                 raise ValueError("Refresh requires a previously indexed, traversable directory")
         conn.execute("CREATE TEMP TABLE refresh_seen (path TEXT PRIMARY KEY, valid INTEGER NOT NULL, "
                      "parent TEXT, kind TEXT, size_bytes INTEGER, modified_ns INTEGER, boundary TEXT) WITHOUT ROWID")
-        conn.execute("BEGIN IMMEDIATE")
         try:
             # Never treat an inaccessible directory as an empty directory: that could
             # otherwise remove valid metadata for thousands of existing source files.
@@ -550,7 +620,7 @@ def refresh_directory(volume_root: Path | str, db_path: Path | str, *, volume_id
                     outcome["changed"] += 1
                 else:
                     outcome["unchanged"] += 1
-                if previous is not None and previous["type"] == "directory" and kind != "directory":
+                if previous is not None and previous["type"] == "directory" and (kind != "directory" or row["boundary"] is not None):
                     # A former folder turned into a file/link. Its descendants no longer exist.
                     lower, upper = path + "/", path + "/" + chr(0x10ffff)
                     for old in conn.execute("SELECT type,COUNT(*) AS n FROM entries WHERE path>=? AND path<? GROUP BY type",
@@ -560,14 +630,25 @@ def refresh_directory(volume_root: Path | str, db_path: Path | str, *, volume_id
                     conn.execute("DELETE FROM directories WHERE path=? OR (path>=? AND path<?)",
                                  (path, lower, upper))
                     conn.execute("DELETE FROM errors WHERE path>=? AND path<?", (lower, upper))
+                    # The old host is no longer a traversable folder: its prior
+                    # directory-level access gaps no longer describe this path.
+                    conn.execute("DELETE FROM errors WHERE path=? AND operation IN ('scandir','refresh_scandir')", (path,))
+                    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='recursive_refresh_queue'").fetchone():
+                        conn.execute("DELETE FROM recursive_refresh_queue WHERE path=? OR (path>=? AND path<?)",
+                                     (path, lower, upper))
                 if previous is None or tuple(previous) != new_value:
                     _record_entry(conn, (path, rel, kind, row["size_bytes"], row["modified_ns"], row["boundary"]), delta)
                 else:
                     conn.execute("DELETE FROM errors WHERE path=? AND operation='stat'", (path,))
-                if kind == "directory" and row["boundary"] is None and (previous is None or previous["type"] != "directory"):
+                if kind == "directory" and row["boundary"] is None and (previous is None or previous["type"] != "directory" or previous["boundary"] is not None):
                     conn.execute("INSERT INTO directories(path,finished) VALUES(?,0) "
                                  "ON CONFLICT(path) DO UPDATE SET finished=0", (path,))
                     outcome["new_directories"] += 1
+            # A previous transient access denial must clear when this same
+            # directory is successfully enumerated. Preserve unrelated stat gaps.
+            # The volume-root display sentinel is '.', while its stored entry
+            # parent is ''. A successful root refresh must clear its old gap too.
+            conn.execute("DELETE FROM errors WHERE path=? AND operation IN ('scandir','refresh_scandir')", (rel or '.',))
             pending = int(conn.execute("SELECT COUNT(*) FROM directories WHERE finished=0").fetchone()[0])
             conn.execute("UPDATE scan_state SET updated_utc=?,state=?,completed_utc=?,last_directory=?, "
                          "indexed_files=indexed_files+?,indexed_directories=indexed_directories+?, "
@@ -600,3 +681,287 @@ def list_errors(db_path: Path | str, *, volume_id: str, limit: int = 20) -> list
             raise ValueError("Inventory belongs to a different volume")
         return [dict(row) for row in conn.execute(
             "SELECT path,operation,message FROM errors ORDER BY path LIMIT ?", (limit,))]
+
+
+# R8J-B: additive work tables within the existing dedicated inventory database.
+# The v1 entries/schema remain readable; no full rebuild or Vault catalog mutation.
+def _recursive_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS recursive_refresh (
+            id INTEGER PRIMARY KEY CHECK (id=1), root TEXT NOT NULL,
+            state TEXT NOT NULL, owner_pid INTEGER,
+            started_utc TEXT NOT NULL, updated_utc TEXT NOT NULL,
+            refreshed INTEGER NOT NULL DEFAULT 0,
+            added INTEGER NOT NULL DEFAULT 0,
+            changed INTEGER NOT NULL DEFAULT 0,
+            removed INTEGER NOT NULL DEFAULT 0,
+            unreadable INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS recursive_refresh_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL UNIQUE, finished INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_recursive_pending ON recursive_refresh_queue(finished,id);
+    """)
+
+
+def recursive_refresh_status(db_path: Path | str, *, volume_id: str) -> dict[str, Any]:
+    """Inspect an optional refresh job without creating a database or altering source."""
+    with closing(_connection(Path(db_path), writable=False)) as conn:
+        if _stored_volume_id(conn) != volume_id:
+            raise ValueError("Inventory belongs to a different volume")
+        if conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='recursive_refresh'").fetchone() is None:
+            return {"state": "not_started", "pending": 0}
+        row = conn.execute("SELECT * FROM recursive_refresh WHERE id=1").fetchone()
+        if row is None:
+            return {"state": "not_started", "pending": 0}
+        pending = conn.execute("SELECT COUNT(*) FROM recursive_refresh_queue WHERE finished=0").fetchone()[0]
+        return {**dict(row), "pending": int(pending)}
+
+
+def _windows_owner_alive(pid: int, *, kernel32: Any = None,
+                         last_error: Callable[[], int] | None = None) -> bool:
+    """Non-signalling Windows process check. Never use os.kill(pid, 0) here.
+
+    On Windows, signal zero can be interpreted as CTRL_C_EVENT. Request only
+    PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE and poll the handle without
+    signalling, terminating, or otherwise modifying the target process.
+    Unknown/access-denied conditions fail closed (assume the owner is alive).
+    """
+    import ctypes
+    from ctypes import wintypes
+    api = kernel32 if kernel32 is not None else ctypes.WinDLL('kernel32', use_last_error=True)
+    api.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    api.OpenProcess.restype = wintypes.HANDLE
+    api.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    api.WaitForSingleObject.restype = wintypes.DWORD
+    api.CloseHandle.argtypes = (wintypes.HANDLE,)
+    api.CloseHandle.restype = wintypes.BOOL
+    handle = api.OpenProcess(0x101000, False, pid)  # QUERY_LIMITED_INFORMATION | SYNCHRONIZE
+    if not handle:
+        code = int((last_error or ctypes.get_last_error)())
+        return code not in (87, 1168)  # INVALID_PARAMETER, NOT_FOUND
+    try:
+        status = int(api.WaitForSingleObject(handle, 0))
+        return status != 0  # WAIT_OBJECT_0 is a terminated owner; unknown fails closed
+    finally:
+        api.CloseHandle(handle)
+
+
+def _owner_alive(pid: int | None) -> bool:
+    if not pid or pid <= 0:
+        return False
+    if os.name == 'nt':
+        return _windows_owner_alive(pid)
+    try:
+        os.kill(pid, 0)  # POSIX only: a non-signalling process existence probe
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError as exc:
+        if exc.errno == errno.ESRCH:
+            return False
+        # Permission or unknown errors must not permit a conflicting writer.
+        return True
+
+
+def refresh_tree(volume_root: Path | str, db_path: Path | str, *, volume_id: str,
+                 relative: str | None = None, cancelled: Callable[[], bool] | None = None,
+                 progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+    """Recursively reconcile a selected, indexed tree with a durable SQLite work queue.
+
+    Every directory is reconciled atomically through refresh_directory. A pause or
+    process death leaves prior directory commits and the remaining work queue intact.
+    No guessed rename identity, content hashes, automatic registration, or source edits.
+    A missing selected root must be refreshed through its parent (fail closed).
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", volume_id):
+        raise ValueError("Invalid volume identity")
+    root = Path(volume_root).expanduser().resolve(strict=True)
+    db = Path(db_path).expanduser().resolve()
+    if not root.is_dir() or not db.is_file() or db.name.casefold() != 'inventory.sqlite3':
+        raise ValueError("A dedicated, existing inventory database and volume root are required")
+    excluded = None
+    try:
+        excluded = db.parent.relative_to(root).as_posix()
+    except ValueError:
+        pass
+    if relative is not None:
+        relative = _refresh_relative(relative, excluded)
+    with closing(_connection(db, writable=True)) as conn:
+        _initialize(conn, volume_id)
+        if _stored_volume_id(conn) != volume_id:
+            raise ValueError("Inventory belongs to another volume")
+        _recursive_tables(conn)
+        # Claim/resume the durable job under a SQLite write reservation. A
+        # second Cortex process must not observe a paused/unclaimed queue and
+        # simultaneously take ownership of the same recursive reconciliation.
+        conn.execute("BEGIN IMMEDIATE")
+        job = conn.execute("SELECT * FROM recursive_refresh WHERE id=1").fetchone()
+        if job and job['state'] in ('running', 'paused'):
+            if relative is not None and relative != job['root']:
+                raise RuntimeError("An unfinished recursive refresh has a different root; resume that job first")
+            if job['state'] == 'running' and _owner_alive(job['owner_pid']):
+                raise RuntimeError("Recursive refresh is already active in another worker")
+            relative = job['root']
+        else:
+            if relative is None:
+                raise ValueError("Select an indexed directory before starting a recursive refresh")
+            state = conn.execute("SELECT state FROM scan_state WHERE id=1").fetchone()
+            if state is None or state[0] != 'complete':
+                raise RuntimeError("Finish the initial scanner before starting a recursive refresh")
+            if relative:
+                host = conn.execute("SELECT type,boundary FROM entries WHERE path=?", (relative,)).fetchone()
+                if host is None or host['type'] != 'directory' or host['boundary']:
+                    raise ValueError("Choose a previously indexed, traversable directory")
+            # Preflight all path components before recording a job. This detects
+            # replaced Windows junctions and directory symlinks at the outset.
+            _preflight_refresh_host(root, relative)
+            conn.execute("DELETE FROM recursive_refresh_queue")
+            stamp = _utc()
+            conn.execute("INSERT INTO recursive_refresh(id,root,state,owner_pid,started_utc,updated_utc) "
+                         "VALUES(1,?,'running',?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                         "root=excluded.root,state='running',owner_pid=excluded.owner_pid,"
+                         "started_utc=excluded.started_utc,updated_utc=excluded.updated_utc,"
+                         "refreshed=0,added=0,changed=0,removed=0,unreadable=0",
+                         (relative, os.getpid(), stamp, stamp))
+            conn.execute("INSERT INTO recursive_refresh_queue(path) VALUES(?)", (relative,))
+            conn.commit()
+        conn.execute("UPDATE recursive_refresh SET state='running',owner_pid=?,updated_utc=? WHERE id=1",
+                     (os.getpid(), _utc()))
+        conn.commit()
+
+    def pause() -> dict[str, Any]:
+        with closing(_connection(db, writable=True)) as conn:
+            conn.execute("UPDATE recursive_refresh SET state='paused',owner_pid=NULL,updated_utc=? WHERE id=1",
+                         (_utc(),))
+            conn.commit()
+        return recursive_refresh_status(db, volume_id=volume_id)
+
+    last_emit = 0.0
+    while True:
+        if cancelled and cancelled():
+            return pause()
+        with closing(_connection(db, writable=True)) as conn:
+            row = conn.execute("SELECT path FROM recursive_refresh_queue WHERE finished=0 ORDER BY id LIMIT 1").fetchone()
+            if row is None:
+                # All new directories discovered by the targeted refresh were also
+                # traversed here. Do not dispatch the unrelated whole-volume scanner.
+                pending = conn.execute("SELECT COUNT(*) FROM directories WHERE finished=0").fetchone()[0]
+                conn.execute("UPDATE scan_state SET state=?,completed_utc=?,updated_utc=? WHERE id=1",
+                             ('complete' if not pending else 'paused', _utc() if not pending else None, _utc()))
+                conn.execute("UPDATE recursive_refresh SET state='complete',owner_pid=NULL,updated_utc=? WHERE id=1",
+                             (_utc(),))
+                conn.commit()
+                break
+            selected = str(row['path'])
+        try:
+            result = refresh_directory(root, db, volume_id=volume_id, relative=selected,
+                                       cancelled=cancelled, _recursive=True)
+        except InterruptedError:
+            return pause()
+        except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+            # A queued child may disappear or become a link after its parent was already committed.
+            # Reconcile the nearest existing ancestor inside the selected tree,
+            # rather than claiming stale children or traversing a new link.
+            with closing(_connection(db, writable=False)) as check:
+                job_root = check.execute("SELECT root FROM recursive_refresh WHERE id=1").fetchone()[0]
+            parent = selected.rpartition('/')[0]
+            if selected == job_root or not (parent == job_root or parent.startswith(job_root + '/') or not job_root):
+                pause()
+                raise RuntimeError(f"Selected refresh root is gone: {selected!r}; refresh its parent after clearing the job") from exc
+            ancestor = parent
+            while True:
+                try:
+                    _preflight_refresh_host(root, ancestor)
+                    break
+                except (FileNotFoundError, NotADirectoryError):
+                    if ancestor == job_root:
+                        pause()
+                        raise RuntimeError(f"Selected refresh root disappeared: {job_root!r}") from exc
+                    ancestor = ancestor.rpartition('/')[0]
+            try:
+                result = refresh_directory(root, db, volume_id=volume_id, relative=ancestor,
+                                           cancelled=cancelled, _recursive=True)
+            except Exception:
+                pause()
+                raise
+            # The missing work item was superseded by its parent reconciliation.
+            # Other queued records are idempotent and revalidated before opening.
+        except Exception:
+            pause()
+            raise
+        change = result['refresh']
+        with closing(_connection(db, writable=True)) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            # Reprocessing after a crash between directory commit and queue commit
+            # remains idempotent; the current metadata is source-of-truth.
+            # refresh_directory uses '.' solely to *display* the volume root.
+            # The index and work queue use '' for that root. Do not query
+            # parent='.' here, or a root-scoped recursive job would silently
+            # finish without enqueuing any of the root's child directories.
+            enumerated = str(change.get('directory', selected))
+            if enumerated == '.':
+                enumerated = ''
+            for child in conn.execute("SELECT path FROM entries WHERE parent=? AND type='directory' "
+                                      "AND boundary IS NULL ORDER BY path", (enumerated,)):
+                conn.execute("INSERT OR IGNORE INTO recursive_refresh_queue(path) VALUES(?)", (child['path'],))
+            conn.execute("UPDATE recursive_refresh_queue SET finished=1 WHERE path=?", (selected,))
+            conn.execute("UPDATE directories SET finished=1 WHERE path=?", (selected,))
+            conn.execute("UPDATE recursive_refresh SET refreshed=refreshed+1,added=added+?,"
+                         "changed=changed+?,removed=removed+?,unreadable=unreadable+?,updated_utc=? WHERE id=1",
+                         (int(change.get('added',0)),int(change.get('changed',0)),int(change.get('removed',0)),
+                          int(bool(change.get('unreadable'))),_utc()))
+            conn.commit()
+        if progress and time.monotonic() - last_emit >= .35:
+            progress(recursive_refresh_status(db, volume_id=volume_id))
+            last_emit = time.monotonic()
+    return recursive_refresh_status(db, volume_id=volume_id)
+
+
+def _preflight_refresh_host(root: Path, relative: str) -> None:
+    """Refuse links, reparse points, and mounts at every component without following them."""
+    drive = os.path.normcase(os.path.splitdrive(str(root))[0])
+    root_device = root.stat().st_dev
+    current = root
+    for part in relative.split('/') if relative else ():
+        current = current / part
+        info = current.lstat()
+        attrs = getattr(info, 'st_file_attributes', 0)
+        if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or attrs & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0)
+                or (os.name == 'nt' and os.path.normcase(os.path.splitdrive(str(current))[0]) != drive)
+                or (os.name != 'nt' and (info.st_dev != root_device or os.path.ismount(current)))):
+            raise ValueError('Recursive refresh cannot traverse a link, junction, mount or non-directory')
+
+
+def abandon_recursive_refresh(db_path: Path | str, *, volume_id: str) -> dict[str, Any]:
+    """Explicitly discard *only* a paused/stale work queue, never indexed records.
+
+    This recovery action is needed when the selected root itself has been removed or
+    replaced. It does not imply that the index is complete or reconcile that root;
+    the user must refresh its still-existing parent explicitly afterward.
+    """
+    db = Path(db_path)
+    with closing(_connection(db, writable=True)) as conn:
+        _initialize(conn, volume_id)
+        if _stored_volume_id(conn) != volume_id:
+            raise ValueError("Inventory belongs to another volume")
+        if conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='recursive_refresh'").fetchone() is None:
+            raise RuntimeError("No recursive refresh queue exists")
+        # Claim SQLite's writer reservation BEFORE inspecting the owner/state.
+        # Otherwise a paused queue can be resumed by another process between
+        # the read and BEGIN, and an outdated discard would erase live work.
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT state,owner_pid FROM recursive_refresh WHERE id=1").fetchone()
+        if row is None or row['state'] not in ('running','paused'):
+            raise RuntimeError("No unfinished recursive refresh queue exists")
+        if row['state'] == 'running' and _owner_alive(row['owner_pid']):
+            raise RuntimeError("Cannot discard a live recursive refresh")
+        conn.execute("DELETE FROM recursive_refresh_queue")
+        conn.execute("UPDATE recursive_refresh SET state='abandoned',owner_pid=NULL,updated_utc=? WHERE id=1", (_utc(),))
+        pending=conn.execute("SELECT COUNT(*) FROM directories WHERE finished=0").fetchone()[0]
+        conn.execute("UPDATE scan_state SET state=?,completed_utc=?,updated_utc=? WHERE id=1",
+                     ('paused' if pending else 'complete', None if pending else _utc(), _utc()))
+        conn.commit()
+        return {"state":'abandoned',"pending_scan_directories":int(pending)}

@@ -43,7 +43,7 @@ class PCCConsoleChatRuntimeTests(unittest.TestCase):
     def test_gui_passes_stable_owner_pid_to_bridge(self) -> None:
         source = (CONTROL / "CortexPCCGui.py").read_text(encoding="utf-8")
         self.assertIn('"--owner-pid", str(os.getpid())', source)
-        self.assertIn('PCC-GUI-0.15.4', source)
+        self.assertIn('GUI_VERSION = "PCC-GUI-', source)
         self.assertIn('!<shell command> runs the project shell', source)
         self.assertIn('if lower in {"!", "!command"}:', source)
 

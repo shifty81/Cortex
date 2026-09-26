@@ -1,0 +1,27 @@
+{
+  "schema": "cortex.p0_p2.testing_matrix.v1",
+  "baseline": "82d41230673ef2a179dc6fb2f1918493ad68837e",
+  "gui_version": "PCC-GUI-0.15.6",
+  "source_recovery_full_certified": false,
+  "windows_full_certified": false,
+  "live_drive_acceptance": false,
+  "rust_forge_takeover_approved": false,
+  "implemented_local_testing": [
+    "P0 inventory SQLite explicit online backup plus read-only integrity/restore rehearsal",
+    "P1 indexed metadata-only project preview with portable IDs and nested candidate links",
+    "P2 GUI background preview control and artifact summary",
+    "W7 previous cumulative fixes, tests and audit documentation"
+  ],
+  "pending": [
+    "P0 governed-source Vault deep mirror recovery receipt tied to FULL fingerprint",
+    "P0 Windows FULL and real live-index backup timing",
+    "P1 Rust consumer of versioned review feed plus approved organization journal",
+    "P1 watcher/change journal and robust PID-start identity",
+    "P2 cross-surface shared command/event transcript and native GUI convergence",
+    "P2 Rust Forge parity/takeover certification, CI, signing, installer/updater"
+  ],
+  "source_move": false,
+  "automatic_project_registration": false,
+  "volume_index_rebuild": false,
+  "vault_catalog_mutation": false
+}

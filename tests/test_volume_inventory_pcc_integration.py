@@ -14,6 +14,7 @@ class InventoryFullGateContractTests(unittest.TestCase):
         self.assertIn('root / "tests/test_volume_inventory_workspace.py",', gate)
         self.assertIn('root / "tests/test_persistent_volume_inventory.py",', gate)
         self.assertIn('root / "tests/test_inventory_incremental_refresh.py",', gate)
+        self.assertIn('root / "tests/test_inventory_recursive_refresh.py",', gate)
         self.assertIn('missing = [str(p.relative_to(root))', gate)
 
 

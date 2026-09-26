@@ -63,6 +63,15 @@ class InventoryWorkspaceTests(unittest.TestCase):
         self.assertNotIn('self._latest_applied_patch_identity()', default)
         self.assertIn('GREEN checkpoint', default)
 
+    def test_recursive_refresh_stays_in_background_and_is_resumable(self):
+        source = (ROOT / "tools/control/CortexPCCGui.py").read_text(encoding="utf-8")
+        self.assertIn('"Refresh Selected Tree"', source)
+        self.assertIn('"Resume Tree Refresh"', source)
+        self.assertIn('"volume-tree-progress"', source)
+        self.assertIn('"volume-tree-done"', source)
+        self.assertIn('persistent_volume_refresh_tree(root, db, volume_id=volume_id,', source)
+        self.assertIn('def _pause_volume_tree(', source)
+
     def test_gui_uses_dedicated_sections_and_async_filter_events(self):
         text = (ROOT / "tools/control/CortexPCCGui.py").read_text(encoding="utf-8")
         for name in ("Inventory", "Catalog", "Intake", "Storage", "Health"):

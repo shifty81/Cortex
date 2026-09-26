@@ -27,7 +27,7 @@ class SourceCompareTests(unittest.TestCase):
             (directory / "Cargo.toml").write_text("[workspace]\n")
             (directory / "project.control.json").write_text('{"schema": 1}\n')
             (directory / "src").mkdir()
-            (directory / "src" / "lib.rs").write_text("pub fn original() {}\n")
+            (directory / "src" / "lib.rs").write_bytes(b"pub fn original() {}\n")
 
     def archives(self):
         return rollup.create(self.left), rollup.create(self.right)
@@ -43,7 +43,7 @@ class SourceCompareTests(unittest.TestCase):
     def test_02_added_removed_changed_and_sha_evidence(self):
         (self.left / "left.txt").write_text("left")
         (self.right / "right.txt").write_text("right")
-        (self.right / "src" / "lib.rs").write_text("pub fn updated() {}\n")
+        (self.right / "src" / "lib.rs").write_bytes(b"pub fn updated() {}\n")
         l, r = self.archives()
         report = compare.compare(l, r)
         self.assertEqual(report["counts"], {"onlyLeft": 1, "onlyRight": 1, "changed": 1,

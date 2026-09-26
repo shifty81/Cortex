@@ -1,6 +1,6 @@
 # Cortex / Rust Forge Quality and Certification Contract
 
-**Current truth:** 2026-09-23
+**Current source behavior verified:** 2026-09-26 (R8J-B1-W7 audit)
 
 ## Cortex `full` source gate — implemented authority
 
@@ -14,14 +14,12 @@ Canonical implemented order:
 6. `cargo clippy --workspace --all-targets -- -D warnings`;
 7. `cargo build --workspace`;
 8. capture governed-source fingerprint;
-9. content-addressed project Vault mirror excluding rebuildable/operational/transport/link residue;
-10. prove governed source did not change during mirror capture;
-11. deep SHA-256 verification of the exact latest mirror;
-12. write GREEN governed-source marker;
-13. certify the exact Vault recovery snapshot against the GREEN source fingerprint;
-14. emit structured PASS/FAIL evidence and debug bundle on failure.
+9. write the GREEN governed-source marker for the current source fingerprint;
+10. emit structured PASS/FAIL evidence and a debug bundle.
 
-A `FULL QUALITY GATE GREEN / SOURCE CERTIFIED` result means source/build/test quality plus a verified recovery point. It does **not by itself** claim provider/chat behavior or complete Windows UI interaction.
+**Implemented boundary:** `GateEngine.full()` in `tools/control/CortexPCC.py` performs the Python/Cargo stages and invokes Git `mark-green`. `mark-green` writes the governed-source fingerprint; neither function calls `PCCVaultStorage.mirror_project` or `verify_latest_mirror`. The standalone `vault-mirror` and `vault-verify` commands are separate operations. Therefore `FULL QUALITY GATE GREEN / SOURCE CERTIFIED` means the source/build/test gate passed and its fingerprint was marked; it **does not currently prove a deep-verified Vault recovery point** or a completed restore drill. It also does not claim provider/chat behavior or complete Windows UI interaction.
+
+**Required recovery-gate integration before treating FULL as recoverability certification:** capture a source-stable content-addressed mirror excluding rebuildable/operational/transport/link residue; prove unchanged source fingerprints before and after capture; verify exact mirror contents by SHA-256; bind and certify a recovery receipt to the same GREEN fingerprint; fail FULL and avoid a successful GREEN marker if any mandatory stage fails. Add negative fixtures for corruption, source drift, cancelled mirror and failed recovery verification before activating this stage. Until then, mirror and verify are explicit separate operations, not implicit in GREEN. This is a documented gap, not a claimed implementation.
 
 ## Windows/runtime acceptance
 

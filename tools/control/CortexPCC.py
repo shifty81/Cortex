@@ -524,7 +524,9 @@ class GateEngine:
         result = self.git.action("summary-json", stream=False, timeout=60)
         if not result.ok:
             return "FAIL", f"Git authority exited {result.returncode}: {(result.stderr or result.stdout).strip()[-1000:]}"
-        json.loads(result.stdout.strip().splitlines()[-1])
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+        if not bool(payload.get("gitReady")):
+            return "FAIL", str(payload.get("error") or "Git checkout is unavailable or untrusted; inspect Source Control")
         return "PASS", "Git authority returned machine-readable status"
 
     def _root_hygiene(self) -> tuple[str, str]:
@@ -690,6 +692,14 @@ class EvidenceBuilder:
             self._write_json(work / "git-summary.json", self.git.summary())
             _, patch_summary = self.patch.scan()
             self._write_json(work / "patch-summary.json", patch_summary)
+            # Never perform a deep CAS walk while constructing failure evidence.
+            self.log.emit("INFO", "Evidence: collecting lightweight Vault/storage summary", phase="evidence")
+            try:
+                import PCCVaultStorage as vault_storage
+                quick = vault_storage.quick_storage_health(self.ctx.root)
+                self._write_json(work / "vault-storage-quick.json", {"mode": "LIGHTWEIGHT", "health": quick})
+            except Exception as exc:
+                self._write_json(work / "vault-storage-quick.json", {"mode": "LIGHTWEIGHT", "status": "UNAVAILABLE", "detail": str(exc)})
             for rel in [
                 "project.control.json",
                 "Cargo.toml",
@@ -1055,6 +1065,7 @@ class CortexPCC:
             self.log.emit("FAIL", str(exc), phase="gate")
             ok = False
         if evidence:
+            self.log.emit("INFO", "Collecting debug bundle (lightweight evidence path)", phase="evidence")
             self.evidence.create(
                 reason=f"{kind_l.upper()}_{'GREEN' if ok else 'FAIL'}",
                 failed_stage=self.gates.failed_stage,
@@ -1326,20 +1337,66 @@ def run_universal_python_regressions(root: Path, runner: CommandRunner | None = 
         root / "tests/test_volume_inventory_workspace.py",
         root / "tests/test_persistent_volume_inventory.py",
         root / "tests/test_inventory_incremental_refresh.py",
+        root / "tests/test_inventory_recursive_refresh.py",
     ]
     missing = [str(p.relative_to(root)) for p in tests if not p.is_file()]
     if missing:
         print("[FAIL] Missing mandatory Python PCC tests: " + ", ".join(missing))
         return 2
-    command = [*which_python(), "-B", "-m", "unittest", "-v", *map(str, tests)]
+    # -b suppresses intentionally negative fixture output from successful tests.
+    command = [*which_python(), "-B", "-m", "unittest", "-v", "-b", *map(str, tests)]
     if runner:
-        result = runner.run(command, cwd=root, timeout=900, stream=True, phase="gate:python-pcc-tests")
+        result = runner.run(command, cwd=root, timeout=900, stream=False, phase="gate:python-pcc-tests")
         if not result.ok:
+            runner.log.emit("FAIL", "Python PCC regressions: " + (result.stderr or result.stdout)[-12000:], phase="gate:python-pcc-tests")
             return result.returncode if result.returncode != 0 else 2
+        summary = next((line.strip() for line in reversed((result.stderr + '\n' + result.stdout).splitlines())
+                        if line.strip().startswith('Ran ') and ' tests' in line), "completed")
+        runner.log.emit("PASS", "Python PCC regressions: " + summary, phase="gate:python-pcc-tests")
     else:
         result = subprocess.run(command, cwd=str(root), check=False)
         if result.returncode != 0:
             return result.returncode
+    # Broad discovery closes the historical gap between the selected mandatory
+    # fixtures above and newer PCC/inventory test modules. Run both directories,
+    # fail closed if either is absent/empty, and buffer intentional negative
+    # fixture output unless a stage actually fails.
+    full_suites = (
+        ("all-control-tests", root / "tools/control/tests"),
+        ("all-inventory-tests", root / "tests"),
+        # These are separate test roots, not transitively discovered by the
+        # parent `tests` folder (there is no package __init__.py).
+        ("nested-project-control-tests", root / "tests/control"),
+        ("root-staging-tests", root),
+    )
+    environment = os.environ.copy()
+    project_paths = (str(root / "tools/control"), str(root))
+    environment["PYTHONPATH"] = os.pathsep.join(
+        (*project_paths, *((environment.get("PYTHONPATH") or "").split(os.pathsep) if environment.get("PYTHONPATH") else ())))
+    for stage, directory in full_suites:
+        # Limit repository-root discovery to the root staging module. The root
+        # contains many nested test directories with independent import roots.
+        pattern = "test_stage_candidate.py" if stage == "root-staging-tests" else "test_*.py"
+        if not directory.is_dir() or not list(directory.glob(pattern)):
+            print("[FAIL] Required full-discovery regression directory is missing or empty: " + str(directory))
+            return 2
+        command = [*which_python(), "-B", "-m", "unittest", "discover", "-s", str(directory),
+                   "-p", pattern, "-v", "-b"]
+        if runner:
+            result = runner.run(command, cwd=root, timeout=900, stream=False,
+                                phase=f"gate:{stage}", env=environment)
+            if not result.ok:
+                runner.log.emit("FAIL", stage + ": " + (result.stderr or result.stdout)[-16000:],
+                                phase=f"gate:{stage}")
+                return result.returncode if result.returncode != 0 else 2
+            summary = next((line.strip() for line in reversed((result.stderr + "\n" + result.stdout).splitlines())
+                            if line.strip().startswith("Ran ") and " tests" in line), "completed")
+            runner.log.emit("PASS", stage + ": " + summary, phase=f"gate:{stage}")
+        else:
+            result = subprocess.run(command, cwd=str(root), check=False, env=environment)
+            if result.returncode != 0:
+                return result.returncode
+
     provider_tests = root / "tools/pcc/tests"
     if provider_tests.is_dir():
         if not list(provider_tests.glob("test_*.py")):
@@ -1374,7 +1431,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("command", nargs="?", default="interactive", choices=[
         "interactive", "status", "status-json", "quick", "fast", "full",
         "patch-status", "patch-apply", "debug-bundle", "git-status", "git-review",
-        "git-history", "git-verify", "git-fetch", "git-compare", "git-pull", "git-setup",
+        "git-history", "git-verify", "git-fetch", "git-compare", "git-pull", "git-setup", "git-trust",
         "commit-green", "commit-push-green", "push", "build", "build-release",
         "launch-gui", "self-test", "doctor", "doctor-json",
         "root-hygiene", "root-hygiene-fix", "artifact-status",
@@ -1489,7 +1546,7 @@ def _dispatch_main(argv: Sequence[str] | None = None) -> int:
     git_map = {
         "git-status": "status", "git-review": "review", "git-history": "history",
         "git-verify": "verify", "git-fetch": "fetch", "git-compare": "compare",
-        "git-pull": "pull", "git-setup": "setup", "push": "push",
+        "git-pull": "pull", "git-setup": "setup", "git-trust": "trust", "push": "push",
     }
     if cmd in git_map: return pcc.git.action(git_map[cmd], stream=True).returncode
     if cmd in {"commit-green", "commit-push-green"}:

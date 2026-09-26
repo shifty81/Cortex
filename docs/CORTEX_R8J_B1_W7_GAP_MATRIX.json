@@ -1,0 +1,103 @@
+{
+  "schema": "cortex.project_wide_gap_matrix.v1",
+  "audit": "R8J-B1-W7",
+  "published_prerequisite_sha": "82d41230673ef2a179dc6fb2f1918493ad68837e",
+  "working_candidate": "W6 cumulative payload plus W7 regression/acceptance corrections",
+  "windows_full": "pending",
+  "live_volume_index_verified": false,
+  "gaps": [
+    {
+      "id": "P0-TEST-TRUTH",
+      "priority": "P0",
+      "area": "PCC full regression",
+      "state": "fixed_locally_in_W7",
+      "evidence": "W6 control discovery had 5 stale GUI-version assertions",
+      "acceptance": "W7 full Python discovery and Windows FULL pass"
+    },
+    {
+      "id": "P0-RECOVERY-CONTRACT",
+      "priority": "P0",
+      "area": "FULL GREEN / Vault recovery",
+      "state": "source_doc_contradiction_corrected_in_W7; recovery_gate_not_implemented",
+      "evidence": "GateEngine.full only invokes Python/Cargo tests and Git mark-green; Vault mirror/verify are independent commands",
+      "acceptance": "source-stable mirror + deep SHA-256 + fingerprint-tied receipt + corruption and rollback tests mandatory before GREEN claims recovery"
+    },
+    {
+      "id": "P0-WINDOWS-ACCEPTANCE",
+      "priority": "P0",
+      "area": "Windows/native GUI",
+      "state": "pending",
+      "acceptance": "GUI, scoped refresh, read-only live DB audit and FULL gate on original drive"
+    },
+    {
+      "id": "P1-INVENTORY-ADAPTER",
+      "priority": "P1",
+      "area": "Rust discovery vs Python index",
+      "state": "missing_integration",
+      "acceptance": "read-only versioned candidates keyed by volumeId and relativeRoot"
+    },
+    {
+      "id": "P1-ORGANIZATION-REVIEW",
+      "priority": "P1",
+      "area": "Project onboarding",
+      "state": "missing_workflow",
+      "acceptance": "dry-run evidence plus approve/defer/reject; no automatic file movement"
+    },
+    {
+      "id": "P1-REGISTRY-PORTABILITY",
+      "priority": "P1",
+      "area": "Cross-language identity",
+      "state": "partially_tested",
+      "acceptance": "real G-to-D switch with nested projects and independently copied roots"
+    },
+    {
+      "id": "P1-SCAN-RECOVERY",
+      "priority": "P1",
+      "area": "Index reliability",
+      "state": "partial",
+      "acceptance": "PID and process-start lease, online SQLite backup/restore, crash recovery and journaling"
+    },
+    {
+      "id": "P1-RUNTIME-ACCEPTANCE",
+      "priority": "P1",
+      "area": "Cortex desktop and agent",
+      "state": "unverified_live",
+      "acceptance": "real provider stream/tool/cancel/restart with exact window/process evidence"
+    },
+    {
+      "id": "P1-FORGE-PARITY",
+      "priority": "P1",
+      "area": "Rust Forge candidate",
+      "state": "separate_gate_required",
+      "acceptance": "dedicated Forge gate plus documented side-by-side production parity"
+    },
+    {
+      "id": "P2-UX-CONVERGENCE",
+      "priority": "P2",
+      "area": "Forge/PCC/Cortex surfaces",
+      "state": "partial",
+      "acceptance": "one authority per operation, unified transcript, stable resize/DPI"
+    },
+    {
+      "id": "P2-MODULE-SPLIT",
+      "priority": "P2",
+      "area": "Maintainability",
+      "state": "future",
+      "acceptance": "tested boundaries around large GUI/controller files without new authority"
+    },
+    {
+      "id": "P2-SOURCE-HYGIENE",
+      "priority": "P2",
+      "area": "Distribution/docs",
+      "state": "review_only",
+      "acceptance": "tracked file audit of .fixpayload and generated source ZIP items before deliberate cleanup"
+    },
+    {
+      "id": "P2-CI-RELEASE",
+      "priority": "P2",
+      "area": "Release",
+      "state": "pending",
+      "acceptance": "reproducible CI, installer/signature/updater/recovery parity"
+    }
+  ]
+}
