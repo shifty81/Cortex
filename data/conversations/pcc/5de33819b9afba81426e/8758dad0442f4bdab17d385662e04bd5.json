@@ -1,0 +1,16 @@
+{
+  "schema": "cortex.python_bridge.conversation.v2",
+  "workspace": "C:\\Users\\Shifty\\Desktop\\Havenwild Bevy",
+  "conversationId": "8758dad0442f4bdab17d385662e04bd5",
+  "updatedUnixMs": 1790438648300,
+  "messages": [
+    {
+      "role": "user",
+      "content": "can you fix the issue in the above logs?"
+    },
+    {
+      "role": "assistant",
+      "content": "The BuildDoctor log indicates that the status is **NO_EVIDENCE**, meaning there's no detected failure. Since the failure classification is **UNKNOWN** with **low confidence**, I need more information to diagnose the issue.\n\nCortex requires specific evidence from your project to provide a detailed analysis and fix. If you can share the build log or the output of your Bevy build, I can help identify and resolve the problem. Let me know the details!"
+    }
+  ]
+}
