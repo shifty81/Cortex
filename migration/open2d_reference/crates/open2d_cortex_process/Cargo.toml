@@ -1,8 +1,0 @@
-[package]
-name = "open2d_cortex_process"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-cortex_process = { path = "../cortex_process" }

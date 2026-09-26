@@ -1,8 +1,0 @@
-[package]
-name = "open2d_cortex_image"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-cortex_image = { path = "../cortex_image" }

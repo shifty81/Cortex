@@ -1,8 +1,0 @@
-[package]
-name = "open2d_cortex_http"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-cortex_http = { path = "../cortex_http" }

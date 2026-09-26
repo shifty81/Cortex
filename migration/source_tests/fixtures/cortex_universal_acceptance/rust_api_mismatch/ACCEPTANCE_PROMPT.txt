@@ -1,1 +1,0 @@
-Finish this Rust application autonomously. If compiler diagnostics indicate an API-version mismatch, require exact dependency grounding before another API-sensitive mutation, prefer reconstruction when one compact module contains many errors from the same dependency, rerun the authoritative quality gate, build, launch, and verify the actual runtime.

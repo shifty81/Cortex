@@ -1,0 +1,82 @@
+{
+  "schema": "cortex.repository_layout.v1",
+  "root_files": [
+    ".gitattributes",
+    ".gitignore",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "project.control.json",
+    "PROJECT_CONTROL_CENTER.cmd",
+    "README.md"
+  ],
+  "root_directories": [
+    ".git",
+    "apps",
+    "config",
+    "crates",
+    "docs",
+    "extensions",
+    "products",
+    "schemas",
+    "scripts",
+    "templates",
+    "tests",
+    "tools"
+  ],
+  "external_volume_directories": [
+    "Projects",
+    "Vault",
+    "Models",
+    "shared",
+    "Intake",
+    ".cortex"
+  ],
+  "runtime_state": {
+    "data/conversations": ".cortex/conversations",
+    "data/registry": ".cortex/registry",
+    "logs": ".cortex/logs"
+  },
+  "archive_directories": {
+    "migration": "Vault/history/Cortex/migration"
+  },
+  "archive_root_globs": [
+    "APPLY_*",
+    "CAPTURE_*",
+    "Cortex_PCC_Emergency_*",
+    "RUN_PCC_SURFACE_REPAIR_*",
+    "*_HANDOFF.md",
+    "HANDOFF_MANIFEST.json",
+    "FILE_MANIFEST.json",
+    "PACKAGE_MANIFEST.json",
+    "PATCH_MANIFEST.json",
+    "PORTABLE_SOURCE_MANIFEST.json",
+    "SOURCE_ROLLUP_MANIFEST.json",
+    "CORTEX_CUMULATIVE_UPDATE_MANIFEST.json",
+    "CORTEX_R*_README*",
+    "R*_README*",
+    "README_PATCH.txt",
+    "README_R*.txt",
+    "README_R*.md",
+    "README_ROOT_CONTROL_BOOTSTRAP.md",
+    "Snapshot-*",
+    "PROJECT_CONTROL_CENTER.cmd.fixpayload"
+  ],
+  "keep_review_root_files": [
+    "BOOTSTRAP_CORTEX_ENVIRONMENT.cmd",
+    "HYDRATE_CORTEX_BUILD_TOOLS.cmd",
+    "SETUP_EXTERNAL_DRIVE_VAULT_ROOT.cmd",
+    "RESET_VAULT_TO_DEFAULT.cmd",
+    "IMPORT_CORTEX_FROM_O2DF.cmd",
+    "IMPORT_CORTEX_FROM_O2DF_APPLY.cmd",
+    "README_FIRST.md",
+    "README.txt",
+    "START_NEW_CORTEX_PROJECT_PROMPT.md",
+    "stage_candidate.py",
+    "test_stage_candidate.py"
+  ],
+  "notes": [
+    "products/forge-rust remains active source until its project.control.json and command consumers are deliberately migrated.",
+    "keep_review_root_files are not deleted by this pass because current source still references several of them."
+  ]
+}

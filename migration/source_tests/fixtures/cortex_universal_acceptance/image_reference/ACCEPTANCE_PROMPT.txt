@@ -1,1 +1,0 @@
-Generate an image from a reference image while preserving the requested structural constraints. Route through a compatible typed image workflow, validate model/LoRA/ControlNet/IP-Adapter compatibility, retain reproducible provenance, inspect the result with the vision/output contract, and promote only a verified artifact.

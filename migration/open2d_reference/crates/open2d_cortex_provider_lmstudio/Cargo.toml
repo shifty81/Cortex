@@ -1,8 +1,0 @@
-[package]
-name = "open2d_cortex_provider_lmstudio"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-cortex_provider_lmstudio = { path = "../cortex_provider_lmstudio" }

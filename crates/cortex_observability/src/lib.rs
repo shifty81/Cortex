@@ -296,8 +296,11 @@ pub struct ProjectObservability {
 }
 
 impl ProjectObservability {
-    pub fn open(project_root: &Path, state_root: &Path) -> io::Result<Self> {
-        let event_dir = project_root.join("logs").join("events");
+    pub fn open(_project_root: &Path, state_root: &Path) -> io::Result<Self> {
+        // Operational observability is portable runtime state, never source-tree state.
+        // Keeping the ledger under state_root prevents chat/build activity from dirtying
+        // a governed project checkout (historically <project>/logs/events).
+        let event_dir = state_root.join("observability").join("events");
         Ok(Self {
             event_store: JsonlEventStore::open(event_dir.join("cortex-project-events.jsonl"))?,
             incident_store: JsonlIncidentStore::open(event_dir.join("cortex-incidents.jsonl"))?,
@@ -747,6 +750,29 @@ mod tests {
         assert!(!candidate.text.contains("secret-value"));
         assert_eq!(candidate.evidence_paths.len(), 1);
     }
+    #[test]
+    fn project_observability_uses_runtime_state_not_project_logs() {
+        let nonce = format!("cortex-observability-{}-{}", std::process::id(), unix_ms());
+        let base = std::env::temp_dir().join(nonce);
+        let project_root = base.join("project");
+        let state_root = base.join("state");
+        fs::create_dir_all(&project_root).expect("project root");
+
+        let obs = ProjectObservability::open(&project_root, &state_root).expect("observability");
+        assert!(obs
+            .event_path()
+            .starts_with(state_root.join("observability").join("events")));
+        assert!(obs
+            .incident_path()
+            .starts_with(state_root.join("observability").join("events")));
+        assert!(obs
+            .candidate_path()
+            .starts_with(state_root.join("observability").join("events")));
+        assert!(!project_root.join("logs").exists());
+
+        let _ = fs::remove_dir_all(base);
+    }
+
     #[test]
     fn routine_stream_chunk_is_not_vectorized() {
         let event = ProjectEvent::new(

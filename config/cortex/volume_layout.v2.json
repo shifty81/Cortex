@@ -1,0 +1,36 @@
+{
+  "schema": "cortex.volume_layout.v2",
+  "marker": ".cortex-volume.json",
+  "identity": "volumeId",
+  "casePolicy": "preserve-existing",
+  "authorities": {
+    "archive": ".archive",
+    "state": ".cortex",
+    "artifacts": "Artifacts",
+    "backups": "Backups",
+    "catalogs": "catalogs",
+    "cortex": "Cortex",
+    "exports": "Exports",
+    "git": "Git",
+    "intake": "Intake",
+    "models": "Models",
+    "objects": "objects",
+    "projects": "projects",
+    "recovery": "Recovery",
+    "recycle": "RecycleBin",
+    "shared": "shared",
+    "source": "Source",
+    "tools": "tools",
+    "vault": "Vault"
+  },
+  "rootFiles": {
+    "catalog": "vault_catalog.db"
+  },
+  "rules": [
+    "Drive letter is observation only; volumeId is durable identity.",
+    "Existing authority directory names/casing are preserved.",
+    "Cortex is source/application checkout only.",
+    "No authority may silently alias the volume root itself.",
+    "No subsystem may manufacture a second top-level authority when the manifest already defines one."
+  ]
+}
