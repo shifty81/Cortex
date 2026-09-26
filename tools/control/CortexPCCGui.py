@@ -44,8 +44,13 @@ from PCCVaultCatalog import (
     search_catalog as vault_search_catalog,
     vault_root as global_vault_root,
 )
-from CortexVolumeInventory import inventory as volume_inventory
-from CortexVolumeInventoryPresentation import render_inventory as volume_render_inventory
+from CortexPersistentVolumeInventory import (
+    index_location as persistent_volume_location,
+    index_status as persistent_volume_status,
+    query_entries as persistent_volume_query,
+    run_scan as persistent_volume_scan,
+    list_errors as persistent_volume_errors,
+)
 from PCCRepoHygiene import prepare as repo_hygiene_prepare
 from PCCVaultIntakeAudit import (
     audit_dir as vault_intake_audit_dir,
@@ -67,7 +72,7 @@ from PCCVaultStorage import (
     verify_latest_mirror as vault_verify_latest_mirror,
 )
 
-GUI_VERSION = "PCC-GUI-0.13.0"
+GUI_VERSION = "PCC-GUI-0.15.0"
 
 BG = "#090b0e"
 PANEL = "#11151a"
@@ -148,6 +153,15 @@ class CortexPCCGui:
         self._vault_metrics: dict[str, Any] = {}
         self._volume_result: dict[str, Any] | None = None
         self._volume_running = False
+        self._volume_view_generation = 0
+        self._volume_root: Path | None = None
+        self._volume_db_path: Path | None = None
+        self._volume_id: str | None = None
+        self._volume_page = 0
+        self._volume_page_size = 200
+        self._volume_progress_last_query = 0.0
+        self._volume_filter_busy = False
+        self._volume_filter_pending = False
 
         self._configure_styles()
         self._build_shell()
@@ -820,24 +834,187 @@ class CortexPCCGui:
         self.footer.pack(fill="both", padx=10)
 
     def _build_vault_tab(self, parent: Any) -> None:
+        """Task-oriented Vault workspace; heavy views are not stacked vertically."""
+        tk = self.tk
+        shell = tk.Frame(parent, bg=BG)
+        shell.pack(fill="both", expand=True, padx=16, pady=12)
+        self._section_title(
+            shell, "Vault / Local Forge",
+            "Inventory, catalog, intake and storage are separate workflows. Scans never start automatically.",
+        )
+        nav = tk.Frame(shell, bg=BG)
+        nav.pack(fill="x", pady=(0, 8))
+        self._vault_sections: dict[str, Any] = {}
+        self._vault_tab_buttons: dict[str, Any] = {}
+        self._active_vault_section = ""
+        for title in ("Inventory", "Catalog", "Intake", "Storage", "Health"):
+            button = self._button(nav, title, lambda name=title: self._show_vault_section(name), compact=True)
+            button.pack(side="left", padx=(0, 6))
+            self._vault_tab_buttons[title] = button
+            self._vault_sections[title] = tk.Frame(shell, bg=BG)
+
+        shared_status = tk.Frame(shell, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        shared_status.pack(fill="x", pady=(0, 9))
+        tk.Label(shared_status, text="VAULT ACTIVITY", bg=PANEL, fg=MUTED,
+                 font=("Segoe UI Semibold", 8)).pack(side="left", padx=(10, 8), pady=3)
+        self.vault_scan_status = tk.Label(shared_status, text="Idle", bg=PANEL, fg=MUTED,
+                                          anchor="w", font=("Segoe UI", 9))
+        self.vault_scan_status.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        self._build_volume_inventory_section(self._vault_sections["Inventory"])
+        self._build_vault_catalog_section(self._vault_sections["Catalog"])
+        self._build_vault_intake_section(self._vault_sections["Intake"])
+        self._build_vault_storage_section(self._vault_sections["Storage"])
+        self._build_vault_health_section(self._vault_sections["Health"])
+        self._show_vault_section("Inventory")
+        # The catalog tree is lazy; merely opening this app surface does not start a scan.
+        self.vault_scan_status.configure(text="Inventory is read-only · catalog is available on its own tab", fg=MUTED)
+
+    def _show_vault_section(self, name: str) -> None:
+        for title, frame in self._vault_sections.items():
+            frame.pack_forget()
+            selected = title == name
+            self._vault_tab_buttons[title].configure(
+                fg=CYAN if selected else TEXT,
+                font=("Segoe UI Semibold" if selected else "Segoe UI", 10),
+                relief="flat",
+            )
+        self._vault_sections[name].pack(fill="both", expand=True)
+        self._active_vault_section = name
+
+    def _build_volume_inventory_section(self, parent: Any) -> None:
         tk = self.tk
         ttk = self.ttk
+        heading = tk.Frame(parent, bg=BG)
+        heading.pack(fill="x", pady=(1, 3))
+        tk.Label(heading, text="External drive inventory", bg=BG, fg=TEXT,
+                 font=("Segoe UI Semibold", 14)).pack(side="left")
+        tk.Label(heading, text="READ ONLY · METADATA", bg=PANEL_2, fg=CYAN,
+                 font=("Segoe UI Semibold", 9), padx=10, pady=5).pack(side="right")
 
-        shell = tk.Frame(parent, bg=BG)
-        shell.pack(fill="both", expand=True, padx=18, pady=14)
-        self._section_title(
-            shell,
-            "Vault / Local Forge",
-            "Local-first project catalog, source browser, asset inventory and onboarding evidence. No project JSON is required.",
-        )
+        self.volume_root_label = tk.Label(parent, text="Resolving portable volume…",
+                                          bg=BG, fg=MUTED, anchor="w", font=("Segoe UI", 10))
+        self.volume_root_label.pack(fill="x", pady=(0, 3))
 
-        toolbar = tk.Frame(shell, bg=BG)
+        progress_shell = tk.Frame(parent, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        progress_shell.pack(fill="x", pady=(0, 5))
+        progress_head = tk.Frame(progress_shell, bg=PANEL)
+        progress_head.pack(fill="x", padx=12, pady=(6, 2))
+        self.volume_status = tk.Label(progress_head, text="Not scanned", bg=PANEL, fg=MUTED,
+                                      anchor="w", font=("Segoe UI Semibold", 10))
+        self.volume_status.pack(side="left", fill="x", expand=True)
+        tk.Label(progress_head, text="Persistent index · activity indicator · no entry cap", bg=PANEL, fg=MUTED,
+                 font=("Segoe UI", 9)).pack(side="right")
+        self.volume_progress = ttk.Progressbar(progress_shell, orient="horizontal", mode="indeterminate")
+        self.volume_progress.pack(fill="x", padx=12, pady=(0, 5))
+        self.volume_counts = tk.Label(progress_shell,
+            text="0 entries · 0 files · 0 folders · 0 links · 0 errors",
+            bg=PANEL, fg=MUTED, anchor="w", font=("Segoe UI", 9))
+        self.volume_counts.pack(fill="x", padx=12, pady=(0, 5))
+
+        actions = tk.Frame(parent, bg=BG)
+        actions.pack(fill="x", pady=(0, 5))
+        self.volume_start_btn = self._button(actions, "Start / Resume Index", self._start_volume_inventory,
+                                              primary=True, compact=True)
+        self.volume_start_btn.pack(side="left", padx=(0, 7))
+        self.volume_cancel_btn = self._button(actions, "Pause Scan", self._cancel_volume_inventory,
+                                               compact=True)
+        self.volume_cancel_btn.pack(side="left", padx=(0, 12))
+        self.volume_cancel_btn.configure(state="disabled")
+        tk.Label(actions, text="Writes a dedicated Cortex metadata index only · no source/Vault catalog changes",
+                 bg=BG, fg=MUTED, font=("Segoe UI", 9), anchor="w").pack(side="left", fill="x", expand=True)
+
+        panes = tk.PanedWindow(parent, orient="horizontal", bg=BG, sashwidth=6,
+                               sashrelief="flat", bd=0)
+        panes.pack(fill="both", expand=True)
+        left = tk.Frame(panes, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        right = tk.Frame(panes, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        panes.add(left, minsize=380, stretch="always")
+        panes.add(right, minsize=280, stretch="always")
+
+        tk.Label(left, text="RESULTS", bg=PANEL, fg=CYAN,
+                 font=("Segoe UI Semibold", 10)).pack(anchor="w", padx=12, pady=(11, 5))
+        filter_row = tk.Frame(left, bg=PANEL)
+        filter_row.pack(fill="x", padx=12, pady=(0, 6))
+        self.volume_query_var = tk.StringVar()
+        volume_search = tk.Entry(filter_row, textvariable=self.volume_query_var,
+                                  bg="#090c10", fg=TEXT, insertbackground=TEXT,
+                                  relief="flat", font=("Segoe UI", 10))
+        volume_search.pack(side="left", fill="x", expand=True, ipady=6)
+        volume_search.bind("<Return>", lambda _e: self._volume_apply_quick_filter(self.volume_query_var.get()))
+        self._button(filter_row, "Filter",
+                     lambda: self._volume_apply_quick_filter(self.volume_query_var.get()),
+                     compact=True).pack(side="left", padx=(6, 0))
+        shortcuts = tk.Frame(left, bg=PANEL)
+        shortcuts.pack(fill="x", padx=12, pady=(0, 3))
+        for label, needle in (("Top level", ""), ("Projects", "projects/"),
+                              ("Git", "Git/"), ("Cortex", "Cortex")):
+            self._button(shortcuts, label,
+                         lambda value=needle: self._volume_apply_quick_filter(value), compact=True).pack(
+                             side="left", padx=(0, 6))
+        self.volume_results_status = tk.Label(left, text="Run an inventory to inspect paths.",
+                                               bg=PANEL, fg=MUTED, anchor="w",
+                                               font=("Segoe UI", 9))
+        self.volume_results_status.pack(fill="x", padx=12, pady=(0, 2))
+        paging = tk.Frame(left, bg=PANEL)
+        paging.pack(fill="x", padx=12, pady=(0, 4))
+        self.volume_prev_btn = self._button(paging, "Previous", lambda: self._volume_change_page(-1), compact=True)
+        self.volume_prev_btn.pack(side="left", padx=(0, 6))
+        self.volume_next_btn = self._button(paging, "Next", lambda: self._volume_change_page(1), compact=True)
+        self.volume_next_btn.pack(side="left", padx=(0, 8))
+        self.volume_page_label = tk.Label(paging, text="Page 1", bg=PANEL, fg=MUTED, font=("Segoe UI", 9))
+        self.volume_page_label.pack(side="left")
+        self.volume_prev_btn.configure(state="disabled")
+        self.volume_next_btn.configure(state="disabled")
+        tree_host = tk.Frame(left, bg=PANEL)
+        tree_host.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+        self.volume_tree = ttk.Treeview(tree_host, columns=("path", "kind", "size"),
+                                         show="headings", selectmode="browse")
+        for col, title, width, stretch in (("path", "Relative path", 410, True),
+                                           ("kind", "Type", 90, False),
+                                           ("size", "Size", 90, False)):
+            self.volume_tree.heading(col, text=title)
+            self.volume_tree.column(col, width=width, anchor="w", stretch=stretch)
+        vscroll = self._dark_scrollbar(tree_host, orient="vertical", command=self.volume_tree.yview)
+        hscroll = self._dark_scrollbar(tree_host, orient="horizontal", command=self.volume_tree.xview)
+        self.volume_tree.configure(yscrollcommand=vscroll.set, xscrollcommand=hscroll.set)
+        hscroll.pack(side="bottom", fill="x")
+        vscroll.pack(side="right", fill="y")
+        self.volume_tree.pack(side="left", fill="both", expand=True)
+        self.volume_tree.bind("<<TreeviewSelect>>", self._volume_selected)
+        self._volume_rows: dict[str, dict[str, Any]] = {}
+
+        tk.Label(right, text="ITEM DETAILS", bg=PANEL, fg=CYAN,
+                 font=("Segoe UI Semibold", 10)).pack(anchor="w", padx=12, pady=(11, 7))
+        selection_actions = tk.Frame(right, bg=PANEL)
+        selection_actions.pack(fill="x", padx=12, pady=(0, 7))
+        self._button(selection_actions, "Copy Path", self._volume_copy_selected_path,
+                     compact=True).pack(side="left", padx=(0, 6))
+        self._button(selection_actions, "Reveal", self._volume_reveal_selected,
+                     compact=True).pack(side="left", padx=(0, 6))
+        self._button(selection_actions, "Access Gaps", self._volume_show_errors,
+                     compact=True).pack(side="left")
+        body = tk.Frame(right, bg="#07090b", highlightthickness=1, highlightbackground=BORDER)
+        body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        self.volume_detail = tk.Text(body, height=12, wrap="word", bg="#07090b", fg=TEXT,
+                                      insertbackground=TEXT, bd=0, relief="flat",
+                                      font=("Consolas", 10))
+        dscroll = self._dark_scrollbar(body, orient="vertical", command=self.volume_detail.yview)
+        self.volume_detail.configure(yscrollcommand=dscroll.set)
+        self.volume_detail.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=8)
+        dscroll.pack(side="right", fill="y", padx=(4, 6), pady=6)
+        self._volume_set_detail("Filesystem discovery is read-only. Its SQLite metadata index lives under "
+                                "Cortex state, separate from vault_catalog.db.\n"
+                                "Pause or close retains committed inventory batches.")
+        self.window.after(150, self._volume_load_existing)
+
+    def _build_vault_catalog_section(self, parent: Any) -> None:
+        tk = self.tk
+        ttk = self.ttk
+        toolbar = tk.Frame(parent, bg=BG)
         toolbar.pack(fill="x", pady=(0, 9))
-        status_row = tk.Frame(toolbar, bg=BG)
-        status_row.pack(fill="x", pady=(0, 3))
-        tk.Label(status_row, text="Catalog / browser", bg=BG, fg=MUTED, font=("Segoe UI Semibold", 8)).pack(side="left")
-        self.vault_scan_status = tk.Label(status_row, text="Idle", bg=BG, fg=MUTED, font=("Segoe UI", 9))
-        self.vault_scan_status.pack(side="right")
+        tk.Label(toolbar, text="Project catalog & browser", bg=BG, fg=TEXT,
+                 font=("Segoe UI Semibold", 13)).pack(anchor="w", pady=(0, 5))
         self._toolbar_grid(toolbar, (
             ("Scan Active Project", lambda: self._start_vault_scan(False), True, False),
             ("Deep Hash Scan", lambda: self._start_vault_scan(True), False, False),
@@ -848,84 +1025,7 @@ class CortexPCCGui:
             ("Compare Baseline", self._vault_compare_baseline, False, False),
         ), preferred_columns=4, minimum_cell_width=145)
 
-        intake_toolbar = tk.Frame(shell, bg=BG)
-        intake_toolbar.pack(fill="x", pady=(0, 9))
-        tk.Label(intake_toolbar, text="Intake / classification", bg=BG, fg=MUTED, font=("Segoe UI Semibold", 8)).pack(anchor="w", pady=(0, 3))
-        self._toolbar_grid(intake_toolbar, (
-            ("Audit Intake", self._start_vault_intake_audit, True, False),
-            ("Create Chat Handoff", self._start_vault_intake_handoff, False, False),
-            ("Open Intake Audit", lambda: open_path(vault_intake_audit_dir(self.root_path)), False, False),
-            ("Open Intake Folder", lambda: open_path(vault_intake_root(self.root_path)), False, False),
-            ("Stop Vault Scan", self._vault_stop_scan, False, False),
-        ), preferred_columns=5, minimum_cell_width=145)
-        tk.Label(
-            intake_toolbar,
-            text="Audit is non-destructive: no move, rename, delete, execute or archive extraction. Review handoff before organization.",
-            bg=BG, fg=MUTED, font=("Segoe UI", 8), anchor="w",
-        ).pack(fill="x", padx=2, pady=(4, 0))
-
-        # Deliberately separate from Vault catalog/mirroring: this is a bounded,
-        # explicit in-memory metadata walk of the *current* portable drive.
-        volume_box = tk.Frame(shell, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
-        volume_box.pack(fill="x", pady=(0, 9))
-        volume_head = tk.Frame(volume_box, bg=PANEL)
-        volume_head.pack(fill="x", padx=10, pady=(8, 4))
-        tk.Label(volume_head, text="External Drive Inventory · Read Only", bg=PANEL, fg=TEXT,
-                 font=("Segoe UI Semibold", 9)).pack(side="left")
-        self.volume_status = tk.Label(volume_head, text="Not scanned", bg=PANEL, fg=MUTED,
-                                      font=("Segoe UI", 8))
-        self.volume_status.pack(side="right")
-        volume_actions = tk.Frame(volume_box, bg=PANEL)
-        volume_actions.pack(fill="x", padx=10, pady=(0, 5))
-        self._button(volume_actions, "Inventory Current Drive", self._start_volume_inventory,
-                     compact=True).pack(side="left", padx=(0, 6))
-        self._button(volume_actions, "Cancel Inventory", self._cancel_volume_inventory,
-                     compact=True).pack(side="left", padx=(0, 8))
-        self.volume_query_var = tk.StringVar()
-        volume_search = tk.Entry(volume_actions, textvariable=self.volume_query_var,
-                                 bg="#090c10", fg=TEXT, insertbackground=TEXT,
-                                 relief="flat", font=("Segoe UI", 9))
-        volume_search.pack(side="left", fill="x", expand=True, ipady=5)
-        volume_search.bind("<Return>", lambda _e: self._show_volume_inventory())
-        self._button(volume_actions, "Filter Paths", self._show_volume_inventory,
-                     compact=True).pack(side="left", padx=(6, 0))
-        volume_body = tk.Frame(volume_box, bg="#07090b")
-        volume_body.pack(fill="x", padx=10, pady=(0, 8))
-        self.volume_detail = tk.Text(volume_body, height=7, wrap="none", bg="#07090b",
-                                     fg=TEXT, insertbackground=TEXT, bd=0, relief="flat",
-                                     font=("Consolas", 9))
-        volume_scroll = self._dark_scrollbar(volume_body, orient="vertical",
-                                              command=self.volume_detail.yview)
-        self.volume_detail.configure(yscrollcommand=volume_scroll.set)
-        self.volume_detail.pack(side="left", fill="x", expand=True)
-        volume_scroll.pack(side="right", fill="y")
-        self.volume_detail.insert("1.0", "An explicit scan inventories this drive's metadata only. "
-                                  "Use Filter Paths to inspect results; no Vault DB writes or project registration.")
-        self.volume_detail.configure(state="disabled")
-
-        storage_toolbar = tk.Frame(shell, bg=BG)
-        storage_toolbar.pack(fill="x", pady=(0, 9))
-        tk.Label(storage_toolbar, text="Storage authority", bg=BG, fg=MUTED, font=("Segoe UI Semibold", 8)).pack(anchor="w", pady=(0, 3))
-        self._toolbar_grid(storage_toolbar, (
-            ("Mirror Project", self._start_vault_mirror, True, False),
-            ("Mirror All Projects", self._start_vault_mirror_all, False, False),
-            ("Verify Mirror", self._vault_verify_mirror, False, False),
-            ("Shared Dependencies", self._vault_dependency_info, False, False),
-            ("Space Reclaim Plan", self._vault_reclaim_plan, False, False),
-            ("Open Project Mirror", lambda: open_path(vault_project_dir(self.root_path)), False, False),
-        ), preferred_columns=4, minimum_cell_width=145)
-
-        maintenance_toolbar = tk.Frame(shell, bg=BG)
-        maintenance_toolbar.pack(fill="x", pady=(0, 9))
-        tk.Label(maintenance_toolbar, text="Lifecycle", bg=BG, fg=MUTED, font=("Segoe UI Semibold", 8)).pack(anchor="w", pady=(0, 3))
-        self._toolbar_grid(maintenance_toolbar, (
-            ("Storage Health", self._vault_storage_health, True, False),
-            ("Retention Plan", self._vault_retention_plan, False, False),
-            ("CAS GC Plan", self._vault_gc_plan, False, False),
-        ), preferred_columns=3, minimum_cell_width=145)
-        tk.Label(maintenance_toolbar, text="Mutating maintenance remains CLI + --yes until Windows certification", bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(side="left", padx=10)
-
-        metrics = tk.Frame(shell, bg=BG)
+        metrics = tk.Frame(parent, bg=BG)
         metrics.pack(fill="x", pady=(0, 9))
         self.vault_metric_labels: dict[str, Any] = {}
         for key, title in (
@@ -943,7 +1043,7 @@ class CortexPCCGui:
             value.pack(anchor="w", padx=12, pady=(0, 8))
             self.vault_metric_labels[key] = value
 
-        panes = tk.PanedWindow(shell, orient="horizontal", bg=BG, sashwidth=5, sashrelief="flat", bd=0)
+        panes = tk.PanedWindow(parent, orient="horizontal", bg=BG, sashwidth=5, sashrelief="flat", bd=0)
         panes.pack(fill="both", expand=True)
 
         left = self._panel(panes, "Project Files")
@@ -1019,9 +1119,159 @@ class CortexPCCGui:
         self.vault_detail.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=10)
         dscroll.pack(side="right", fill="y", padx=(4, 8), pady=8)
         self.vault_detail.configure(state="disabled")
-        # Vault filesystem inspection is lazy. Building the hidden Vault tab must
-        # never stall the Tk main thread during application startup.
-        self.vault_scan_status.configure(text="Open Vault / Forge to inspect project files", fg=MUTED)
+
+    def _build_vault_intake_section(self, parent: Any) -> None:
+        tk = self.tk
+        tk.Label(parent, text="Intake & classification", bg=BG, fg=TEXT,
+                 font=("Segoe UI Semibold", 13)).pack(anchor="w", pady=(0, 8))
+        self._toolbar_grid(parent, (
+            ("Audit Intake", self._start_vault_intake_audit, True, False),
+            ("Create Chat Handoff", self._start_vault_intake_handoff, False, False),
+            ("Open Intake Audit", lambda: open_path(vault_intake_audit_dir(self.root_path)), False, False),
+            ("Open Intake Folder", lambda: open_path(vault_intake_root(self.root_path)), False, False),
+            ("Stop Vault Scan", self._vault_stop_scan, False, False),
+        ), preferred_columns=3, minimum_cell_width=150)
+        tk.Label(parent,
+            text="Audit is non-destructive: no move, rename, delete, execute or archive extraction. "
+                 "Review the handoff before any organization.", bg=BG, fg=MUTED,
+            anchor="w", justify="left", wraplength=800, font=("Segoe UI", 10)).pack(fill="x", pady=(10, 0))
+
+    def _build_vault_storage_section(self, parent: Any) -> None:
+        tk = self.tk
+        tk.Label(parent, text="Storage authority", bg=BG, fg=TEXT,
+                 font=("Segoe UI Semibold", 13)).pack(anchor="w", pady=(0, 8))
+        self._toolbar_grid(parent, (
+            ("Mirror Project", self._start_vault_mirror, True, False),
+            ("Mirror All Projects", self._start_vault_mirror_all, False, False),
+            ("Verify Mirror", self._vault_verify_mirror, False, False),
+            ("Shared Dependencies", self._vault_dependency_info, False, False),
+            ("Space Reclaim Plan", self._vault_reclaim_plan, False, False),
+            ("Open Project Mirror", lambda: open_path(vault_project_dir(self.root_path)), False, False),
+        ), preferred_columns=3, minimum_cell_width=150)
+
+    def _build_vault_health_section(self, parent: Any) -> None:
+        tk = self.tk
+        tk.Label(parent, text="Health & lifecycle", bg=BG, fg=TEXT,
+                 font=("Segoe UI Semibold", 13)).pack(anchor="w", pady=(0, 8))
+        self._toolbar_grid(parent, (
+            ("Storage Health", self._vault_storage_health, True, False),
+            ("Retention Plan", self._vault_retention_plan, False, False),
+            ("CAS GC Plan", self._vault_gc_plan, False, False),
+        ), preferred_columns=3, minimum_cell_width=150)
+        tk.Label(parent, text="Mutating maintenance remains CLI + --yes until Windows certification.",
+                 bg=BG, fg=MUTED, anchor="w", font=("Segoe UI", 10)).pack(fill="x", pady=(9, 0))
+
+    def _volume_set_detail(self, text: str) -> None:
+        self.volume_detail.configure(state="normal")
+        self.volume_detail.delete("1.0", "end")
+        self.volume_detail.insert("1.0", text)
+        self.volume_detail.configure(state="disabled")
+
+    def _volume_apply_quick_filter(self, value: str) -> None:
+        self.volume_query_var.set(value)
+        self._volume_page = 0
+        self._show_volume_inventory()
+
+    def _volume_change_page(self, delta: int) -> None:
+        self._volume_page = max(0, self._volume_page + delta)
+        self._show_volume_inventory()
+
+    def _volume_load_existing(self) -> None:
+        """Discover an index without starting a scan or creating a database."""
+        try:
+            mount, database, volume_id = persistent_volume_location(self.root_path)
+            self._volume_root, self._volume_db_path, self._volume_id = mount, database, volume_id
+            self.volume_root_label.configure(text=f"Development volume: {mount} · ID: {volume_id}")
+        except Exception as exc:
+            self.volume_status.configure(text=f"Portable volume unavailable: {exc}", fg=YELLOW)
+            self.volume_start_btn.configure(state="disabled")
+            return
+
+        def work() -> None:
+            try:
+                result = persistent_volume_status(database, mount, volume_id=volume_id)
+                self._event_q.put(("volume-index-loaded", result))
+            except Exception as exc:
+                self._event_q.put(("volume-error", f"Existing index could not be opened: {exc}"))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _volume_refresh_status(self, report: dict[str, Any]) -> None:
+        self._volume_result = report
+        state = str(report.get("state", "not_started"))
+        count = int(report.get("entries") or 0)
+        errors = int(report.get("errors") or 0)
+        pending = int(report.get("pending_directories") or 0)
+        counts = report.get("counts") or {}
+        display = ("Interrupted / resumable" if state == "running" and not self._volume_running else
+                   "SCANNING" if state == "running" else
+                   "PAUSED / RESUMABLE" if state == "paused" else
+                   "COMPLETE WITH ACCESS GAPS" if state == "complete" and errors else
+                   "COMPLETE" if state == "complete" else "Not indexed")
+        self.volume_status.configure(text=f"{display} · {count:,} indexed", fg=CYAN if self._volume_running else
+                                     YELLOW if pending or errors else GREEN if state == "complete" else MUTED)
+        self.volume_counts.configure(
+            text=f"{count:,} entries · {int(counts.get('file') or 0):,} files · "
+                 f"{int(counts.get('directory') or 0):,} folders · "
+                 f"{int(counts.get('symlink') or 0):,} links · {errors:,} errors · "
+                 f"{pending:,} directories pending")
+        if state == "complete":
+            self.volume_start_btn.configure(text="Rebuild Index")
+        else:
+            self.volume_start_btn.configure(text="Start / Resume Index")
+
+    def _volume_selected_path(self) -> Path | None:
+        selected = self.volume_tree.selection()
+        if not selected or self._volume_root is None:
+            return None
+        entry = self._volume_rows.get(selected[0])
+        if entry is None:
+            return None
+        # All database paths were obtained from scandir and stored volume-relative.
+        return self._volume_root.joinpath(*str(entry["path"]).split("/"))
+
+    def _volume_selected(self, _event: Any = None) -> None:
+        selected = self.volume_tree.selection()
+        if not selected:
+            return
+        entry = self._volume_rows.get(selected[0])
+        if entry is None:
+            return
+        path = self._volume_selected_path()
+        stamp = entry.get("modified_ns")
+        modified = (datetime.fromtimestamp(int(stamp) / 1_000_000_000).isoformat(sep=" ", timespec="seconds")
+                    if stamp is not None else "Unknown")
+        size = (self._human_bytes(int(entry["size_bytes"])) if entry.get("size_bytes") is not None else "—")
+        self._volume_set_detail(
+            f"Relative path: {entry['path']}\n\nFull path: {path}\n\n"
+            f"Type: {entry.get('type', 'other')}\nSize: {size}\nModified: {modified}\n"
+            f"Boundary: {entry.get('boundary', 'none')}\n\n"
+            "Discovery metadata only. No source files moved, opened, imported or registered."
+        )
+
+    def _volume_copy_selected_path(self) -> None:
+        path = self._volume_selected_path()
+        if path is None:
+            return
+        self.window.clipboard_clear()
+        self.window.clipboard_append(str(path))
+        self.volume_results_status.configure(text="Selected path copied", fg=GREEN)
+
+    def _volume_reveal_selected(self) -> None:
+        path = self._volume_selected_path()
+        if path is not None and path.exists():
+            reveal_file(path)
+
+    def _volume_show_errors(self) -> None:
+        if not self._volume_db_path or not self._volume_id or not self._volume_db_path.is_file():
+            return
+        db_path, volume_id = self._volume_db_path, self._volume_id
+        def work() -> None:
+            try:
+                rows = persistent_volume_errors(db_path, volume_id=volume_id, limit=30)
+                self._event_q.put(("volume-errors-done", rows))
+            except Exception as exc:
+                self._event_q.put(("volume-errors-error", str(exc)))
+        threading.Thread(target=work, daemon=True).start()
 
     @staticmethod
     def _human_bytes(value: int) -> str:
@@ -1174,27 +1424,41 @@ class CortexPCCGui:
         if self._vault_busy:
             self._popup("Volume Inventory", "Another Vault operation is running.", kind="warning")
             return
-        # The anchor of the active project's resolved root follows G:/D:/etc.
-        # Never persist its drive letter as project identity.
-        drive_root = Path(self.root_path.anchor)
-        if not drive_root.is_dir():
-            self._popup("Volume Inventory", f"Drive root is unavailable: {drive_root}", kind="error")
+        if not self._volume_root or not self._volume_db_path or not self._volume_id:
+            self._popup("Volume Inventory", "A marked portable Cortex volume is required.", kind="error")
+            return
+        if not self._volume_root.is_dir():
+            self._popup("Volume Inventory", f"Drive root is unavailable: {self._volume_root}", kind="error")
+            return
+        restart = bool(self._volume_result and self._volume_result.get("state") == "complete")
+        if restart and not self._popup("Rebuild Inventory Index",
+                "The inventory is already complete. Rebuild its dedicated SQLite metadata index?\n\n"
+                "Only the inventory index is replaced. Source files and vault_catalog.db are untouched.",
+                kind="warning", confirm=True):
             return
         self._vault_busy = True
         self._volume_running = True
         self._vault_cancel = False
-        self._volume_result = None
-        self.volume_status.configure(text=f"Scanning {drive_root}…", fg=CYAN)
-        self._append_log(f"[INFO] Explicit read-only drive inventory started: {drive_root}\n", "info")
+        self.volume_start_btn.configure(state="disabled")
+        self.volume_cancel_btn.configure(state="normal")
+        self.volume_progress.start(18)
+        self.volume_status.configure(text=f"Scanning {self._volume_root} · committed batches are searchable", fg=CYAN)
+        self._append_log(f"[INFO] Explicit persistent volume inventory {'rebuild' if restart else 'start/resume'}: "
+                         f"{self._volume_root} · index: {self._volume_db_path}\n", "info")
+        volume_root, db_path, volume_id = self._volume_root, self._volume_db_path, self._volume_id
+        last_emit = [0.0]
 
-        def progress(payload: dict[str, int]) -> None:
-            self._event_q.put(("volume-progress", payload))
+        def progress(payload: dict[str, Any]) -> None:
+            now = time.monotonic()
+            if now - last_emit[0] >= .3 or payload.get("state") != "running":
+                last_emit[0] = now
+                self._event_q.put(("volume-progress", payload))
 
         def work() -> None:
             try:
-                result = volume_inventory(drive_root, max_entries=2_000_000,
-                                          progress=progress, cancelled=lambda: self._vault_cancel)
-                self._event_q.put(("volume-done", result))
+                report = persistent_volume_scan(volume_root, db_path, volume_id=volume_id,
+                    progress=progress, cancelled=lambda: self._vault_cancel, restart=restart)
+                self._event_q.put(("volume-done", report))
             except Exception as exc:
                 self._event_q.put(("volume-error", str(exc)))
 
@@ -1205,17 +1469,39 @@ class CortexPCCGui:
             self.volume_status.configure(text="No active drive scan", fg=MUTED)
             return
         self._vault_cancel = True
-        self.volume_status.configure(text="Cancellation requested…", fg=YELLOW)
+        self.volume_cancel_btn.configure(state="disabled")
+        self.volume_status.configure(text="Pause requested · committing partial inventory…", fg=YELLOW)
 
     def _show_volume_inventory(self) -> None:
-        result = self._volume_result
-        if result is None:
+        if not self._volume_db_path or not self._volume_id or not self._volume_root:
+            self.volume_results_status.configure(text="Portable volume unavailable.", fg=MUTED)
             return
-        detail = volume_render_inventory(result, query=self.volume_query_var.get(), limit=100)
-        self.volume_detail.configure(state="normal")
-        self.volume_detail.delete("1.0", "end")
-        self.volume_detail.insert("1.0", detail)
-        self.volume_detail.configure(state="disabled")
+        if not self._volume_db_path.is_file():
+            self.volume_results_status.configure(text="No index yet. Start a scan to populate persistent results.", fg=MUTED)
+            return
+        query = self.volume_query_var.get()
+        self._volume_view_generation += 1
+        if self._volume_filter_busy:
+            # Coalesce repeated button presses and live refreshes; never flood SQLite
+            # with one full-index COUNT query per keystroke/action.
+            self._volume_filter_pending = True
+            return
+        self._volume_filter_busy = True
+        generation = self._volume_view_generation
+        page = self._volume_page
+        db_path, root, volume_id = self._volume_db_path, self._volume_root, self._volume_id
+        self.volume_results_status.configure(text="Loading a database page in background…", fg=CYAN)
+
+        def work() -> None:
+            try:
+                view = persistent_volume_query(db_path, volume_id=volume_id,
+                    query=query, page=page, page_size=self._volume_page_size)
+                status = persistent_volume_status(db_path, root, volume_id=volume_id)
+                self._event_q.put(("volume-view-done", (generation, view, status)))
+            except Exception as exc:
+                self._event_q.put(("volume-view-error", (generation, str(exc))))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _start_vault_scan(self, deep: bool) -> None:
         if self._vault_busy:
@@ -3630,30 +3916,101 @@ class CortexPCCGui:
                     root, detail = payload
                     self._append_log(f"[WARN] Project onboarding catalog incomplete: {root}: {detail}\n", "warn")
                     self._refresh_projects()
+                elif kind == "volume-index-loaded":
+                    if not self._volume_running:
+                        self._volume_refresh_status(payload)
+                        if payload.get("state") != "not_started":
+                            self._show_volume_inventory()
                 elif kind == "volume-progress":
-                    n = int((payload or {}).get("entries") or 0)
                     if self._volume_running:
-                        self.volume_status.configure(text=f"Scanning metadata · {n:,} entries", fg=CYAN)
+                        self._volume_refresh_status(payload)
+                        now = time.monotonic()
+                        if now - self._volume_progress_last_query >= 3.0:
+                            self._volume_progress_last_query = now
+                            self._show_volume_inventory()
                 elif kind == "volume-done":
                     self._vault_busy = False
                     self._volume_running = False
-                    self._volume_result = payload
-                    n = len(payload.get("entries") or [])
-                    partial = bool(payload.get("truncated"))
-                    errors = len(payload.get("errors") or [])
-                    state = "CANCELLED / PARTIAL" if payload.get("cancelled") else "LIMIT / PARTIAL" if partial else "COMPLETE"
-                    self.volume_status.configure(text=f"{state} · {n:,} entries · {errors:,} error(s)",
-                                                 fg=YELLOW if partial or errors else GREEN)
+                    self.volume_progress.stop()
+                    self._volume_refresh_status(payload)
+                    self.volume_start_btn.configure(state="normal")
+                    self.volume_cancel_btn.configure(state="disabled")
                     self._show_volume_inventory()
-                    self._append_log(f"[{'WARN' if partial or errors else 'PASS'}] Read-only drive inventory: "
-                                     f"{state} · {n:,} entries · {errors:,} unreadable. No files modified.\n",
-                                     "warn" if partial or errors else "pass")
+                    partial = bool(payload.get("partial"))
+                    self._append_log(
+                        f"[{'WARN' if partial else 'PASS'}] Persistent drive inventory: "
+                        f"{payload.get('state')} · {int(payload.get('entries') or 0):,} entries · "
+                        f"{int(payload.get('errors') or 0):,} errors · "
+                        f"{int(payload.get('pending_directories') or 0):,} directories pending. "
+                        "Source and Vault catalog unchanged.\n", "warn" if partial else "pass")
                 elif kind == "volume-error":
                     self._vault_busy = False
                     self._volume_running = False
-                    self.volume_status.configure(text="Drive scan failed", fg=RED)
-                    self._append_log(f"[FAIL] Drive inventory: {payload}\n", "fail")
+                    self.volume_progress.stop()
+                    self.volume_start_btn.configure(state="normal")
+                    self.volume_cancel_btn.configure(state="disabled")
+                    self.volume_status.configure(text="Inventory stopped · committed batches remain resumable", fg=RED)
+                    self._append_log(f"[FAIL] Persistent drive inventory: {payload}\n", "fail")
                     self._popup("Volume Inventory", str(payload), kind="error")
+                elif kind == "volume-view-done":
+                    generation, view, report = payload
+                    self._volume_filter_busy = False
+                    if self._volume_filter_pending:
+                        self._volume_filter_pending = False
+                        self._show_volume_inventory()
+                        continue
+                    if int(generation) != self._volume_view_generation:
+                        continue
+                    self._volume_refresh_status(report)
+                    rows = view["rows"]
+                    self.volume_tree.delete(*self.volume_tree.get_children())
+                    self._volume_rows.clear()
+                    for index, entry in enumerate(rows):
+                        iid = f"volume:{index}"
+                        self._volume_rows[iid] = entry
+                        size = (self._human_bytes(int(entry["size_bytes"]))
+                                if entry.get("size_bytes") is not None else "—")
+                        self.volume_tree.insert("", "end", iid=iid,
+                            values=(entry.get("path", ""), entry.get("type", ""), size))
+                    total = int(view["total"])
+                    current_page = int(view["page"])
+                    if not rows and current_page > 0:
+                        self._volume_page = 0
+                        self._show_volume_inventory()
+                        continue
+                    self.volume_prev_btn.configure(state="normal" if current_page else "disabled")
+                    self.volume_next_btn.configure(state="normal" if view["has_next"] else "disabled")
+                    pages = max(1, (total + self._volume_page_size - 1) // self._volume_page_size)
+                    self.volume_page_label.configure(text=f"Page {current_page + 1:,} / {pages:,}")
+                    self.volume_results_status.configure(
+                        text=f"{total:,} matching paths · {len(rows):,} on this page · "
+                             f"{int(report.get('entries') or 0):,} indexed", fg=MUTED)
+                    state = report.get("state", "not_started")
+                    self._volume_set_detail(
+                        f"Volume: {report.get('root')}\nIdentity: {report.get('volume_id', self._volume_id)}\n"
+                        f"Index: {self._volume_db_path}\n\nState: {state}\n"
+                        f"Entries: {int(report.get('entries') or 0):,}\n"
+                        f"Unprocessed directories: {int(report.get('pending_directories') or 0):,}\n"
+                        f"Unreadable locations: {int(report.get('errors') or 0):,}\n\n"
+                        "Search works during scanning. Select a row for metadata and safe path actions.\n"
+                        "Source files and the existing Vault catalog are not modified.")
+                elif kind == "volume-view-error":
+                    generation, detail = payload
+                    self._volume_filter_busy = False
+                    if self._volume_filter_pending:
+                        self._volume_filter_pending = False
+                        self._show_volume_inventory()
+                        continue
+                    if int(generation) == self._volume_view_generation:
+                        self.volume_results_status.configure(text=f"Index query failed: {detail}", fg=RED)
+                elif kind == "volume-errors-done":
+                    if payload:
+                        lines = [f"{row['path']} [{row['operation']}]: {row['message']}" for row in payload]
+                        self._volume_set_detail("Unreadable inventory locations (first 30):\n\n" + "\n\n".join(lines))
+                    else:
+                        self._volume_set_detail("No unreadable locations recorded in the current inventory index.")
+                elif kind == "volume-errors-error":
+                    self._volume_set_detail(f"Could not query access gaps: {payload}")
                 elif kind == "vault-progress":
                     files = int((payload or {}).get("files") or 0)
                     hashed = int((payload or {}).get("hashed") or 0)
@@ -4030,6 +4387,7 @@ class CortexPCCGui:
             if not self._popup("Active PCC Job", "A Project Control Center job is still running. Stop it and close?", kind="warning", confirm=True):
                 return
             terminate_process_tree(self._active_proc)
+        self._vault_cancel = True  # signal the read-only worker only after closing is confirmed
         self.window.destroy()
 
     def run(self) -> int:

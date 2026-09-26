@@ -11,6 +11,8 @@ class InventoryFullGateContractTests(unittest.TestCase):
         gate = source[start:end]
         self.assertIn('root / "tests/test_volume_inventory.py",', gate)
         self.assertIn('root / "tests/test_volume_inventory_gate.py",', gate)
+        self.assertIn('root / "tests/test_volume_inventory_workspace.py",', gate)
+        self.assertIn('root / "tests/test_persistent_volume_inventory.py",', gate)
         self.assertIn('missing = [str(p.relative_to(root))', gate)
 
 
@@ -97,7 +99,9 @@ class RepositoryPlaceholderConvergenceTests(unittest.TestCase):
     def test_gui_drive_scan_is_explicit_and_uses_drive_anchor(self):
         source = (Path(__file__).resolve().parents[1] / "tools" / "control" /
                   "CortexPCCGui.py").read_text(encoding="utf-8")
-        self.assertIn('"Inventory Current Drive", self._start_volume_inventory', source)
-        self.assertIn('drive_root = Path(self.root_path.anchor)', source)
+        self.assertIn('"Start / Resume Index", self._start_volume_inventory', source)
+        self.assertIn('persistent_volume_location(self.root_path)', source)
         self.assertIn('cancelled=lambda: self._vault_cancel', source)
-        self.assertIn('volume_render_inventory(result, query=self.volume_query_var.get()', source)
+        self.assertIn('persistent_volume_query(db_path, volume_id=volume_id,', source)
+        self.assertIn('volume-view-done', source)
+        self.assertIn('self._show_vault_section("Inventory")', source)

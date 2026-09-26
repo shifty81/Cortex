@@ -1323,6 +1323,8 @@ def run_universal_python_regressions(root: Path, runner: CommandRunner | None = 
         root / "tests/test_volume_inventory.py",
         root / "tests/test_volume_inventory_gate.py",
         root / "tests/test_volume_inventory_pcc_integration.py",
+        root / "tests/test_volume_inventory_workspace.py",
+        root / "tests/test_persistent_volume_inventory.py",
     ]
     missing = [str(p.relative_to(root)) for p in tests if not p.is_file()]
     if missing:

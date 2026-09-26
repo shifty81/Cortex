@@ -40,3 +40,24 @@ def render_inventory(report: dict[str, Any], *, query: str = "", limit: int = 80
     if report.get("truncated"):
         parts.append("Partial inventory: raise the limit or repeat after cancellation to obtain complete coverage.")
     return "\n".join(parts)
+
+
+def select_inventory_entries(report: dict[str, Any], *, query: str = "", limit: int = 200) -> dict[str, Any]:
+    """Return bounded GUI rows, scanning the result off the Tk/UI thread.
+
+    An empty query displays the drive's immediate children; other queries are
+    case-insensitive path substrings. No report mutations or filesystem reads.
+    """
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    needle = query.strip().casefold()
+    rows: list[dict[str, Any]] = []
+    total = 0
+    for entry in report.get("entries") or []:
+        path = str(entry.get("path", ""))
+        matched = (needle in path.casefold()) if needle else ("/" not in path)
+        if matched:
+            total += 1
+            if len(rows) < limit:
+                rows.append(entry)
+    return {"total": total, "rows": rows, "limit": limit, "query": query.strip()}
