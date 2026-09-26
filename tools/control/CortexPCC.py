@@ -1319,6 +1319,10 @@ def run_universal_python_regressions(root: Path, runner: CommandRunner | None = 
         root / "tools/control/tests/test_cortex_upcc_a03_restart.py",
         root / "tools/control/tests/test_cortex_upcc_a04_parity.py",
         root / "tools/control/tests/test_cortex_upcc_a05_contract.py",
+        # R8A-R8D: mandatory read-only volume inventory fixture certification.
+        root / "tests/test_volume_inventory.py",
+        root / "tests/test_volume_inventory_gate.py",
+        root / "tests/test_volume_inventory_pcc_integration.py",
     ]
     missing = [str(p.relative_to(root)) for p in tests if not p.is_file()]
     if missing:

@@ -30,6 +30,7 @@ def inventory(root: os.PathLike[str] | str, *, max_entries: int = 2_000_000) -> 
     if not base.is_dir():
         raise NotADirectoryError(str(base))
     base_stat = base.stat()
+    base_drive = os.path.normcase(os.path.splitdrive(str(base))[0])
     entries: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     stack = [(base, "")]
@@ -60,7 +61,20 @@ def inventory(root: os.PathLike[str] | str, *, max_entries: int = 2_000_000) -> 
                 }
                 entries.append(record)
                 if kind == "directory":
-                    if info.st_dev != base_stat.st_dev:
+                    # Windows st_dev/ismount semantics can mark ordinary folders as
+                    # boundaries. Use the drive identity there, and explicitly
+                    # exclude reparse points (junctions/mounted folders) instead.
+                    attrs = getattr(info, "st_file_attributes", 0)
+                    reparse = bool(attrs & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+                    child_drive = os.path.normcase(os.path.splitdrive(child.path)[0])
+                    if os.name == "nt":
+                        if reparse:
+                            record["boundary"] = "reparse_point"
+                        elif child_drive != base_drive:
+                            record["boundary"] = "different_device"
+                        else:
+                            dirs.append((Path(child.path), rel))
+                    elif info.st_dev != base_stat.st_dev:
                         record["boundary"] = "different_device"
                     elif os.path.ismount(child.path) and Path(child.path) != base:
                         record["boundary"] = "mount_point"

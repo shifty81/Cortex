@@ -66,3 +66,58 @@ class VolumeInventoryTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class VolumeInventoryExtendedSafetyTests(unittest.TestCase):
+    def test_empty_directory_and_nested_hidden_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'projects' / '.hidden').mkdir(parents=True)
+            (root / 'projects' / '.hidden' / 'file.txt').write_text('x')
+            (root / 'Git').mkdir()
+            result = module.inventory(root)
+            paths = {entry['path'] for entry in result['entries']}
+            self.assertIn('projects/.hidden/file.txt', paths)
+            self.assertIn('Git', paths)
+            self.assertFalse(result['truncated'])
+
+    def test_no_output_file_created_by_library_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'a.txt').write_text('x')
+            before = {p.relative_to(root).as_posix() for p in root.rglob('*')}
+            result = module.inventory(root)
+            after = {p.relative_to(root).as_posix() for p in root.rglob('*')}
+            self.assertEqual(before, after)
+            self.assertTrue(result['read_only'])
+
+    def test_limit_one_is_explicitly_partial(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'a').write_text('a')
+            (root / 'b').write_text('b')
+            result = module.inventory(root, max_entries=1)
+            self.assertEqual(len(result['entries']), 1)
+            self.assertTrue(result['truncated'])
+
+    def test_invalid_limit_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                module.inventory(tmp, max_entries=0)
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows junction test')
+    def test_windows_junction_is_not_traversed(self):
+        import os
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            root = Path(tmp)
+            (Path(outside) / 'outside.txt').write_text('outside')
+            junction = root / 'junction'
+            result = subprocess.run(['cmd', '/d', '/c', 'mklink', '/J', str(junction), str(Path(outside))], capture_output=True, text=True)
+            if result.returncode != 0:
+                self.skipTest('junction creation unavailable')
+            try:
+                report = module.inventory(root)
+                paths = {entry['path'] for entry in report['entries']}
+                self.assertIn('junction', paths)
+                self.assertNotIn('junction/outside.txt', paths)
+            finally:
+                os.rmdir(junction)
