@@ -26,7 +26,14 @@ def run(argv: list[str], root: Path) -> int:
             env.update(dependency_environment(root))
     except Exception as exc:
         print(f'[WARN] Shared dependency environment unavailable; using host defaults: {exc}')
-    cp = subprocess.run(argv, cwd=str(root), check=False, env=env)
+    kwargs = {}
+    if os.name == "nt":
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 1)
+        startup.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        kwargs["startupinfo"] = startup
+    cp = subprocess.run(argv, cwd=str(root), check=False, env=env, **kwargs)
     print(('[PASS]' if cp.returncode == 0 else '[FAIL]') + f' END exit={cp.returncode}')
     return int(cp.returncode)
 

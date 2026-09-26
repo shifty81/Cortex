@@ -1523,6 +1523,38 @@ class CortexPCCGui:
             x, y = max(0, (sw - width) // 2), max(0, (sh - height) // 2)
         dialog.geometry(f"{width}x{height}+{x}+{y}")
 
+
+    def _show_owned_modal(self, dialog: Any, *, focus_widget: Any | None = None) -> None:
+        """Show a PCC-owned modal above its owner without leaving it permanently topmost."""
+        dialog.deiconify()
+        dialog.update_idletasks()
+        try:
+            dialog.transient(self.window)
+        except Exception:
+            pass
+        try:
+            dialog.attributes("-topmost", True)
+        except Exception:
+            pass
+        dialog.lift()
+        try:
+            dialog.grab_set()
+        except Exception:
+            pass
+        try:
+            (focus_widget or dialog).focus_force()
+        except Exception:
+            pass
+        # Give Windows one message-loop turn to establish foreground ownership, then
+        # remove topmost so the modal behaves like a normal owned application window.
+        def normalize() -> None:
+            try:
+                dialog.attributes("-topmost", False)
+                dialog.lift()
+            except Exception:
+                pass
+        dialog.after(125, normalize)
+
     def _popup(self, title: str, message: str, *, kind: str = "info", confirm: bool = False, parent: Any | None = None) -> bool:
         tk = self.tk
         host = parent or self.window
@@ -1561,10 +1593,7 @@ class CortexPCCGui:
         dialog.protocol("WM_DELETE_WINDOW", lambda: close(False))
         self._center_modal(dialog, 570, 250 if len(message) < 380 else 310)
         self._round_window(dialog)
-        dialog.deiconify()
-        dialog.lift()
-        dialog.grab_set()
-        dialog.focus_force()
+        self._show_owned_modal(dialog)
         host.wait_window(dialog)
         return bool(result[0])
 
@@ -3822,10 +3851,7 @@ class CortexPCCGui:
         dialog.protocol("WM_DELETE_WINDOW", lambda: close(None))
         self._center_modal(dialog, 760, 455)
         self._round_window(dialog)
-        dialog.deiconify()
-        dialog.lift()
-        dialog.grab_set()
-        editor.focus_force()
+        self._show_owned_modal(dialog, focus_widget=editor)
         self.window.wait_window(dialog)
         return result[0]
 

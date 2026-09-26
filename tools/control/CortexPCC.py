@@ -196,7 +196,14 @@ class CommandRunner:
         creationflags = 0
         popen_kwargs: dict[str, Any] = {}
         if is_windows():
-            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            creationflags = (
+                getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            )
+            startup = subprocess.STARTUPINFO()
+            startup.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 1)
+            startup.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+            popen_kwargs["startupinfo"] = startup
         else:
             popen_kwargs["start_new_session"] = True
         proc = subprocess.Popen(
@@ -821,10 +828,14 @@ class CortexPCC:
         # preserved instead of dropping the operator into a raw CortexPCC.py console.
         launcher = self.ctx.root / "PROJECT_CONTROL_CENTER.cmd"
         if is_windows() and launcher.is_file():
+            startup = subprocess.STARTUPINFO()
+            startup.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 1)
+            startup.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
             subprocess.Popen(
-                ["cmd.exe", "/c", str(launcher)],
+                ["cmd.exe", "/d", "/s", "/c", str(launcher)],
                 cwd=str(self.ctx.root),
-                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                startupinfo=startup,
             )
             return
         gui = self.ctx.tools / "CortexPCCGui.py"

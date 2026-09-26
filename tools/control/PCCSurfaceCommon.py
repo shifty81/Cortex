@@ -364,12 +364,11 @@ class BackendClient:
         return any(alias.casefold() in keys for alias in ALIASES.get(command, ()))
 
     def _provider_python(self) -> str:
-        """Resolve a console Python for the hidden process host.
+        """Resolve console-capable Python for embedded execution.
 
-        The GUI normally runs under pythonw.exe.  Launching the provider with pythonw and
-        CREATE_NO_WINDOW leaves console-subsystem grandchildren without a console, so Cargo,
-        Git, test helpers or PowerShell may allocate transient consoles of their own.  A
-        hidden console Python gives the whole descendant tree one invisible console to inherit.
+        The executable may be python.exe, but the process is created with CREATE_NO_WINDOW
+        by the shared launcher. This keeps stdout/stderr pipe semantics without allocating
+        a visible console window.
         """
         exe = Path(sys.executable)
         if os.name == "nt" and exe.name.casefold() == "pythonw.exe":
@@ -400,15 +399,13 @@ class BackendClient:
 
     @staticmethod
     def _embedded_creationflags(*, process_group: bool = False) -> int:
-        """Create one hidden console host that descendants inherit.
-
-        This deliberately does *not* use CREATE_NO_WINDOW.  A no-console parent can cause
-        native grandchildren to allocate their own console.  Instead, Windows creates one
-        hidden console for the provider and every normal descendant inherits it.
-        """
+        """Return the authoritative no-visible-console flags for embedded PCC work."""
         if os.name != "nt":
             return 0
-        flags = int(getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+        # Embedded PCC work must never create a visible console window.
+        # CREATE_NO_WINDOW is the authoritative GUI policy; process groups remain
+        # available for cancellation without allocating a console.
+        flags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if process_group:
             flags |= int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
         return flags
@@ -425,8 +422,8 @@ class BackendClient:
     def _embedded_env(self, environment_root: Path | None = None) -> dict[str, str]:
         effective_root = (environment_root or self.root).resolve()
         env = apply_shared_toolchain_environment(os.environ.copy(), root=effective_root)
-        env.pop("CORTEX_PCC_EMBEDDED_NO_CONSOLE", None)
-        env["PCC_EMBEDDED_HIDDEN_CONSOLE"] = "1"
+        env["CORTEX_PCC_EMBEDDED_NO_CONSOLE"] = "1"
+        env.pop("PCC_EMBEDDED_HIDDEN_CONSOLE", None)
         control_dir = str(Path(__file__).resolve().parent)
         current = str(env.get("PYTHONPATH") or "").strip()
         parts = [part for part in current.split(os.pathsep) if part] if current else []
