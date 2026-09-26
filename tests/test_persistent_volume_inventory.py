@@ -180,6 +180,81 @@ class PersistentVolumeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             index.query_access_gaps(self.index_file, volume_id=self.volume_id, page=-1)
 
+    def test_root_shortcuts_use_indexed_prefix_and_filter_remains_substring(self):
+        project = self.drive / "projects" / "havenwild"
+        project.mkdir(parents=True)
+        (project / "readme.txt").write_text("x")
+        (self.drive / "Git").mkdir()
+        (self.drive / "other-projects").mkdir()
+        (self.drive / "other-projects" / "readme.txt").write_text("x")
+        self._scan()
+        scoped = index.query_entries(self.index_file, volume_id=self.volume_id,
+                                     query="projects/", match_mode="prefix")
+        self.assertEqual(scoped["match_mode"], "prefix")
+        self.assertIn("projects/havenwild/readme.txt", [r["path"] for r in scoped["rows"]])
+        self.assertNotIn("other-projects/readme.txt", [r["path"] for r in scoped["rows"]])
+        substring = index.query_entries(self.index_file, volume_id=self.volume_id,
+                                        query="projects/")
+        self.assertIn("other-projects/readme.txt", [r["path"] for r in substring["rows"]])
+        with closing(sqlite3.connect(self.index_file)) as db:
+            plan = db.execute("EXPLAIN QUERY PLAN SELECT COUNT(*) FROM entries "
+                              "WHERE path_fold >= ? AND path_fold < ?",
+                              ("projects/", "projects/" + chr(0x10ffff))).fetchall()
+        self.assertTrue(any("SEARCH entries USING COVERING INDEX idx_inventory_fold" in str(r[3])
+                            for r in plan), plan)
+        with self.assertRaises(ValueError):
+            index.query_entries(self.index_file, volume_id=self.volume_id, match_mode="unsupported")
+
+    def test_interactive_substring_paging_does_not_require_exact_count(self):
+        target = self.drive / "projects"
+        target.mkdir()
+        for n in range(13):
+            (target / f"slow_match_{n:03d}.txt").write_text("x")
+        self._scan()
+        initial = index.query_entries(self.index_file, volume_id=self.volume_id,
+                                      query="slow_match", page_size=5, exact_total=False)
+        self.assertIsNone(initial["total"])
+        self.assertEqual(len(initial["rows"]), 5)
+        self.assertTrue(initial["has_next"])
+        second = index.query_entries(self.index_file, volume_id=self.volume_id,
+                                     query="slow_match", page=1, page_size=5, exact_total=False)
+        self.assertIsNone(second["total"])
+        self.assertTrue(second["has_next"])
+        final = index.query_entries(self.index_file, volume_id=self.volume_id,
+                                    query="slow_match", page=2, page_size=5, exact_total=False)
+        self.assertEqual(final["total"], 13)
+        self.assertEqual(len(final["rows"]), 3)
+        self.assertFalse(final["has_next"])
+        exact = index.query_entries(self.index_file, volume_id=self.volume_id,
+                                    query="slow_match", page_size=5)
+        self.assertEqual(exact["total"], 13)
+        self.assertTrue(exact["has_next"])
+        self.assertEqual((self.drive / "vault_catalog.db").read_bytes(), self.initial_catalog)
+
+    def test_superseded_query_aborts_and_next_access_gap_page_remains_available(self):
+        self._scan()
+        # Force an actual SQLite VM scan so the progress handler observes cancellation
+        # *after* the query started, not only at its initial guard.
+        with closing(sqlite3.connect(self.index_file)) as db:
+            db.executemany("INSERT INTO entries(path,parent,path_fold,type) VALUES(?,?,?,'file')",
+                ((f"fixture/{n:06d}", "fixture", f"fixture/{n:06d}") for n in range(12000)))
+            db.execute("INSERT INTO errors(path,operation,message) VALUES('locked','scandir','permission denied')")
+            db.commit()
+        calls = [0]
+        def obsolete():
+            calls[0] += 1
+            return calls[0] > 1
+        with self.assertRaisesRegex(RuntimeError, "superseded"):
+            index.query_entries(self.index_file, volume_id=self.volume_id,
+                                query="never-appears", cancelled=obsolete)
+        self.assertGreater(calls[0], 1)
+        with self.assertRaisesRegex(RuntimeError, "superseded"):
+            index.query_access_gaps(self.index_file, volume_id=self.volume_id, cancelled=lambda: True)
+        result = index.query_access_gaps(self.index_file, volume_id=self.volume_id)
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["rows"][0]["path"], "locked")
+        self.assertEqual((self.drive / "vault_catalog.db").read_bytes(), self.initial_catalog)
+
     def test_explicit_restart_and_error_recording(self):
         (self.drive / "hello.txt").write_text("hi")
         a = self._scan()

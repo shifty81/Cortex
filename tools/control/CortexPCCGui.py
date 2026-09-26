@@ -73,7 +73,7 @@ from PCCVaultStorage import (
     verify_latest_mirror as vault_verify_latest_mirror,
 )
 
-GUI_VERSION = "PCC-GUI-0.15.2"
+GUI_VERSION = "PCC-GUI-0.15.3"
 
 BG = "#090b0e"
 PANEL = "#11151a"
@@ -165,6 +165,7 @@ class CortexPCCGui:
         self._volume_filter_busy = False
         self._volume_filter_pending = False
         self._volume_view_mode = "paths"
+        self._volume_query_match_mode = "substring"
 
         self._configure_styles()
         self._build_shell()
@@ -972,9 +973,9 @@ class CortexPCCGui:
         shortcuts = tk.Frame(left, bg=PANEL)
         shortcuts.pack(fill="x", padx=12, pady=(0, 3))
         for label, needle in (("Top level", ""), ("Projects", "projects/"),
-                              ("Git", "Git/"), ("Cortex", "Cortex")):
+                              ("Git", "Git/"), ("Cortex", "Cortex/")):
             self._button(shortcuts, label,
-                         lambda value=needle: self._volume_apply_quick_filter(value), compact=True).pack(
+                         lambda value=needle: self._volume_apply_quick_filter(value, prefix=bool(value)), compact=True).pack(
                              side="left", padx=(0, 6))
         self.volume_gaps_btn = self._button(shortcuts, "Access Gaps (0)", self._volume_show_errors, compact=True)
         self.volume_gaps_btn.pack(side="right", padx=(8, 0))
@@ -1220,6 +1221,7 @@ class CortexPCCGui:
         if mode not in ("paths", "gaps"):
             raise ValueError("Unknown inventory view")
         self._volume_view_mode = mode
+        self._volume_query_match_mode = "substring"
         self._volume_page = 0
         self.volume_query_var.set("")
         self.volume_paths_btn.configure(state="normal" if mode == "gaps" else "disabled")
@@ -1261,10 +1263,11 @@ class CortexPCCGui:
             "Discovery does not alter source files or the existing Vault catalog."
         )
 
-    def _volume_apply_quick_filter(self, value: str) -> None:
+    def _volume_apply_quick_filter(self, value: str, *, prefix: bool = False) -> None:
         if self._volume_view_mode != "paths":
             self._volume_switch_view("paths", refresh=False)
         self.volume_query_var.set(value)
+        self._volume_query_match_mode = "prefix" if prefix else "substring"
         self._volume_page = 0
         self._show_volume_inventory()
 
@@ -1598,6 +1601,7 @@ class CortexPCCGui:
             return
         query = self.volume_query_var.get()
         mode = self._volume_view_mode
+        match_mode = self._volume_query_match_mode
         self._volume_view_generation += 1
         if self._volume_filter_busy:
             # Coalesce repeated button presses and live refreshes; never flood SQLite
@@ -1608,13 +1612,20 @@ class CortexPCCGui:
         generation = self._volume_view_generation
         page = self._volume_page
         db_path, root, volume_id = self._volume_db_path, self._volume_root, self._volume_id
-        self.volume_results_status.configure(text="Loading a database page in background…", fg=CYAN)
+        self.volume_results_status.configure(text="Loading indexed paths…" if match_mode == "prefix" and mode == "paths"
+                                             else "Searching inventory in background…", fg=CYAN)
 
         def work() -> None:
             try:
                 query_fn = persistent_volume_gap_query if mode == "gaps" else persistent_volume_query
-                view = query_fn(db_path, volume_id=volume_id,
-                    query=query, page=page, page_size=self._volume_page_size)
+                options = {"volume_id": volume_id, "query": query, "page": page,
+                           "page_size": self._volume_page_size,
+                           "cancelled": lambda: generation != self._volume_view_generation}
+                if mode == "paths":
+                    options["match_mode"] = match_mode
+                    # Avoid a multi-million-row COUNT before showing a substring page.
+                    options["exact_total"] = not (bool(query.strip()) and match_mode == "substring")
+                view = query_fn(db_path, **options)
                 status = persistent_volume_status(db_path, root, volume_id=volume_id)
                 self._event_q.put(("volume-view-done", (generation, mode, view, status)))
             except Exception as exc:
@@ -4085,7 +4096,11 @@ class CortexPCCGui:
                         now = time.monotonic()
                         if now - self._volume_progress_last_query >= 3.0:
                             self._volume_progress_last_query = now
-                            self._show_volume_inventory()
+                            # Progress must not cancel a user's filtered search every 3 s.
+                            # The top-level idle view alone needs periodic page refresh.
+                            if (not self._volume_filter_busy and self._volume_view_mode == "paths"
+                                    and not self.volume_query_var.get().strip()):
+                                self._show_volume_inventory()
                 elif kind == "volume-done":
                     self._vault_busy = False
                     self._volume_running = False
@@ -4142,7 +4157,7 @@ class CortexPCCGui:
                         self.volume_tree.insert("", "end", iid=iid, values=values)
                         if item_key == previous_key:
                             selected_iid = iid
-                    total = int(view["total"])
+                    total = view.get("total")
                     current_page = int(view["page"])
                     if not rows and current_page > 0:
                         self._volume_page = 0
@@ -4150,11 +4165,18 @@ class CortexPCCGui:
                         continue
                     self.volume_prev_btn.configure(state="normal" if current_page else "disabled")
                     self.volume_next_btn.configure(state="normal" if view["has_next"] else "disabled")
-                    pages = max(1, (total + self._volume_page_size - 1) // self._volume_page_size)
-                    self.volume_page_label.configure(text=f"Page {current_page + 1:,} / {pages:,}")
-                    label = "access gaps" if mode == "gaps" else "paths"
+                    if total is None:
+                        self.volume_page_label.configure(
+                            text=f"Page {current_page + 1:,} · more available" if view["has_next"]
+                                 else f"Page {current_page + 1:,}")
+                        match_summary = f"{len(rows):,} shown · more available"
+                    else:
+                        pages = max(1, (int(total) + self._volume_page_size - 1) // self._volume_page_size)
+                        self.volume_page_label.configure(text=f"Page {current_page + 1:,} / {pages:,}")
+                        label = "access gaps" if mode == "gaps" else "paths"
+                        match_summary = f"{int(total):,} matching {label} · {len(rows):,} on this page"
                     self.volume_results_status.configure(
-                        text=f"{total:,} matching {label} · {len(rows):,} on this page · "
+                        text=f"{match_summary} · "
                              f"{int((self._volume_result or {}).get('entries') or 0):,} indexed", fg=MUTED)
                     if selected_iid is not None:
                         self.volume_tree.selection_set(selected_iid)

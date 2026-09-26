@@ -7,7 +7,7 @@ The durable directory queue permits idempotent resumption after cancellation/cra
 from __future__ import annotations
 
 import os
-from contextlib import closing
+from contextlib import closing, contextmanager
 import re
 import sqlite3
 import stat
@@ -20,6 +20,7 @@ from typing import Any, Callable
 SCHEMA_VERSION = 1
 BATCH_SIZE = 512
 PAGE_SIZE = 200
+MAX_QUERY_SECONDS = 8.0
 
 
 def _utc() -> str:
@@ -46,9 +47,9 @@ def _connection(db_path: Path, *, writable: bool) -> sqlite3.Connection:
         if not db_path.is_file():
             raise FileNotFoundError(str(db_path))
         # URI mode=ro makes it impossible for an inspector/filter to create an index.
-        connection = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
+        connection = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
     connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA busy_timeout=30000")
+    connection.execute(f"PRAGMA busy_timeout={30000 if writable else 5000}")
     return connection
 
 
@@ -145,38 +146,96 @@ def _escape_like(text: str) -> str:
     return text.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+@contextmanager
+def _query_connection(db_path: Path, *, cancelled: Callable[[], bool] | None = None):
+    """Bound SQL work and allow a superseded UI query to yield to the latest request.
+
+    Queries remain read-only. SQLite invokes the handler during long scans even when
+    the caller is waiting on a large leading-wildcard COUNT or ORDER BY.
+    """
+    with closing(_connection(db_path, writable=False)) as conn:
+        started = time.monotonic()
+        reason = [""]
+
+        def progress() -> int:
+            if cancelled is not None and cancelled():
+                reason[0] = "superseded"
+                return 1
+            if time.monotonic() - started > MAX_QUERY_SECONDS:
+                reason[0] = "timeout"
+                return 1
+            return 0
+
+        conn.set_progress_handler(progress, 1000)
+        try:
+            if cancelled is not None and cancelled():
+                raise RuntimeError("Inventory query superseded by a newer request")
+            yield conn
+        except sqlite3.OperationalError as exc:
+            if "interrupted" in str(exc).lower():
+                if reason[0] == "superseded":
+                    raise RuntimeError("Inventory query superseded by a newer request") from exc
+                if reason[0] == "timeout":
+                    raise TimeoutError("Broad inventory search exceeded 8 seconds; narrow the search or use Projects/Git/Cortex shortcuts") from exc
+            raise
+        finally:
+            conn.set_progress_handler(None, 0)
+
+
 def query_entries(db_path: Path | str, *, volume_id: str, query: str = "", page: int = 0,
-                  page_size: int = PAGE_SIZE) -> dict[str, Any]:
-    """Only one bounded result page is ever materialized. Query is a literal substring."""
+                  page_size: int = PAGE_SIZE, match_mode: str = "substring",
+                  cancelled: Callable[[], bool] | None = None,
+                  exact_total: bool = True) -> dict[str, Any]:
+    """Bounded, cancellable pages. Root-folder shortcuts use an indexed prefix range.
+
+    Explicit Filter retains literal substring semantics, but its duration is bounded.
+    GUI substring previews can skip the full matching-count query; an extra fetched row
+    provides next-page truth while retaining the original exact-count API by default.
+    No full inventory is materialized in Python or written outside the index.
+    """
     if page < 0 or not 1 <= page_size <= 500:
         raise ValueError("Invalid inventory page")
-    with closing(_connection(Path(db_path), writable=False)) as conn:
+    if match_mode not in ("prefix", "substring"):
+        raise ValueError("Invalid inventory matching mode")
+    with _query_connection(Path(db_path), cancelled=cancelled) as conn:
         if _stored_volume_id(conn) != volume_id:
             raise ValueError("Inventory belongs to a different volume")
         needle = query.strip()
-        if needle:
+        if needle and match_mode == "prefix":
+            # Using a BINARY range over case-folded paths allows idx_inventory_fold
+            # to seek instead of scanning 2M+ rows with LIKE '%projects/%'.
+            lower = needle.casefold()
+            predicate, params = "path_fold >= ? AND path_fold < ?", (lower, lower + chr(0x10ffff))
+        elif needle:
             predicate, params = "path_fold LIKE ? ESCAPE '\\'", ("%" + _escape_like(needle) + "%",)
         else:
             predicate, params = "parent=?", ("",)
-        total = int(conn.execute(f"SELECT COUNT(*) FROM entries WHERE {predicate}", params).fetchone()[0])
-        rows = conn.execute(
+        # An exact COUNT on a leading-wildcard LIKE scans the entire volume index.
+        # Show the first page immediately for interactive searches instead.
+        count_now = exact_total or not needle or match_mode == "prefix"
+        total = (int(conn.execute(f"SELECT COUNT(*) FROM entries WHERE {predicate}", params).fetchone()[0])
+                 if count_now else None)
+        limit = page_size if count_now else page_size + 1
+        fetched = conn.execute(
             f"SELECT path,type,size_bytes,modified_ns,boundary FROM entries WHERE {predicate} "
-            "ORDER BY path_fold,path LIMIT ? OFFSET ?", (*params, page_size, page * page_size)).fetchall()
+            "ORDER BY path_fold,path LIMIT ? OFFSET ?", (*params, limit, page * page_size)).fetchall()
+        rows = fetched[:page_size]
+        has_next = ((page + 1) * page_size < total if total is not None
+                    else len(fetched) > page_size)
+        if total is None and not has_next and (rows or page == 0):
+            total = page * page_size + len(rows)
         return {"total": total, "rows": [dict(row) for row in rows], "page": page,
-                "page_size": page_size, "query": needle, "has_next": (page + 1) * page_size < total}
-
+                "page_size": page_size, "query": needle, "match_mode": match_mode,
+                "has_next": has_next}
 
 
 def query_access_gaps(db_path: Path | str, *, volume_id: str, query: str = "", page: int = 0,
-                      page_size: int = PAGE_SIZE) -> dict[str, Any]:
-    """Read-only, bounded inspection of *all* access gaps, not a first-N sample.
-
-    Filtering treats %, _, and backslashes literally. Every page is read via a
-    separate SQLite read-only connection; source files and index state are not changed.
-    """
+                      page_size: int = PAGE_SIZE,
+                      cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
+    """Paginated access-gap inspection, independent of expensive path searches."""
     if page < 0 or not 1 <= page_size <= 500:
         raise ValueError("Invalid access-gap page")
-    with closing(_connection(Path(db_path), writable=False)) as conn:
+    with _query_connection(Path(db_path), cancelled=cancelled) as conn:
         if _stored_volume_id(conn) != volume_id:
             raise ValueError("Inventory belongs to a different volume")
         needle = query.strip()

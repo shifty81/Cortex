@@ -103,6 +103,6 @@ class RepositoryPlaceholderConvergenceTests(unittest.TestCase):
         self.assertIn('persistent_volume_location(self.root_path)', source)
         self.assertIn('cancelled=lambda: self._vault_cancel', source)
         self.assertIn('query_fn = persistent_volume_gap_query if mode == "gaps" else persistent_volume_query', source)
-        self.assertIn('view = query_fn(db_path, volume_id=volume_id,', source)
+        self.assertIn('view = query_fn(db_path, **options)', source)
         self.assertIn('volume-view-done', source)
         self.assertIn('self._show_vault_section("Inventory")', source)
