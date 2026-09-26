@@ -1,0 +1,40 @@
+{
+  "schema": "CORTEX_PROJECT_PASSPORT_V1",
+  "projectId": "havenwild-bevy",
+  "name": "Havenwild Bevy",
+  "kind": "rust-workspace",
+  "root": "C:\\Users\\Shifty\\Desktop\\Havenwild Bevy",
+  "portableRelativeRoot": "",
+  "portableVolumeRoot": "",
+  "trustState": "trusted_local",
+  "integrationState": "auto_bound",
+  "contractSource": "native-project-pcc",
+  "projectContractRequired": false,
+  "provider": "PCC.cmd",
+  "capabilities": [
+    "audit",
+    "build",
+    "diagnostics",
+    "gate",
+    "project",
+    "run",
+    "test",
+    "updates"
+  ],
+  "commands": [
+    "project.status",
+    "gate.full",
+    "build.native",
+    "test.native",
+    "audit.project",
+    "patch.apply",
+    "diagnostics.bundle",
+    "run.runtime"
+  ],
+  "qualityGates": [
+    "gate.full"
+  ],
+  "markers": {},
+  "lastOpenedUtc": "2026-09-25T20:08:44.567693+00:00",
+  "updatedUtc": "2026-09-25T20:08:44.698729+00:00"
+}

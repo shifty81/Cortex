@@ -22,11 +22,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
-import CortexDesktopReadiness as desktop_readiness
-import CortexGitAuthority as source_authority
 import CortexPCCMaintenance as maintenance
 import CortexSourceRollup as source_rollup
-import PCCVaultStorage as vault_storage
 
 PCC_VERSION = "CTX-PCC-12.4"
 DEFAULT_REMOTE = "https://github.com/shifty81/Cortex.git"
@@ -114,7 +111,8 @@ class SessionLog:
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.text_path = self.logs_dir / f"cortex-pcc-{self.session_id}.log"
         self.jsonl_path = self.logs_dir / f"cortex-pcc-{self.session_id}.jsonl"
-        self.command_output_dir = root / "artifacts" / "logs" / "command-output" / self.session_id
+        self.command_output_dir = self.logs_dir / f"cortex-pcc-{self.session_id}-commands"
+        self.command_output_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 
     def emit(self, level: str, message: str, *, phase: str | None = None,
@@ -149,63 +147,11 @@ class CommandResult:
 class CommandRunner:
     """Streaming subprocess runner that works on Windows without selectors."""
 
-    def __init__(self, log: SessionLog, *, base_env: dict[str, str] | None = None) -> None:
+    def __init__(self, log: SessionLog) -> None:
         self.log = log
-        self.base_env = dict(base_env or {})
         self._cancel = threading.Event()
         self._active: subprocess.Popen[str] | None = None
         self._lock = threading.Lock()
-        self._command_index = 0
-
-    @staticmethod
-    def _safe_phase(value: str | None) -> str:
-        text = re.sub(r"[^A-Za-z0-9._-]+", "-", (value or "command").strip()).strip("-._")
-        return text[:80] or "command"
-
-    def _persist_failure_output(self, result: CommandResult, *, phase: str | None, display: str) -> None:
-        """Persist full failed-command output so debug bundles are self-diagnosing."""
-        self._command_index += 1
-        out_dir = self.log.command_output_dir
-        out_dir.mkdir(parents=True, exist_ok=True)
-        stem = f"{self._command_index:03d}-{self._safe_phase(phase)}"
-        text_path = out_dir / f"{stem}.txt"
-        json_path = out_dir / f"{stem}.json"
-        body = (
-            f"COMMAND: {display}\n"
-            f"CWD: {result.cwd}\n"
-            f"EXIT: {result.returncode}\n"
-            f"TIMED_OUT: {result.timed_out}\n"
-            f"CANCELLED: {result.cancelled}\n"
-            "\n===== STDOUT =====\n"
-            f"{result.stdout}"
-            "\n===== STDERR =====\n"
-            f"{result.stderr}"
-        )
-        text_path.write_text(body, encoding="utf-8", errors="replace")
-        maintenance.atomic_write_json(
-            json_path,
-            {
-                "schema": "cortex.command_failure.v1",
-                "sessionId": self.log.session_id,
-                "phase": phase,
-                "command": display,
-                "cwd": result.cwd,
-                "returncode": result.returncode,
-                "elapsedSeconds": result.elapsed_seconds,
-                "timedOut": result.timed_out,
-                "cancelled": result.cancelled,
-                "stdoutBytes": len(result.stdout.encode("utf-8", errors="replace")),
-                "stderrBytes": len(result.stderr.encode("utf-8", errors="replace")),
-                "textArtifact": text_path.name,
-            },
-        )
-        relative = text_path.relative_to(self.log.root).as_posix()
-        self.log.emit(
-            "INFO",
-            f"Captured failed command output: {relative}",
-            phase="evidence:command-output",
-            data={"path": relative},
-        )
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -253,10 +199,6 @@ class CommandRunner:
             creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         else:
             popen_kwargs["start_new_session"] = True
-        child_env = os.environ.copy()
-        child_env.update(self.base_env)
-        if env:
-            child_env.update(env)
         proc = subprocess.Popen(
             args,
             cwd=str(cwd),
@@ -268,7 +210,7 @@ class CommandRunner:
             errors="replace",
             bufsize=1,
             creationflags=creationflags,
-            env=child_env,
+            env=env,
             **popen_kwargs,
         )
         with self._lock:
@@ -340,6 +282,8 @@ class CommandRunner:
             timed_out=timed_out,
             cancelled=cancelled,
         )
+        capture = self.log.command_output_dir / f"{local_stamp()}-{uuid.uuid4().hex[:8]}.txt"
+        capture.write_text(result.stdout + result.stderr, encoding="utf-8")
         level = "PASS" if result.ok else "FAIL"
         suffix = f" ({elapsed:.2f}s, exit {result.returncode})"
         if timed_out:
@@ -347,15 +291,6 @@ class CommandRunner:
         if cancelled:
             suffix += " CANCELLED"
         self.log.emit(level, f"END {display}{suffix}", phase=phase, command=display)
-        if not result.ok:
-            try:
-                self._persist_failure_output(result, phase=phase, display=display)
-            except Exception as exc:
-                self.log.emit(
-                    "WARN",
-                    f"Failed to persist command output evidence: {exc}",
-                    phase="evidence:command-output",
-                )
         return result
 
 
@@ -419,12 +354,11 @@ class GitAuthority(JsonAuthorityBridge):
     def script(self) -> Path:
         return self.ctx.tools / "CortexGitAuthority.py"
 
-    def action(self, action: str, *, message: str = "", extra: Sequence[str] = (), stream: bool = True,
+    def action(self, action: str, *, message: str = "", stream: bool = True,
                timeout: float = 300.0) -> CommandResult:
         args = [action, "--root", str(self.ctx.root), "--remote", self.ctx.remote]
         if message:
             args += ["--message", message]
-        args += list(extra)
         return self._run_python(self.script, args, timeout=timeout, stream=stream, phase=f"git:{action}")
 
     def summary(self) -> dict[str, Any]:
@@ -506,8 +440,6 @@ class GateEngine:
             self.ctx.tools / "CortexGitAuthority.py",
             self.ctx.tools / "CortexPatchAuthority.py",
             self.ctx.tools / "CortexPCCMaintenance.py",
-            self.ctx.tools / "PCCStoragePaths.py",
-            self.ctx.tools / "PCCVaultStorage.py",
         ]
         missing = [str(p.relative_to(self.ctx.root)) for p in required if not p.is_file()]
         return ("FAIL", "missing: " + ", ".join(missing)) if missing else ("PASS", f"{len(required)} required files present")
@@ -585,18 +517,8 @@ class GateEngine:
         result = self.git.action("summary-json", stream=False, timeout=60)
         if not result.ok:
             return "FAIL", f"Git authority exited {result.returncode}: {(result.stderr or result.stdout).strip()[-1000:]}"
-        payload = json.loads(result.stdout.strip().splitlines()[-1])
-        if not isinstance(payload, dict):
-            return "FAIL", "Git authority returned a non-object status payload"
-        if not bool(payload.get("gitReady")):
-            blocker = str(payload.get("gitBlocker") or "GIT_ERROR")
-            detail = str(payload.get("gitDetail") or payload.get("greenDetail") or "Git checkout is unavailable")
-            if blocker == "UNTRUSTED_CHECKOUT":
-                return "FAIL", "Git checkout trust required for this Windows user/machine; run Source Control -> Trust Current Checkout"
-            if blocker == "NOT_INITIALIZED":
-                return "FAIL", "Git repository is not initialized; run Git Setup"
-            return "FAIL", f"Git authority unavailable ({blocker}): {detail[-1000:]}"
-        return "PASS", "Git authority ready and machine-readable"
+        json.loads(result.stdout.strip().splitlines()[-1])
+        return "PASS", "Git authority returned machine-readable status"
 
     def _root_hygiene(self) -> tuple[str, str]:
         summary = maintenance.scan_root_hygiene(self.ctx.root)
@@ -608,21 +530,6 @@ class GateEngine:
             return "WARN", f"root clean; {advisories} legacy operational log item(s) can be normalized"
         return "PASS", "generated operational artifacts are contained under artifacts/"
 
-    def _storage_readiness(self) -> tuple[str, str]:
-        try:
-            vault_storage.ensure_layout(self.ctx.root)
-            status = vault_storage.dependency_status(self.ctx.root)
-            mirror = vault_storage.mirror_status(self.ctx.root)
-        except Exception as exc:
-            return "FAIL", f"Vault/shared dependency storage unavailable: {exc}"
-        vault_root = Path(str(status.get("vaultRoot") or ""))
-        if not vault_root:
-            return "FAIL", "Vault root could not be resolved"
-        if not os.access(vault_root, os.W_OK):
-            return "FAIL", f"Vault root is not writable: {vault_root}"
-        mirror_note = "mirror present" if mirror.get("hasSnapshot") else "no mirror yet; Full Gate will create first certified snapshot"
-        return "PASS", f"Vault={vault_root}; shared dependency paths ready; {mirror_note}"
-
     def _cargo_tools(self) -> tuple[str, str]:
         cargo = shutil.which("cargo")
         rustc = shutil.which("rustc")
@@ -632,19 +539,6 @@ class GateEngine:
         if rustc:
             detail += f", rustc={Path(rustc).name}"
         return "PASS", detail
-
-    def _windows_linker_toolchain(self) -> tuple[str, str]:
-        if os.name != "nt":
-            return "PASS", "non-Windows host; MSVC linker check not required"
-        linker = shutil.which("link.exe")
-        compiler = shutil.which("cl.exe")
-        if not linker or not compiler:
-            return (
-                "FAIL",
-                "MSVC amd64 developer environment is not active (link.exe/cl.exe missing). "
-                "Run HYDRATE_CORTEX_BUILD_TOOLS.cmd, then restart the PCC.",
-            )
-        return "PASS", f"linker={Path(linker).name}, compiler={Path(compiler).name}"
 
     def _cargo_metadata(self) -> tuple[str, str]:
         if not shutil.which("cargo"):
@@ -657,6 +551,16 @@ class GateEngine:
         packages = data.get("packages") or []
         return "PASS", f"workspace metadata valid: {len(packages)} package(s)"
 
+    def _windows_linker_toolchain(self) -> tuple[str, str]:
+        """Windows linker toolchain preflight; non-Windows hosts are not blocked."""
+        if not is_windows():
+            return "PASS", "Windows linker toolchain preflight not required on this host"
+        if shutil.which("link.exe") or shutil.which("lld-link.exe"):
+            return "PASS", "Windows linker toolchain available"
+        hydrate = self.ctx.root / "HYDRATE_CORTEX_BUILD_TOOLS.cmd"
+        hint = str(hydrate) if hydrate.is_file() else "HYDRATE_CORTEX_BUILD_TOOLS.cmd"
+        return "FAIL", f"Windows linker toolchain unavailable; run {hint}"
+
     def quick(self) -> tuple[bool, list[Check]]:
         self.failed_stage = "quick"
         checks = [
@@ -667,7 +571,6 @@ class GateEngine:
             self._check("PowerShell compatibility syntax", self._powershell_syntax),
             self._check("Patch authority", self._patch_authority),
             self._check("Git authority", self._git_authority),
-            self._check("Vault/shared storage", self._storage_readiness),
             self._check("Rust/Cargo tools", self._cargo_tools),
             self._check("Windows linker toolchain", self._windows_linker_toolchain),
             self._check("Cargo workspace metadata", self._cargo_metadata),
@@ -686,7 +589,6 @@ class GateEngine:
                 "PowerShell compatibility syntax": "powershell-syntax",
                 "Patch authority": "patch-authority",
                 "Git authority": "git-authority",
-                "Vault/shared storage": "vault-storage",
                 "Rust/Cargo tools": "cargo-toolchain",
                 "Windows linker toolchain": "windows-linker-toolchain",
                 "Cargo workspace metadata": "cargo-metadata",
@@ -700,20 +602,7 @@ class GateEngine:
         result = self.runner.run(["cargo", *args], cwd=self.ctx.root, timeout=timeout,
                                  stream=True, phase=f"cargo:{label}")
         if not result.ok:
-            if label == "cargo-fmt":
-                self.log.emit(
-                    "FAIL",
-                    "cargo-fmt failed; run `fmt.apply` (or `CortexPCC.py format`) and rerun the gate",
-                    phase="gate",
-                )
-            elif label == "cargo-clippy":
-                self.log.emit(
-                    "FAIL",
-                    "cargo-clippy failed; run `clippy.apply` for machine-fixable lints, review the diff, then rerun the gate",
-                    phase="gate",
-                )
-            else:
-                self.log.emit("FAIL", f"{label} failed", phase="gate")
+            self.log.emit("FAIL", f"{label} failed", phase="gate")
             return False
         return True
 
@@ -749,60 +638,10 @@ class GateEngine:
         for label, args, timeout in steps:
             if not self.cargo_step(label, args, timeout=timeout):
                 return False
-        self.failed_stage = "vault-mirror"
-        try:
-            source_before = source_authority.snapshot(self.ctx.root)
-            mirrored = vault_storage.mirror_project(
-                self.ctx.root,
-                label="full-green-candidate",
-                source_fingerprint=str(source_before.get("fingerprint") or ""),
-                source_path_count=int(source_before.get("pathCount") or 0),
-            )
-            source_after = source_authority.snapshot(self.ctx.root)
-            if source_after.get("fingerprint") != source_before.get("fingerprint"):
-                raise RuntimeError(
-                    "Governed source changed while the Vault mirror was being captured; "
-                    "snapshot remains un-certified and GREEN was not issued"
-                )
-            verification = vault_storage.verify_latest_mirror(self.ctx.root, deep_hash=True)
-            if verification.get("status") != "PASS":
-                raise RuntimeError(
-                    "Vault mirror deep verification failed: "
-                    f"missing={len(verification.get('missing') or [])} "
-                    f"corrupt={len(verification.get('corrupt') or [])}"
-                )
-            if str(verification.get("snapshotId") or "") != str(mirrored.get("snapshotId") or ""):
-                raise RuntimeError("Vault latest snapshot changed before certification")
-            stats = mirrored.get("stats") or {}
-            self.log.emit(
-                "PASS",
-                f"Vault mirror captured and deep-verified {stats.get('files', 0)} governed project file(s); "
-                f"{stats.get('newObjects', 0)} new object(s), {stats.get('reusedObjects', 0)} reused",
-                phase="gate:vault-mirror",
-            )
-        except Exception as exc:
-            self.log.emit("FAIL", f"Vault mirror failed; GREEN not issued: {exc}", phase="gate:vault-mirror")
-            return False
         mark = self.git.action("mark-green", stream=True, timeout=120)
         if not mark.ok:
             self.failed_stage = "mark-green"
             self.log.emit("FAIL", "FULL build/test passed but GREEN source marker failed", phase="gate:full")
-            return False
-        try:
-            certification = vault_storage.certify_snapshot(
-                self.ctx.root,
-                str(mirrored.get("snapshotId") or ""),
-                gate="full",
-                source_marker="GREEN",
-            )
-            self.log.emit(
-                "PASS",
-                f"Certified Vault recovery snapshot {certification.get('snapshotId')}",
-                phase="gate:vault-certification",
-            )
-        except Exception as exc:
-            self.failed_stage = "vault-certification"
-            self.log.emit("FAIL", f"GREEN source marker exists but Vault certification record failed: {exc}", phase="gate:full")
             return False
         self.failed_stage = ""
         self.log.emit("PASS", "FULL QUALITY GATE GREEN / SOURCE CERTIFIED", phase="gate:full")
@@ -841,11 +680,8 @@ class EvidenceBuilder:
                 "pythonExecutable": sys.executable,
             }
             self._write_json(work / "bundle.json", meta)
-            self.log.emit("INFO", f"Evidence: assembling {reason} debug bundle (lightweight evidence path)", phase="evidence")
             self._write_json(work / "git-summary.json", self.git.summary())
-            self.log.emit("INFO", "Evidence: Git summary captured; scanning patch authority", phase="evidence")
             _, patch_summary = self.patch.scan()
-            self.log.emit("INFO", "Evidence: patch summary captured; collecting bounded diagnostics", phase="evidence")
             self._write_json(work / "patch-summary.json", patch_summary)
             for rel in [
                 "project.control.json",
@@ -866,12 +702,6 @@ class EvidenceBuilder:
                     dst = work / "logs" / src.name
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, dst)
-            if self.log.command_output_dir.is_dir():
-                for src in sorted(self.log.command_output_dir.iterdir()):
-                    if src.is_file():
-                        dst = work / "command-output" / src.name
-                        dst.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src, dst)
             receipts = sorted(self.ctx.patch_receipts.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:20] if self.ctx.patch_receipts.is_dir() else []
             for src in receipts:
                 dst = work / "patch-receipts" / src.name
@@ -901,23 +731,6 @@ class EvidenceBuilder:
                     shutil.copy2(src, dst)
             hygiene = maintenance.scan_root_hygiene(self.ctx.root)
             self._write_json(work / "root-hygiene.json", hygiene)
-            # Failure evidence must stay lightweight. Deep storage health/GC walks can
-            # traverse large CAS/shared stores and used to make a failed QUICK/FULL
-            # appear frozen while the debug bundle was being assembled. Deep storage
-            # diagnostics remain explicit PCC operations; gate-failure evidence records
-            # only constant/bounded metadata here.
-            self.log.emit("INFO", "Evidence: collecting lightweight Vault/storage summary", phase="evidence")
-            try:
-                self._write_json(work / "vault-storage.json", {
-                    "schema": "cortex.pcc_debug_vault_summary.v1",
-                    "mode": "LIGHTWEIGHT",
-                    "dependencies": vault_storage.dependency_status(self.ctx.root),
-                    "mirror": vault_storage.mirror_status(self.ctx.root),
-                    "deepHealthCollected": False,
-                    "note": "Run explicit storage-health / vault-gc-plan operations for deep diagnostics.",
-                })
-            except Exception as exc:
-                self._write_json(work / "vault-storage.json", {"status": "ERROR", "mode": "LIGHTWEIGHT", "error": str(exc)})
             manifest = maintenance.debug_manifest_for_tree(work)
             self._write_json(work / "MANIFEST.json", manifest)
             out = self.ctx.debug_dir / f"Cortex_DebugBundle_{stamp}_{safe_reason}.zip"
@@ -949,11 +762,7 @@ class CortexPCC:
     def __init__(self, root: Path, *, remote: str = DEFAULT_REMOTE, quiet: bool = False) -> None:
         self.ctx = ProjectContext.create(root, remote)
         self.log = SessionLog(root, quiet=quiet)
-        vault_storage.ensure_layout(root)
-        shared_env = vault_storage.dependency_environment(root)
-        if os.environ.get("CORTEX_SHARED_DEPENDENCIES", "1").strip().casefold() in {"0", "false", "off", "no"}:
-            shared_env = {}
-        self.runner = CommandRunner(self.log, base_env=shared_env)
+        self.runner = CommandRunner(self.log)
         self.git = GitAuthority(self.ctx, self.runner, self.log)
         self.patch = PatchAuthority(self.ctx, self.runner, self.log)
         self.gates = GateEngine(self.ctx, self.runner, self.log, self.git, self.patch)
@@ -1058,10 +867,6 @@ class CortexPCC:
                 "powershell": shutil.which("pwsh") or shutil.which("powershell") or shutil.which("powershell.exe"),
             },
             "cargoTarget": str(target) if target else None,
-            "storage": {
-                "dependencies": vault_storage.dependency_status(self.ctx.root),
-                "mirror": vault_storage.mirror_status(self.ctx.root),
-            },
             "binaries": {"cli": str(cli) if cli and cli.is_file() else None, "gui": str(gui) if gui and gui.is_file() else None},
             "session": {"id": self.log.session_id, "log": str(self.log.text_path), "jsonl": str(self.log.jsonl_path)},
         }
@@ -1247,209 +1052,6 @@ class CortexPCC:
             )
         return 0 if ok else 1
 
-    def storage_status(self, *, as_json: bool = False) -> int:
-        payload = {
-            "schema": "cortex.pcc_storage_status.v1",
-            "dependencies": vault_storage.dependency_status(self.ctx.root),
-            "mirror": vault_storage.mirror_status(self.ctx.root),
-        }
-        if as_json:
-            print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
-            return 0
-        deps = payload["dependencies"]
-        mirror = payload["mirror"]
-        print("VAULT / SHARED STORAGE")
-        print(f" Vault root     : {deps.get('vaultRoot')}")
-        print(f" Project key    : {deps.get('projectKey')}")
-        print(f" Shared enabled : {deps.get('enabled')}")
-        print(f" Cargo home     : {(deps.get('paths') or {}).get('cargo_home')}")
-        print(f" Cargo target   : {(deps.get('paths') or {}).get('cargo_target_dir')}")
-        print(f" sccache        : {deps.get('sccache') or 'not installed (optional)'}")
-        if mirror.get("hasSnapshot"):
-            latest = mirror.get("latest") or {}
-            stats = latest.get("stats") or {}
-            print(f" Latest mirror  : {latest.get('snapshotId')}")
-            print(f" Mirrored files : {stats.get('files', 0)}")
-            print(f" New objects    : {stats.get('newObjects', 0)}")
-        else:
-            print(" Latest mirror  : none yet")
-        return 0
-
-    def storage_reclaim_plan(self, *, all_registered: bool = False) -> int:
-        roots: list[Path] = [self.ctx.root.resolve()]
-        if all_registered:
-            try:
-                from PCCSurfaceCommon import ProjectRegistry
-                for entry in ProjectRegistry().entries():
-                    candidate = Path(entry.root).expanduser().resolve()
-                    if candidate.is_dir() and os.path.normcase(str(candidate)) not in {os.path.normcase(str(x)) for x in roots}:
-                        roots.append(candidate)
-            except Exception as exc:
-                self.log.emit("WARN", f"Registered-project inventory unavailable for reclaim plan: {exc}", phase="storage:reclaim-plan")
-        plans = [vault_storage.reclaim_plan(root) for root in roots]
-        total = sum(int(plan.get("reclaimBytes") or 0) for plan in plans)
-        print("SHARED STORAGE RECLAIM PLAN (DRY-RUN ONLY)")
-        print(f" Projects    : {len(plans)}")
-        print(f" Candidates  : {sum(int(plan.get('candidateCount') or 0) for plan in plans)}")
-        print(f" Reclaimable : {total} bytes")
-        for plan in plans:
-            for item in plan.get("candidates") or []:
-                print(f" - {item.get('path')} :: {item.get('bytes')} bytes :: {item.get('reason')}")
-        print("No files were moved or deleted. Cleanup remains a separate governed action after Windows certification.")
-        return 0
-
-    def storage_health(self, *, as_json: bool = False) -> int:
-        try:
-            payload = vault_storage.storage_health(self.ctx.root)
-        except Exception as exc:
-            self.log.emit("FAIL", f"Storage health inspection failed: {exc}", phase="storage:health")
-            return 1
-        if as_json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-            return 0 if payload.get("status") in {"PASS", "WARN"} else 1
-        print("VAULT STORAGE HEALTH")
-        print(f" Status       : {payload.get('status')}")
-        print(f" Vault        : {payload.get('vaultRoot')}")
-        print(f" Projects     : {payload.get('projects', 0)}")
-        print(f" Snapshots    : {payload.get('snapshots', 0)}")
-        print(f" CAS objects  : {(payload.get('cas') or {}).get('files', 0)}")
-        print(f" CAS bytes    : {(payload.get('cas') or {}).get('bytes', 0)}")
-        print(f" GC eligible  : {payload.get('gcGarbageObjects', 0)} object(s) / {payload.get('gcGarbageBytes', 0)} bytes")
-        print(f" Local reclaim: {payload.get('currentProjectReclaimBytes', 0)} bytes")
-        for warning in payload.get("warnings") or []:
-            print(f" WARN         : {warning}")
-        return 0
-
-    def vault_retention(self, *, apply: bool = False) -> int:
-        try:
-            payload = vault_storage.apply_snapshot_retention(self.ctx.root) if apply else vault_storage.snapshot_retention_plan(self.ctx.root)
-        except Exception as exc:
-            self.log.emit("FAIL", f"Vault snapshot retention failed: {exc}", phase="vault:retention")
-            return 1
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        level = "PASS" if apply else "INFO"
-        self.log.emit(level, f"Vault snapshot retention {'applied' if apply else 'planned'}: prune={payload.get('pruneCount', 0)}", phase="vault:retention")
-        return 0
-
-    def vault_gc(self, *, action: str = "plan") -> int:
-        try:
-            if action == "plan":
-                payload = vault_storage.cas_gc_plan(self.ctx.root)
-            elif action == "stage":
-                payload = vault_storage.stage_cas_gc(self.ctx.root)
-            elif action == "restore":
-                payload = vault_storage.restore_cas_gc(self.ctx.root)
-            elif action == "purge":
-                payload = vault_storage.purge_cas_gc(self.ctx.root)
-            else:
-                raise ValueError(action)
-        except Exception as exc:
-            self.log.emit("FAIL", f"Vault CAS GC {action} failed: {exc}", phase=f"vault:gc:{action}")
-            return 1
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        self.log.emit("PASS" if action != "plan" else "INFO", f"Vault CAS GC {action} complete", phase=f"vault:gc:{action}")
-        return 0
-
-    def storage_prepare(self) -> int:
-        try:
-            paths = vault_storage.ensure_layout(self.ctx.root)
-        except Exception as exc:
-            self.log.emit("FAIL", f"Shared dependency/Vault storage prepare failed: {exc}", phase="storage:prepare")
-            return 1
-        self.log.emit("PASS", f"Shared dependency/Vault storage ready: {paths.get('vault_root')}", phase="storage:prepare")
-        for key, value in sorted(paths.items()):
-            print(f" {key:20} {value}")
-        print("Legacy dependency caches are NOT deleted automatically. Existing caches may be retired only after explicit migration/verification.")
-        return 0
-
-    def vault_mirror(self, *, label: str = "working") -> int:
-        try:
-            payload = vault_storage.mirror_project(self.ctx.root, label=label)
-        except Exception as exc:
-            self.log.emit("FAIL", f"Project Vault mirror failed: {exc}", phase="vault:mirror")
-            return 1
-        stats = payload.get("stats") or {}
-        self.log.emit(
-            "PASS",
-            f"Project mirrored to Vault: {stats.get('files', 0)} files; "
-            f"{stats.get('newObjects', 0)} new object(s), {stats.get('reusedObjects', 0)} reused",
-            phase="vault:mirror",
-        )
-        print(f"Snapshot: {payload.get('snapshotId')}")
-        print(f"Vault    : {payload.get('vaultRoot')}")
-        return 0
-
-    def vault_mirror_all_registered(self) -> int:
-        try:
-            from PCCSurfaceCommon import ProjectRegistry
-            entries = ProjectRegistry().entries()
-        except Exception as exc:
-            self.log.emit("FAIL", f"Registered-project inventory unavailable: {exc}", phase="vault:mirror-all")
-            return 1
-        roots: list[Path] = []
-        seen: set[str] = set()
-        for entry in entries:
-            root = Path(entry.root).expanduser().resolve()
-            key = os.path.normcase(str(root))
-            if root.is_dir() and key not in seen:
-                seen.add(key)
-                roots.append(root)
-        current_key = os.path.normcase(str(self.ctx.root.resolve()))
-        if current_key not in seen:
-            roots.insert(0, self.ctx.root.resolve())
-        failures: list[str] = []
-        for index, root in enumerate(roots, start=1):
-            self.log.emit("INFO", f"Mirroring registered project {index}/{len(roots)}: {root}", phase="vault:mirror-all")
-            try:
-                payload = vault_storage.mirror_project(root, label="registered-project-sweep")
-                stats = payload.get("stats") or {}
-                self.log.emit("PASS", f"Mirrored {root.name}: {stats.get('files', 0)} file(s)", phase="vault:mirror-all")
-            except Exception as exc:
-                failures.append(f"{root}: {exc}")
-                self.log.emit("FAIL", f"Mirror failed for {root}: {exc}", phase="vault:mirror-all")
-        print(f"Registered projects: {len(roots)}")
-        print(f"Mirror failures    : {len(failures)}")
-        for failure in failures:
-            print(f" - {failure}")
-        return 1 if failures else 0
-
-    def vault_verify(self, *, deep: bool = False) -> int:
-        result = vault_storage.verify_latest_mirror(self.ctx.root, deep_hash=deep)
-        print(json.dumps(result, indent=2, sort_keys=True))
-        if result.get("status") == "PASS":
-            self.log.emit("PASS", f"Latest Vault mirror verified ({result.get('checkedObjects', 0)} objects)", phase="vault:verify")
-            return 0
-        self.log.emit("FAIL", f"Vault mirror verification failed: missing={len(result.get('missing') or [])}, corrupt={len(result.get('corrupt') or [])}", phase="vault:verify")
-        return 1
-
-    def format_source(self) -> int:
-        """Apply canonical rustfmt formatting as an explicit, user-invoked source mutation."""
-        if not shutil.which("cargo"):
-            self.log.emit("FAIL", "Cannot format source: cargo not found on PATH", phase="cargo:format-apply")
-            return 1
-        apply_result = self.runner.run(
-            ["cargo", "fmt", "--all"],
-            cwd=self.ctx.root,
-            timeout=300,
-            stream=True,
-            phase="cargo:format-apply",
-        )
-        if not apply_result.ok:
-            self.log.emit("FAIL", "Canonical Rust formatting apply failed", phase="cargo:format-apply")
-            return 1
-        check_result = self.runner.run(
-            ["cargo", "fmt", "--all", "--", "--check"],
-            cwd=self.ctx.root,
-            timeout=300,
-            stream=True,
-            phase="cargo:format-verify",
-        )
-        if not check_result.ok:
-            self.log.emit("FAIL", "Rust formatting verification still fails after apply", phase="cargo:format-verify")
-            return 1
-        self.log.emit("PASS", "Canonical Rust formatting applied and verified", phase="cargo:format-apply")
-        return 0
-
     def build(self, *, release: bool = False, package: str | None = None) -> int:
         args = ["build"]
         if package:
@@ -1500,26 +1102,15 @@ class CortexPCC:
                 proc = subprocess.Popen([str(gui), str(self.ctx.root)], cwd=str(self.ctx.root),
                                         stdout=output, stderr=subprocess.STDOUT,
                                         stdin=subprocess.DEVNULL)
-            observation = desktop_readiness.wait_for_visible_window(
-                proc.pid,
-                proc.poll,
-                timeout=15.0,
-            )
-            if observation.status != "WINDOW_VISIBLE":
-                self.log.emit(
-                    "FAIL",
-                    f"Cortex Desktop startup not certified ({observation.status}): {observation.detail}; "
-                    f"runtime log: {runtime_log}",
-                )
+            time.sleep(1.0)
+            returncode = proc.poll()
+            if returncode is not None:
+                self.log.emit("FAIL", f"Cortex Desktop exited during startup (exit={returncode}); runtime log: {runtime_log}; UI not certified")
                 return 2
         except OSError as exc:
             self.log.emit("FAIL", f"Cortex Desktop process could not be started: {exc}; runtime log: {runtime_log}")
             return 2
-        self.log.emit(
-            "PASS",
-            f"Cortex Desktop visible native window observed for PID {proc.pid}; "
-            f"provider/chat readiness remains separate; runtime log: {runtime_log}",
-        )
+        self.log.emit("INFO", f"Cortex Desktop process running (PID={proc.pid}); UI handshake not certified; log: {runtime_log}")
         return 0
 
     def startup(self) -> None:
@@ -1563,22 +1154,10 @@ class CortexPCC:
             print(" 13 Open failed patch history")
             print(" 14 Open patch receipts")
             print(" 15 Root artifact hygiene scan / repair")
-            print(" 16 Vault / shared dependency storage status")
-            print(" 17 Prepare shared dependency paths")
-            print(" 18 Mirror current project into Vault")
-            print(" 27 Space reclaim plan - current project, dry-run")
-            print(" 28 Space reclaim plan - all registered projects, dry-run")
-            print(" 29 Vault storage health / accounting")
-            print(" 34 Snapshot retention plan - dry-run")
-            print(" 35 Vault CAS garbage-collection plan - dry-run")
-            print(" 19 Apply + verify canonical Rust formatting")
-            print(" 26 Mirror all registered projects into Vault")
             print(" 20 Quick gate")
             print(" 21 Fast gate")
             print(" 22 FULL QUALITY GATE / CERTIFY GREEN")
             print(" 23 Create debug / certification bundle")
-            print(" 24 Verify latest Vault project mirror")
-            print(" 25 Deep-hash verify latest Vault project mirror")
             print(" 30 Commit current source only if FULL GREEN matches")
             print(" 31 Commit + push only if FULL GREEN matches")
             print(" 32 Push committed main to origin")
@@ -1603,22 +1182,10 @@ class CortexPCC:
             elif choice == "13": open_folder(self.ctx.patch_failed)
             elif choice == "14": open_folder(self.ctx.patch_receipts)
             elif choice == "15": self.root_hygiene(repair=True)
-            elif choice == "16": self.storage_status()
-            elif choice == "17": self.storage_prepare()
-            elif choice == "18": self.vault_mirror(label="manual-working")
-            elif choice == "19": self.format_source()
             elif choice == "20": self.gate("quick")
             elif choice == "21": self.gate("fast")
             elif choice == "22": self.gate("full")
             elif choice == "23": self.evidence.create(reason="MANUAL_CERTIFICATION", open_after=True)
-            elif choice == "24": self.vault_verify(deep=False)
-            elif choice == "25": self.vault_verify(deep=True)
-            elif choice == "26": self.vault_mirror_all_registered()
-            elif choice == "27": self.storage_reclaim_plan(all_registered=False)
-            elif choice == "28": self.storage_reclaim_plan(all_registered=True)
-            elif choice == "29": self.storage_health()
-            elif choice == "34": self.vault_retention(apply=False)
-            elif choice == "35": self.vault_gc(action="plan")
             elif choice in {"30", "31", "60"}:
                 default = f"Cortex GREEN checkpoint - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
                 msg = input(f"Commit message [{default}]: ").strip() or default
@@ -1741,24 +1308,15 @@ def run_universal_python_regressions(root: Path, runner: CommandRunner | None = 
         root / "tools/control/tests/test_cortex_upcc_a03_restart.py",
         root / "tools/control/tests/test_cortex_upcc_a04_parity.py",
         root / "tools/control/tests/test_cortex_upcc_a05_contract.py",
-        root / "tools/control/tests/test_pcc_vault_storage.py",
-        root / "tools/control/tests/test_cortex_bootstrap_portable.py",
     ]
     missing = [str(p.relative_to(root)) for p in tests if not p.is_file()]
     if missing:
         print("[FAIL] Missing mandatory Python PCC tests: " + ", ".join(missing))
         return 2
-    command = [*which_python(), "-B", "-m", "unittest", "-v", "-b", *map(str, tests)]
+    command = [*which_python(), "-B", "-m", "unittest", "-v", *map(str, tests)]
     if runner:
-        result = runner.run(command, cwd=root, timeout=900, stream=False, phase="gate:python-pcc-tests")
-        combined = result.stdout + "\n" + result.stderr
-        match = re.search(r"Ran\s+(\d+)\s+tests?", combined)
-        if result.ok:
-            runner.log.emit("PASS", f"Python PCC regressions: {match.group(1) if match else 'all'} test(s) passed", phase="gate:python-pcc-tests")
-        else:
-            tail = "\n".join(combined.splitlines()[-80:]).strip()
-            if tail:
-                print(tail)
+        result = runner.run(command, cwd=root, timeout=900, stream=True, phase="gate:python-pcc-tests")
+        if not result.ok:
             return result.returncode if result.returncode != 0 else 2
     else:
         result = subprocess.run(command, cwd=str(root), check=False)
@@ -1769,20 +1327,12 @@ def run_universal_python_regressions(root: Path, runner: CommandRunner | None = 
         if not list(provider_tests.glob("test_*.py")):
             print("[FAIL] Universal Python PCC provider test suite is empty: " + str(provider_tests))
             return 2
-        command = [*which_python(), "-B", "-m", "unittest", "discover", "-s", str(provider_tests), "-p", "test_*.py", "-v", "-b"]
+        command = [*which_python(), "-B", "-m", "unittest", "discover", "-s", str(provider_tests), "-p", "test_*.py", "-v"]
         environment = os.environ.copy()
         provider_src = str(root / "tools/pcc/src")
         environment["PYTHONPATH"] = provider_src + (os.pathsep + environment["PYTHONPATH"] if environment.get("PYTHONPATH") else "")
         if runner:
-            result = runner.run(command, cwd=root, timeout=900, stream=False, phase="gate:universal-provider-tests", env=environment)
-            combined = result.stdout + "\n" + result.stderr
-            match = re.search(r"Ran\s+(\d+)\s+tests?", combined)
-            if result.ok:
-                runner.log.emit("PASS", f"Universal PCC provider regressions: {match.group(1) if match else 'all'} test(s) passed", phase="gate:universal-provider-tests")
-            else:
-                tail = "\n".join(combined.splitlines()[-80:]).strip()
-                if tail:
-                    print(tail)
+            result = runner.run(command, cwd=root, timeout=900, stream=True, phase="gate:universal-provider-tests", env=environment)
             return result.returncode if not result.timed_out and not result.cancelled else 2
         return subprocess.run(command, cwd=str(root), check=False, env=environment).returncode
     print("[FAIL] Missing Universal Python PCC provider test directory: " + str(provider_tests))
@@ -1794,7 +1344,7 @@ def run_self_tests(root: Path, runner: CommandRunner | None = None) -> int:
     if not test_file.is_file():
         print(f"Self-test file missing: {test_file}")
         return 1
-    argv = [*which_python(), "-m", "unittest", "-v", "-b", str(test_file)]
+    argv = [*which_python(), "-m", "unittest", "-v", str(test_file)]
     if runner:
         result = runner.run(argv, cwd=root, timeout=600, stream=True, phase="pcc:self-test")
         return result.returncode
@@ -1806,20 +1356,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("command", nargs="?", default="interactive", choices=[
         "interactive", "status", "status-json", "quick", "fast", "full",
         "patch-status", "patch-apply", "debug-bundle", "git-status", "git-review",
-        "git-history", "git-verify", "git-fetch", "git-compare", "git-pull", "git-setup", "git-trust",
-        "git-identity", "git-identity-status", "commit-green", "commit-push-green", "push", "build", "build-release", "format",
-        "storage-status", "storage-status-json", "storage-health", "storage-health-json", "storage-prepare", "storage-reclaim-plan", "storage-reclaim-plan-all", "vault-mirror", "vault-mirror-all", "vault-verify", "vault-verify-deep",
-        "vault-retention-plan", "vault-retention-apply", "vault-gc-plan", "vault-gc-stage", "vault-gc-restore", "vault-gc-purge",
-        "vault-intake-status", "vault-intake-audit", "vault-intake-handoff",
-        "launch-gui", "self-test", "doctor", "doctor-json", "failure-doctor", "failure-doctor-json", "repair-plan", "repair-plan-json", "repair-current", "repair-current-full",
+        "git-history", "git-verify", "git-fetch", "git-compare", "git-pull", "git-setup",
+        "commit-green", "commit-push-green", "push", "build", "build-release",
+        "launch-gui", "self-test", "doctor", "doctor-json",
         "root-hygiene", "root-hygiene-fix", "artifact-status",
-        "cortex-worker-status", "cortex-worker-build", "cortex-worker-build-release",
-        "artifact-prune", "artifact-prune-apply", "verify-latest-debug", "source-rollup", "universal-audit", "universal-plan", "forgepy-parity", "contract-migrate",
+        "artifact-prune", "artifact-prune-apply", "verify-latest-debug", "source-rollup", "universal-audit", "universal-plan", "forgepy-parity", "contract-migrate", "volume-status", "volume-init",
+        "format", "storage-status", "storage-prepare", "storage-reclaim-plan", "vault-mirror", "vault-mirror-all", "vault-verify", "vault-retention-plan", "vault-gc-plan", "git-identity", "git-identity-status",
     ])
     parser.add_argument("--root")
     parser.add_argument("--scan-root", action="append", default=[], help="Additional roots for read-only PCC inventory")
-    parser.add_argument("--intake-root", help="Optional exact Vault Intake root override for intake audit")
-    parser.add_argument("--no-archive-inventory", action="store_true", help="Skip ZIP central-directory inventory during Vault Intake audit")
     parser.add_argument("--max-depth", type=int, default=5, help="Bounded inventory depth")
     parser.add_argument("--gate-key", default="full", help="Requested gate for universal-plan; plan only, no execution")
     parser.add_argument("--project-root", help="Other repository to inspect using universal-plan (read-only)")
@@ -1829,9 +1374,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--strict", action="store_true", help="Fail forgepy-parity on missing source anchors or known contract blockers")
     parser.add_argument("--remote", default=DEFAULT_REMOTE)
     parser.add_argument("--message", default="")
-    parser.add_argument("--git-name", default="")
-    parser.add_argument("--git-email", default="")
-    parser.add_argument("--git-scope", choices=["local", "global"], default="local")
     parser.add_argument("--yes", action="store_true", help="Do not prompt for explicit patch apply confirmation.")
     parser.add_argument("--no-evidence", action="store_true", help="Skip debug bundle creation for gate command.")
     parser.add_argument("--reason", default="HEADLESS_MANUAL")
@@ -1839,6 +1381,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--exit-code", type=int, default=0)
     parser.add_argument("--open-folder", action="store_true")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--git-name", default="")
+    parser.add_argument("--git-email", default="")
+    parser.add_argument("--git-scope", default="local", choices=["local", "global"])
     return parser
 
 
@@ -1846,6 +1391,15 @@ def _dispatch_main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     root = normalize_root(args.root)
     cmd = args.command
+    if cmd in {"volume-status", "volume-init"}:
+        from PCCVolumeAuthority import discover_volume_root, initialize_volume, resolve_volume_context
+        if cmd == "volume-init":
+            volume_root = discover_volume_root(root) or root.parent
+            ctx = initialize_volume(volume_root, cortex_root=root)
+        else:
+            ctx = resolve_volume_context(root, create=False)
+        print(json.dumps({"schema": "cortex.volume.status.v1", **ctx.as_dict()}, indent=2))
+        return 0
     if cmd == "contract-migrate":
         # Inspection must not bootstrap the app or invoke any project command.
         # Mutation is explicitly opted into with --yes, backup and shared lock.
@@ -1881,111 +1435,51 @@ def _dispatch_main(argv: Sequence[str] | None = None) -> int:
         for scan_root in args.scan_root:
             audit_args.extend(["--scan-root", scan_root])
         return audit_main(audit_args)
-    if cmd in {"failure-doctor", "failure-doctor-json"}:
-        # Read-only structured failure classification; no controller/session creation.
-        from PCCBuildDoctor import main as failure_doctor_main
-        doctor_args = ["--root", str(root)]
-        if cmd == "failure-doctor-json":
-            doctor_args.append("--json")
-        return failure_doctor_main(doctor_args)
-    if cmd in {"repair-plan", "repair-plan-json", "repair-current", "repair-current-full"}:
-        # Deterministic repair coordination is independent from the ordinary PCC
-        # controller.  Planning is read-only; apply paths require explicit --yes
-        # and keep all project-file mutations inside the Cortex transaction.
-        from PCCRepairCoordinator import main as repair_main
-        action = {
-            "repair-plan": "plan",
-            "repair-plan-json": "plan",
-            "repair-current": "apply",
-            "repair-current-full": "apply-full",
+    if cmd in {"git-identity", "git-identity-status"}:
+        import CortexGitAuthority as git_authority
+        if cmd == "git-identity-status":
+            print(json.dumps(git_authority.git_identity_status(root), indent=2))
+            return 0
+        if not args.git_name or not args.git_email:
+            raise PCCError("git-identity requires --git-name and --git-email")
+        return git_authority.set_git_identity(root, args.git_name, args.git_email, args.git_scope)
+    if cmd in {"storage-status", "storage-prepare", "storage-reclaim-plan", "vault-mirror", "vault-mirror-all", "vault-verify", "vault-retention-plan", "vault-gc-plan"}:
+        import PCCVaultStorage as storage
+        fn = {
+            "storage-status": storage.storage_health,
+            "storage-prepare": storage.ensure_layout,
+            "storage-reclaim-plan": storage.reclaim_plan,
+            "vault-mirror": storage.mirror_project,
+            "vault-mirror-all": storage.mirror_project,
+            "vault-verify": storage.verify_latest_mirror,
+            "vault-retention-plan": storage.retention_plan,
+            "vault-gc-plan": storage.cas_gc_plan,
         }[cmd]
-        repair_args = [action, "--root", str(root)]
-        if cmd == "repair-plan-json":
-            repair_args.append("--json")
-        if args.yes:
-            repair_args.append("--yes")
-        if args.message:
-            repair_args.extend(["--message", args.message])
-        return repair_main(repair_args)
-    if cmd in {"cortex-worker-status", "cortex-worker-build", "cortex-worker-build-release"}:
-        # Worker bootstrap is independent from FULL.  Status is read-only; build
-        # creates only Cargo build artifacts/receipt and never mutates project source.
-        from PCCCortexWorker import main as worker_main
-        action = {
-            "cortex-worker-status": "status",
-            "cortex-worker-build": "build",
-            "cortex-worker-build-release": "build-release",
-        }[cmd]
-        return worker_main([action, "--root", str(root)])
-    if cmd in {"vault-intake-status", "vault-intake-audit", "vault-intake-handoff"}:
-        # Intake audit is deliberately independent from the project build/gate path.
-        # It catalogs the governed Vault Intake and emits planning evidence only;
-        # it never moves, deletes, executes or extracts intake content.
-        from PCCVaultIntakeAudit import main as intake_main
-        action = {
-            "vault-intake-status": "status",
-            "vault-intake-audit": "scan",
-            "vault-intake-handoff": "handoff",
-        }[cmd]
-        intake_args = [action, "--root", str(root)]
-        if args.intake_root:
-            intake_args.extend(["--intake-root", args.intake_root])
-        if args.no_archive_inventory:
-            intake_args.append("--no-archive-inventory")
-        return intake_main(intake_args)
+        result = fn(root)
+        print(json.dumps(result if result is not None else {"status":"PASS"}, indent=2, default=str))
+        return 0
     pcc = CortexPCC(root, remote=args.remote, quiet=(args.quiet or cmd == "status-json"))
     if cmd == "interactive": return pcc.interactive()
     if cmd == "status": return pcc.status()
     if cmd == "status-json": return pcc.status(as_json=True)
-    if cmd == "storage-status": return pcc.storage_status(as_json=False)
-    if cmd == "storage-status-json": return pcc.storage_status(as_json=True)
-    if cmd == "storage-health": return pcc.storage_health(as_json=False)
-    if cmd == "storage-health-json": return pcc.storage_health(as_json=True)
-    if cmd == "storage-prepare": return pcc.storage_prepare()
-    if cmd == "storage-reclaim-plan": return pcc.storage_reclaim_plan(all_registered=False)
-    if cmd == "storage-reclaim-plan-all": return pcc.storage_reclaim_plan(all_registered=True)
-    if cmd == "vault-mirror": return pcc.vault_mirror(label="manual-cli")
-    if cmd == "vault-mirror-all": return pcc.vault_mirror_all_registered()
-    if cmd == "vault-verify": return pcc.vault_verify(deep=False)
-    if cmd == "vault-verify-deep": return pcc.vault_verify(deep=True)
-    if cmd == "vault-retention-plan": return pcc.vault_retention(apply=False)
-    if cmd == "vault-retention-apply":
-        if not args.yes:
-            print("Refusing metadata retention mutation without --yes")
-            return 2
-        return pcc.vault_retention(apply=True)
-    if cmd == "vault-gc-plan": return pcc.vault_gc(action="plan")
-    if cmd in {"vault-gc-stage", "vault-gc-restore", "vault-gc-purge"}:
-        if not args.yes:
-            print(f"Refusing {cmd} mutation without --yes")
-            return 2
-        return pcc.vault_gc(action={"vault-gc-stage":"stage", "vault-gc-restore":"restore", "vault-gc-purge":"purge"}[cmd])
     if cmd in {"quick", "fast", "full"}: return pcc.gate(cmd, evidence=not args.no_evidence)
     if cmd == "patch-status": return 0 if pcc.patch_status()[1].get("Invalid", 0) == 0 else 2
     if cmd == "patch-apply": return pcc.patch_apply(confirm=not args.yes)
     if cmd == "debug-bundle":
         pcc.evidence.create(reason=args.reason, failed_stage=args.failed_stage, exit_code=args.exit_code, open_after=args.open_folder)
         return 0
-    if cmd == "git-identity-status":
-        return pcc.git.action("identity-status", stream=True).returncode
-    if cmd == "git-identity":
-        return pcc.git.action(
-            "identity-set",
-            extra=["--name", args.git_name, "--email", args.git_email, "--scope", args.git_scope],
-            stream=True,
-        ).returncode
     git_map = {
         "git-status": "status", "git-review": "review", "git-history": "history",
         "git-verify": "verify", "git-fetch": "fetch", "git-compare": "compare",
-        "git-pull": "pull", "git-setup": "setup", "git-trust": "trust", "push": "push",
+        "git-pull": "pull", "git-setup": "setup", "push": "push",
     }
     if cmd in git_map: return pcc.git.action(git_map[cmd], stream=True).returncode
     if cmd in {"commit-green", "commit-push-green"}:
         msg = args.message or "Cortex GREEN checkpoint"
         return pcc.git.action(cmd, message=msg, stream=True).returncode
+    if cmd == "format": return pcc.runner.run(["cargo", "fmt", "--all", "--", "--check"], cwd=root, timeout=300, stream=True, phase="format").returncode
     if cmd == "build": return pcc.build()
     if cmd == "build-release": return pcc.build(release=True)
-    if cmd == "format": return pcc.format_source()
     if cmd == "launch-gui": return pcc.launch_gui()
     if cmd == "root-hygiene": return pcc.root_hygiene(repair=False)
     if cmd == "root-hygiene-fix": return pcc.root_hygiene(repair=True)

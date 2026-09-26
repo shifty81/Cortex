@@ -10,14 +10,14 @@ from datetime import datetime, timezone
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from PCCSharedEnvironment import apply_shared_toolchain_environment
-from PCCStoragePaths import portable_relative_to_runtime_volume, resolve_portable_volume_path, runtime_volume_root
 from typing import Any, Iterable, Sequence
 
 from PCCProjectDiscovery import discover_project_contract_data, discovery_summary
+from PCCVolumeAuthority import resolve_volume_context
 
-SURFACE_VERSION = "PCC-SURFACE-0.7-REPAIR"
+SURFACE_VERSION = "PCC-SURFACE-0.5-LIVE-R1"
 
 
 class SurfaceError(RuntimeError):
@@ -126,194 +126,44 @@ class ProjectRegistry:
     SCHEMA = "pcc.project_registry.v1"
 
     def __init__(self, path: Path | None = None) -> None:
-        self._explicit_path = path is not None or bool(os.environ.get("PCC_PROJECT_REGISTRY"))
         self.path = path or self.default_path()
-        if not self._explicit_path:
-            self._migrate_legacy_registry_if_needed()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def default_path() -> Path:
         env = os.environ.get("PCC_PROJECT_REGISTRY")
         if env:
             return Path(env).expanduser().resolve()
-        # Portable PCC state belongs to the Cortex runtime itself so the same
-        # external drive carries registrations/passports between machines.
-        runtime = Path(__file__).resolve().parents[2]
-        return runtime / "data" / "registry" / "project_registry.json"
+        try:
+            ctx = resolve_volume_context(create=True)
+            return ctx.registry_root / "project_registry.json"
+        except Exception:
+            # Compatibility fallback for non-portable/unit-test environments only.
+            if os.name == "nt":
+                base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+                return base / "ProjectControlCenter" / "project_registry.json"
+            base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+            return base / "project-control-center" / "project_registry.json"
 
     @staticmethod
-    def legacy_default_path() -> Path:
-        if os.name == "nt":
-            base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-            return base / "ProjectControlCenter" / "project_registry.json"
-        base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-        return base / "project-control-center" / "project_registry.json"
-
-    @staticmethod
-    def _portable_relative(root: Path) -> str:
-        return str(portable_relative_to_runtime_volume(root) or "")
-
-    @staticmethod
-    def _registry_id(root: Path, portable_relative: str = "") -> str:
-        relative = str(portable_relative or ProjectRegistry._portable_relative(root)).replace("\\", "/").strip("/")
-        if relative:
-            key = "portable-volume:" + relative.casefold()
-        else:
-            key = "absolute:" + os.path.normcase(str(root.expanduser().resolve()))
+    def _registry_id(root: Path) -> str:
+        key = os.path.normcase(str(root.resolve()))
         return hashlib.sha256(key.encode("utf-8", errors="replace")).hexdigest()[:16]
-
-    @staticmethod
-    def _legacy_drive_relative(raw_root: str) -> str:
-        """Return a stable path-within-volume for an old drive-letter root.
-
-        Legacy AppData registrations predate portableRelativeRoot and therefore
-        retain whichever Windows drive letter happened to be assigned on the
-        machine that wrote them.  This helper deliberately accepts only normal
-        drive-letter paths (for example G:\\Source\\Project); UNC paths and
-        arbitrary POSIX paths remain machine-local.
-        """
-        text = str(raw_root or "").strip()
-        if not text:
-            return ""
-        try:
-            win = PureWindowsPath(text)
-        except Exception:
-            return ""
-        drive = str(win.drive or "")
-        if len(drive) != 2 or drive[1] != ":":
-            return ""
-        parts = list(win.parts)
-        if not parts:
-            return ""
-        # PureWindowsPath('G:/Source/Foo').parts -> ('G:\\', 'Source', 'Foo')
-        return "/".join(str(part).strip("\\/") for part in parts[1:] if str(part).strip("\\/"))
-
-    @staticmethod
-    def _logical_project_identity(item: dict[str, Any], relative: str) -> tuple[str, str, str, str]:
-        return (
-            str(item.get("projectId") or "").casefold(),
-            str(item.get("name") or "").casefold(),
-            str(item.get("kind") or "project").casefold(),
-            str(relative or "").replace("\\", "/").strip("/").casefold(),
-        )
-
-    @staticmethod
-    def _resolved_record_root(item: dict[str, Any]) -> Path | None:
-        relative = str(item.get("portableRelativeRoot") or "").strip()
-        if relative:
-            try:
-                return resolve_portable_volume_path(relative)
-            except Exception:
-                pass
-        raw_root = str(item.get("root") or "").strip()
-        return Path(raw_root).expanduser() if raw_root else None
-
-    def _migrate_legacy_registry_if_needed(self) -> None:
-        """Copy old AppData registry/passports into portable runtime state once.
-
-        The legacy copy is deliberately preserved.  Migration only writes the new
-        portable registry and derives volume-relative roots while the old and new
-        drive letters are both observable on this machine.
-        """
-        if self.path.is_file():
-            return
-        legacy = self.legacy_default_path()
-        if not legacy.is_file() or legacy.resolve() == self.path.resolve():
-            return
-        try:
-            data = json.loads(legacy.read_text(encoding="utf-8-sig"))
-        except Exception:
-            return
-        if not isinstance(data, dict):
-            return
-        projects = []
-        id_map: dict[str, str] = {}
-        for raw in data.get("projects", []) or []:
-            if not isinstance(raw, dict):
-                continue
-            item = dict(raw)
-            root_text = str(item.get("root") or "").strip()
-            if not root_text:
-                continue
-            root = Path(root_text).expanduser()
-            relative = self._portable_relative(root)
-            if not relative:
-                # Machine-local registrations remain in the legacy registry and
-                # are merged at read time; do not copy them onto the portable disk.
-                continue
-            rid = self._registry_id(root, relative)
-            old_rid = str(item.get("registryId") or "")
-            if old_rid:
-                id_map[old_rid] = rid
-            item["registryId"] = rid
-            if relative:
-                item["portableRelativeRoot"] = relative
-                try:
-                    item["root"] = str(resolve_portable_volume_path(relative))
-                except Exception:
-                    pass
-            projects.append(item)
-        migrated = dict(data)
-        migrated["schema"] = self.SCHEMA
-        migrated["projects"] = projects
-        active = str(data.get("activeProject") or "")
-        migrated["activeProject"] = id_map.get(active, "")
-        try:
-            self._write(migrated)
-        except Exception:
-            return
-
-        old_passports = legacy.parent / "passports"
-        if not old_passports.is_dir():
-            return
-        for item in projects:
-            root = self._resolved_record_root(item)
-            if root is None:
-                continue
-            new_id = str(item.get("registryId") or self._registry_id(root, str(item.get("portableRelativeRoot") or "")))
-            # Find the corresponding legacy record id by root, then preserve its
-            # passport payload while rebinding the path to this volume.
-            legacy_item = next((x for x in data.get("projects", []) or [] if isinstance(x, dict) and str(x.get("projectId") or "") == str(item.get("projectId") or "") and str(x.get("name") or "") == str(item.get("name") or "")), None)
-            if not legacy_item:
-                continue
-            old_id = str(legacy_item.get("registryId") or "")
-            old_path = old_passports / f"{old_id}.json"
-            if not old_path.is_file():
-                continue
-            try:
-                payload = json.loads(old_path.read_text(encoding="utf-8-sig"))
-                if not isinstance(payload, dict):
-                    continue
-                payload["root"] = str(root)
-                relative = str(item.get("portableRelativeRoot") or "")
-                if relative:
-                    payload["portableRelativeRoot"] = relative
-                target = self.path.parent / "passports" / f"{new_id}.json"
-                target.parent.mkdir(parents=True, exist_ok=True)
-                tmp = target.with_suffix(target.suffix + ".tmp")
-                tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-                os.replace(tmp, target)
-            except Exception:
-                continue
 
     def passport_path(self, root: Path) -> Path:
         folder = self.path.parent / "passports"
         folder.mkdir(parents=True, exist_ok=True)
-        relative = self._portable_relative(root)
-        return folder / f"{self._registry_id(root, relative)}.json"
+        return folder / f"{self._registry_id(root)}.json"
 
     def _write_passport(self, root: Path, contract: ProjectContract, *, last_opened_utc: str = "") -> Path:
         discovery = contract.raw.get("_pccDiscovery") or {}
         categories = sorted({item.category for item in contract.commands if item.category})
-        relative = self._portable_relative(root)
         payload = {
             "schema": "CORTEX_PROJECT_PASSPORT_V1",
             "projectId": contract.project_id,
             "name": contract.name,
             "kind": contract.kind,
             "root": str(root),
-            "portableRelativeRoot": relative,
-            "portableVolumeRoot": str(runtime_volume_root()) if relative else "",
             "trustState": "trusted_local",
             "integrationState": "auto_bound" if contract.commands else "observed",
             "contractSource": str(discovery.get("source") or "filesystem-scan"),
@@ -347,112 +197,38 @@ class ProjectRegistry:
         return data
 
     def _write(self, data: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.path.with_suffix(self.path.suffix + ".tmp")
         temp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         os.replace(temp, self.path)
 
     def entries(self) -> list[RegisteredProject]:
-        # Portable registrations travel with Cortex.  Machine-local legacy
-        # registrations are merged so a laptop/desktop keeps its own projects too.
-        # A legacy registration for the same external-volume project may contain a
-        # different drive letter (for example G:\\Cortex at home versus
-        # E:\\Cortex on a laptop).  Deduplicate those by logical portable
-        # identity rather than by the raw root string.
-        portable = self._read()
-        datasets: list[tuple[str, dict[str, Any]]] = [("portable", portable)]
-        if not self._explicit_path:
-            legacy = self.legacy_default_path()
-            if legacy.is_file() and legacy.resolve() != self.path.resolve():
-                try:
-                    local = json.loads(legacy.read_text(encoding="utf-8-sig"))
-                    if isinstance(local, dict):
-                        datasets.append(("legacy", local))
-                except Exception:
-                    pass
-
-        portable_project_keys: set[tuple[str, str]] = set()
-        portable_name_keys: set[tuple[str, str, str]] = set()
-        for item in portable.get("projects", []) or []:
+        data = self._read()
+        rows: list[RegisteredProject] = []
+        for item in data.get("projects", []) or []:
             if not isinstance(item, dict):
                 continue
-            relative = str(item.get("portableRelativeRoot") or "").replace("\\", "/").strip("/").casefold()
-            if not relative:
+            raw_root = str(item.get("root") or "").strip()
+            if not raw_root:
                 continue
-            project_id = str(item.get("projectId") or "").casefold()
-            name = str(item.get("name") or "").casefold()
-            kind = str(item.get("kind") or "project").casefold()
-            if project_id:
-                portable_project_keys.add((project_id, relative))
-            if name:
-                portable_name_keys.add((name, kind, relative))
-
-        rows: list[RegisteredProject] = []
-        seen: set[str] = set()
-        for source, data in datasets:
-            for item in data.get("projects", []) or []:
-                if not isinstance(item, dict):
-                    continue
-                root = self._resolved_record_root(item)
-                if root is None:
-                    continue
-                relative = str(item.get("portableRelativeRoot") or "").replace("\\", "/").strip("/")
-
-                # Old AppData records do not know portableRelativeRoot.  When their
-                # path-within-drive and project identity match a portable record,
-                # they are aliases of that record, not another project.
-                if source == "legacy" and not relative:
-                    legacy_relative = self._legacy_drive_relative(str(item.get("root") or ""))
-                    folded_relative = legacy_relative.casefold()
-                    project_id = str(item.get("projectId") or "").casefold()
-                    name = str(item.get("name") or "").casefold()
-                    kind = str(item.get("kind") or "project").casefold()
-                    if folded_relative and (
-                        (project_id and (project_id, folded_relative) in portable_project_keys)
-                        or (name and (name, kind, folded_relative) in portable_name_keys)
-                    ):
-                        continue
-
-                rid = str(item.get("registryId") or self._registry_id(root, relative))
-                if relative:
-                    dedupe = "portable:" + relative.casefold()
-                else:
-                    normalized_root = str(root).replace("\\", "/").rstrip("/").casefold()
-                    dedupe = "root:" + normalized_root
-                if dedupe in seen:
-                    continue
-                seen.add(dedupe)
-                rows.append(RegisteredProject(
-                    registry_id=rid,
-                    project_id=str(item.get("projectId") or root.name),
-                    name=str(item.get("name") or root.name),
-                    kind=str(item.get("kind") or "project"),
-                    root=root,
-                    last_opened_utc=str(item.get("lastOpenedUtc") or ""),
-                ))
+            root = Path(raw_root).expanduser()
+            rows.append(RegisteredProject(
+                registry_id=str(item.get("registryId") or self._registry_id(root)),
+                project_id=str(item.get("projectId") or root.name),
+                name=str(item.get("name") or root.name),
+                kind=str(item.get("kind") or "project"),
+                root=root,
+                last_opened_utc=str(item.get("lastOpenedUtc") or ""),
+            ))
         rows.sort(key=lambda x: (x.name.lower(), str(x.root).lower()))
         return rows
 
-
     def active_registry_id(self) -> str:
-        active = str(self._read().get("activeProject") or "")
-        if active or self._explicit_path:
-            return active
-        legacy = self.legacy_default_path()
-        if legacy.is_file() and legacy.resolve() != self.path.resolve():
-            try:
-                data = json.loads(legacy.read_text(encoding="utf-8-sig"))
-                if isinstance(data, dict):
-                    return str(data.get("activeProject") or "")
-            except Exception:
-                pass
-        return ""
+        return str(self._read().get("activeProject") or "")
 
     def register(self, root: Path, *, make_active: bool = False) -> RegisteredProject:
         root = root.expanduser().resolve()
         contract = ProjectContract.load(root)
-        relative = self._portable_relative(root)
-        rid = self._registry_id(root, relative)
+        rid = self._registry_id(root)
         now = datetime.now(timezone.utc).isoformat()
         data = self._read()
         projects = [x for x in (data.get("projects") or []) if isinstance(x, dict)]
@@ -462,15 +238,11 @@ class ProjectRegistry:
             "name": contract.name,
             "kind": contract.kind,
             "root": str(root),
-            "portableRelativeRoot": relative,
             "lastOpenedUtc": now if make_active else "",
         }
         found = False
         for i, item in enumerate(projects):
-            existing_root = self._resolved_record_root(item)
-            existing_relative = str(item.get("portableRelativeRoot") or "")
-            existing_id = str(item.get("registryId") or (self._registry_id(existing_root, existing_relative) if existing_root else ""))
-            if existing_id == rid or (existing_root is not None and os.path.normcase(str(existing_root)) == os.path.normcase(str(root))):
+            if str(item.get("registryId") or "") == rid or os.path.normcase(str(item.get("root") or "")) == os.path.normcase(str(root)):
                 previous = str(item.get("lastOpenedUtc") or "")
                 if not make_active:
                     record["lastOpenedUtc"] = previous
@@ -495,7 +267,9 @@ class ProjectRegistry:
         kept: list[Any] = []
         for item in (data.get("projects") or []):
             if isinstance(item, dict) and str(item.get("registryId") or "") == registry_id:
-                removed_root = self._resolved_record_root(item)
+                raw = str(item.get("root") or "").strip()
+                if raw:
+                    removed_root = Path(raw)
                 continue
             kept.append(item)
         data["projects"] = kept
@@ -649,7 +423,7 @@ class BackendClient:
         return info
 
     def _embedded_env(self, environment_root: Path | None = None) -> dict[str, str]:
-        effective_root = (environment_root or self.root).expanduser().resolve()
+        effective_root = (environment_root or self.root).resolve()
         env = apply_shared_toolchain_environment(os.environ.copy(), root=effective_root)
         env.pop("CORTEX_PCC_EMBEDDED_NO_CONSOLE", None)
         env["PCC_EMBEDDED_HIDDEN_CONSOLE"] = "1"
@@ -820,9 +594,9 @@ def _surface_category(command: str) -> str:
         return "run"
     if key.startswith("forge-rust") or key == "format":
         return "tooling"
-    if key.startswith(("doctor", "failure-doctor", "repair", "debug", "root-hygiene", "artifact", "verify-latest", "self-test")):
+    if key.startswith(("doctor", "debug", "root-hygiene", "artifact", "verify-latest", "self-test")):
         return "diagnostics"
-    if key.startswith(("universal", "forgepy", "contract", "source-rollup", "cortex-worker")):
+    if key.startswith(("universal", "forgepy", "contract", "source-rollup")):
         return "tooling"
     if key.startswith("status"):
         return "project"
@@ -831,13 +605,9 @@ def _surface_category(command: str) -> str:
 
 def _surface_risk(command: str) -> str:
     key = command.casefold()
-    if key in {"repair-plan", "repair-plan-json"}:
-        return "read_only"
-    if key in {"repair-current", "repair-current-full"}:
-        return "local_mutation"
     mutating_tokens = (
         "apply", "prepare", "mirror", "stage", "restore", "purge", "prune-apply",
-        "commit", "push", "pull", "setup", "trust", "build", "launch", "format", "fix",
+        "commit", "push", "pull", "setup", "build", "launch", "format", "fix",
     )
     if any(token in key for token in mutating_tokens):
         return "local_mutation"
@@ -855,17 +625,6 @@ def _surface_label(command: str) -> str:
         "commit-push-green": "Commit + Push Certified GREEN",
         "git-identity": "Configure Git Identity",
         "git-identity-status": "Git Identity Status",
-        "git-trust": "Trust Current Checkout",
-        "vault-intake-status": "Vault Intake Audit Status",
-        "vault-intake-audit": "Audit Vault Intake",
-        "vault-intake-handoff": "Create Vault Intake Planning Handoff",
-        "cortex-worker-status": "Cortex Worker Status",
-        "cortex-worker-build": "Build Cortex Transaction Worker",
-        "cortex-worker-build-release": "Build Cortex Transaction Worker (Release)",
-        "repair-plan": "Repair Current Failure — Plan",
-        "repair-plan-json": "Repair Current Failure — Plan JSON",
-        "repair-current": "Repair Current Failure + QUICK",
-        "repair-current-full": "Repair Current Failure + FULL",
     }
     return special.get(command, command.replace("-", " ").replace(".", " ").title())
 

@@ -27,7 +27,16 @@
       "root": "C:\\Users\\Shifty\\Desktop\\CodenameSubspaceNullharbor",
       "portableRelativeRoot": "",
       "lastOpenedUtc": "2026-09-25T17:03:57.558892+00:00"
+    },
+    {
+      "registryId": "9c3c7c0f268afd04",
+      "projectId": "havenwild-bevy",
+      "name": "Havenwild Bevy",
+      "kind": "rust-workspace",
+      "root": "C:\\Users\\Shifty\\Desktop\\Havenwild Bevy",
+      "portableRelativeRoot": "",
+      "lastOpenedUtc": "2026-09-25T20:08:44.567693+00:00"
     }
   ],
-  "activeProject": "a2a6ce0e6dd41288"
+  "activeProject": "9c3c7c0f268afd04"
 }
