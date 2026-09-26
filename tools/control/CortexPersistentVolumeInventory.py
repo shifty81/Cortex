@@ -413,6 +413,185 @@ def run_scan(volume_root: Path | str, db_path: Path | str, *, volume_id: str,
         conn.close()
 
 
+
+def _refresh_relative(value: str, excluded: str | None) -> str:
+    """Normalize a volume-relative directory without resolving links or changing source."""
+    if not isinstance(value, str) or "\x00" in value:
+        raise ValueError("Invalid relative inventory directory")
+    raw = value.replace("\\", "/").strip("/")
+    if (value.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", value)
+            or any(part in ("", ".", "..") for part in raw.split("/") if raw)):
+        raise ValueError("Directory must be a safe volume-relative path")
+    if excluded and (raw == excluded or raw.startswith(excluded + "/")):
+        raise ValueError("Cannot inventory the dedicated inventory index")
+    return raw
+
+
+def _delete_indexed_tree(conn: sqlite3.Connection, relative: str, changes: dict[str, int]) -> None:
+    """Delete one removed file or an entire missing directory via the path B-tree."""
+    lower, upper = relative + "/", relative + "/" + chr(0x10ffff)
+    predicate = "(path=? OR (path>=? AND path<?))"
+    args = (relative, lower, upper)
+    for row in conn.execute(f"SELECT type,COUNT(*) AS n FROM entries WHERE {predicate} GROUP BY type", args):
+        changes[row["type"]] -= int(row["n"])
+    conn.execute(f"DELETE FROM entries WHERE {predicate}", args)
+    conn.execute(f"DELETE FROM directories WHERE {predicate}", args)
+    conn.execute(f"DELETE FROM errors WHERE {predicate}", args)
+
+
+def refresh_directory(volume_root: Path | str, db_path: Path | str, *, volume_id: str,
+                      relative: str = "", cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
+    """R8J-A: atomically reconcile one explicit directory, without rebuilding a volume.
+
+    Stage immediate children in a connection-local SQLite TEMP table; no multi-million-row
+    Python lists are created. Deleted subtrees are removed from the index and counts.
+    Newly discovered folders are queued for the existing resumable scanner. Existing
+    child folders are NOT recursively rescanned by this single-directory operation.
+    If enumeration fails or is cancelled, prior index entries remain intact.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", volume_id):
+        raise ValueError("Invalid volume identity")
+    root = Path(volume_root).expanduser().resolve(strict=True)
+    db = Path(db_path).expanduser().resolve()
+    if not root.is_dir() or not db.is_file() or db.name.casefold() != "inventory.sqlite3":
+        raise ValueError("A completed, dedicated inventory and valid volume root are required")
+    try:
+        excluded = db.parent.relative_to(root).as_posix()
+    except ValueError:
+        excluded = None
+    rel = _refresh_relative(relative, excluded)
+    folder = root.joinpath(*rel.split("/")) if rel else root
+    drive = os.path.normcase(os.path.splitdrive(str(root))[0])
+    root_device = root.stat().st_dev
+    # A previously indexed directory might have been replaced with a symlink or
+    # Windows junction since the last scan. Re-check every path component before
+    # opening it; the historical entry's boundary flag alone is not sufficient.
+    current_path = root
+    for component in rel.split("/") if rel else ():
+        current_path = current_path / component
+        item_info = current_path.lstat()
+        attrs = getattr(item_info, "st_file_attributes", 0)
+        if (not stat.S_ISDIR(item_info.st_mode) or stat.S_ISLNK(item_info.st_mode)
+                or attrs & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+                or (os.name == "nt" and os.path.normcase(os.path.splitdrive(str(current_path))[0]) != drive)
+                or (os.name != "nt" and (item_info.st_dev != root_device or os.path.ismount(current_path)))):
+            raise ValueError("Refresh cannot traverse a changed link, junction, mount or non-directory; refresh its parent")
+    with closing(_connection(db, writable=True)) as conn:
+        _initialize(conn, volume_id)
+        if _stored_volume_id(conn) != volume_id:
+            raise ValueError("Inventory belongs to a different volume")
+        current = conn.execute("SELECT state FROM scan_state WHERE id=1").fetchone()
+        if current is None or current[0] != "complete":
+            raise RuntimeError("Refresh requires a completed inventory; pause/resume the initial scan first")
+        if rel:
+            host = conn.execute("SELECT type,boundary FROM entries WHERE path=?", (rel,)).fetchone()
+            if host is None or host["type"] != "directory" or host["boundary"]:
+                raise ValueError("Refresh requires a previously indexed, traversable directory")
+        conn.execute("CREATE TEMP TABLE refresh_seen (path TEXT PRIMARY KEY, valid INTEGER NOT NULL, "
+                     "parent TEXT, kind TEXT, size_bytes INTEGER, modified_ns INTEGER, boundary TEXT) WITHOUT ROWID")
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            # Never treat an inaccessible directory as an empty directory: that could
+            # otherwise remove valid metadata for thousands of existing source files.
+            with os.scandir(folder) as scanner:
+                for child in scanner:
+                    if cancelled is not None and cancelled():
+                        raise InterruptedError("Directory refresh cancelled; previous index retained")
+                    child_rel = f"{rel}/{child.name}" if rel else child.name
+                    try:
+                        info = child.stat(follow_symlinks=False)
+                        kind = ("symlink" if stat.S_ISLNK(info.st_mode) else
+                                "directory" if stat.S_ISDIR(info.st_mode) else
+                                "file" if stat.S_ISREG(info.st_mode) else "other")
+                        boundary = None
+                        if kind == "directory":
+                            attrs = getattr(info, "st_file_attributes", 0)
+                            reparse = bool(attrs & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+                            child_drive = os.path.normcase(os.path.splitdrive(child.path)[0])
+                            if excluded and child_rel == excluded:
+                                boundary = "inventory_index"
+                            elif os.name == "nt":
+                                if reparse:
+                                    boundary = "reparse_point"
+                                elif child_drive != drive:
+                                    boundary = "different_device"
+                            elif info.st_dev != root_device:
+                                boundary = "different_device"
+                            elif os.path.ismount(child.path):
+                                boundary = "mount_point"
+                        conn.execute("INSERT INTO refresh_seen VALUES(?,?,?,?,?,?,?)",
+                                     (child_rel, 1, rel, kind,
+                                      info.st_size if kind == "file" else None,
+                                      info.st_mtime_ns, boundary))
+                    except OSError as exc:
+                        # A stat failure must not turn an existing file into a deletion.
+                        conn.execute("INSERT INTO refresh_seen(path,valid) VALUES(?,0)", (child_rel,))
+                        _record_error(conn, child_rel, "stat", exc)
+            if cancelled is not None and cancelled():
+                raise InterruptedError("Directory refresh cancelled; previous index retained")
+            delta = {kind: 0 for kind in ("file", "directory", "symlink", "other")}
+            outcome = {"added": 0, "changed": 0, "removed": 0, "unchanged": 0, "stat_errors": 0,
+                       "new_directories": 0, "directory": rel or "."}
+            outcome["stat_errors"] = int(conn.execute("SELECT COUNT(*) FROM refresh_seen WHERE valid=0").fetchone()[0])
+            conn.execute("CREATE TEMP TABLE refresh_missing(path TEXT PRIMARY KEY,type TEXT NOT NULL) WITHOUT ROWID")
+            conn.execute("INSERT INTO refresh_missing SELECT path,type FROM entries WHERE parent=? AND NOT EXISTS "
+                         "(SELECT 1 FROM refresh_seen WHERE refresh_seen.path=entries.path)", (rel,))
+            for row in conn.execute("SELECT path,type FROM refresh_missing ORDER BY path"):
+                outcome["removed"] += 1
+                _delete_indexed_tree(conn, row["path"], delta)
+            for row in conn.execute("SELECT * FROM refresh_seen WHERE valid=1 ORDER BY path"):
+                path, kind = row["path"], row["kind"]
+                previous = conn.execute("SELECT type,size_bytes,modified_ns,boundary FROM entries WHERE path=?",
+                                        (path,)).fetchone()
+                new_value = (kind, row["size_bytes"], row["modified_ns"], row["boundary"])
+                if previous is None:
+                    outcome["added"] += 1
+                elif tuple(previous) != new_value:
+                    outcome["changed"] += 1
+                else:
+                    outcome["unchanged"] += 1
+                if previous is not None and previous["type"] == "directory" and kind != "directory":
+                    # A former folder turned into a file/link. Its descendants no longer exist.
+                    lower, upper = path + "/", path + "/" + chr(0x10ffff)
+                    for old in conn.execute("SELECT type,COUNT(*) AS n FROM entries WHERE path>=? AND path<? GROUP BY type",
+                                            (lower, upper)):
+                        delta[old["type"]] -= int(old["n"])
+                    conn.execute("DELETE FROM entries WHERE path>=? AND path<?", (lower, upper))
+                    conn.execute("DELETE FROM directories WHERE path=? OR (path>=? AND path<?)",
+                                 (path, lower, upper))
+                    conn.execute("DELETE FROM errors WHERE path>=? AND path<?", (lower, upper))
+                if previous is None or tuple(previous) != new_value:
+                    _record_entry(conn, (path, rel, kind, row["size_bytes"], row["modified_ns"], row["boundary"]), delta)
+                else:
+                    conn.execute("DELETE FROM errors WHERE path=? AND operation='stat'", (path,))
+                if kind == "directory" and row["boundary"] is None and (previous is None or previous["type"] != "directory"):
+                    conn.execute("INSERT INTO directories(path,finished) VALUES(?,0) "
+                                 "ON CONFLICT(path) DO UPDATE SET finished=0", (path,))
+                    outcome["new_directories"] += 1
+            pending = int(conn.execute("SELECT COUNT(*) FROM directories WHERE finished=0").fetchone()[0])
+            conn.execute("UPDATE scan_state SET updated_utc=?,state=?,completed_utc=?,last_directory=?, "
+                         "indexed_files=indexed_files+?,indexed_directories=indexed_directories+?, "
+                         "indexed_symlinks=indexed_symlinks+?,indexed_other=indexed_other+? WHERE id=1",
+                         (_utc(), "paused" if pending else "complete", None if pending else _utc(), rel,
+                          delta["file"], delta["directory"], delta["symlink"], delta["other"]))
+            conn.commit()
+            return {"refresh": outcome, "status": _status(conn, root)}
+        except InterruptedError:
+            conn.rollback()
+            raise
+        except OSError as exc:
+            conn.rollback()
+            # Do not delete any old record if the folder itself is inaccessible.
+            _record_error(conn, rel or ".", "refresh_scandir", exc)
+            conn.commit()
+            return {"refresh": {"directory": rel or ".", "unreadable": str(exc),
+                                "added": 0, "changed": 0, "removed": 0},
+                    "status": _status(conn, root)}
+        except BaseException:
+            conn.rollback()
+            raise
+
+
 def list_errors(db_path: Path | str, *, volume_id: str, limit: int = 20) -> list[dict[str, str]]:
     if not 1 <= limit <= 100:
         raise ValueError("Invalid error sample limit")

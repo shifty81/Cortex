@@ -50,6 +50,19 @@ class InventoryWorkspaceTests(unittest.TestCase):
         self.assertIn('new_stamp < old_stamp', source)
         self.assertIn('self._volume_show_overview()', source)
 
+    def test_targeted_refresh_and_commit_default_are_explicit_and_nonblocking(self):
+        source = (ROOT / "tools/control/CortexPCCGui.py").read_text(encoding="utf-8")
+        backend = (ROOT / "tools/control/CortexPersistentVolumeInventory.py").read_text(encoding="utf-8")
+        self.assertIn('refresh_directory as persistent_volume_refresh_directory', source)
+        self.assertIn('"Refresh Selected Folder"', source)
+        self.assertIn('"Refresh Top Level"', source)
+        self.assertIn('"volume-refresh-done"', source)
+        self.assertIn('threading.Thread(target=work, daemon=True).start()', source)
+        self.assertIn('def refresh_directory(', backend)
+        default = source.split('    def _green_commit_default(',1)[1].split('    def _ask_commit_message(',1)[0]
+        self.assertNotIn('self._latest_applied_patch_identity()', default)
+        self.assertIn('GREEN checkpoint', default)
+
     def test_gui_uses_dedicated_sections_and_async_filter_events(self):
         text = (ROOT / "tools/control/CortexPCCGui.py").read_text(encoding="utf-8")
         for name in ("Inventory", "Catalog", "Intake", "Storage", "Health"):

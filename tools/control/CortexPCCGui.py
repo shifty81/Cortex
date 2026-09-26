@@ -50,6 +50,7 @@ from CortexPersistentVolumeInventory import (
     query_entries as persistent_volume_query,
     run_scan as persistent_volume_scan,
     query_access_gaps as persistent_volume_gap_query,
+    refresh_directory as persistent_volume_refresh_directory,
 )
 from PCCRepoHygiene import prepare as repo_hygiene_prepare
 from PCCVaultIntakeAudit import (
@@ -73,7 +74,7 @@ from PCCVaultStorage import (
     verify_latest_mirror as vault_verify_latest_mirror,
 )
 
-GUI_VERSION = "PCC-GUI-0.15.3"
+GUI_VERSION = "PCC-GUI-0.15.4"
 
 BG = "#090b0e"
 PANEL = "#11151a"
@@ -932,7 +933,13 @@ class CortexPCCGui:
                                                compact=True)
         self.volume_cancel_btn.pack(side="left", padx=(0, 12))
         self.volume_cancel_btn.configure(state="disabled")
-        tk.Label(actions, text="Writes a dedicated Cortex metadata index only · no source/Vault catalog changes",
+        self.volume_refresh_root_btn = self._button(
+            actions, "Refresh Top Level", lambda: self._refresh_volume_directory(""), compact=True)
+        self.volume_refresh_root_btn.pack(side="left", padx=(0, 7))
+        self.volume_refresh_folder_btn = self._button(
+            actions, "Refresh Selected Folder", lambda: self._refresh_volume_directory(None), compact=True)
+        self.volume_refresh_folder_btn.pack(side="left", padx=(0, 12))
+        tk.Label(actions, text="Updates this metadata index only · refresh does not rebuild the drive",
                  bg=BG, fg=MUTED, font=("Segoe UI", 9), anchor="w").pack(side="left", fill="x", expand=True)
 
         panes = tk.PanedWindow(parent, orient="horizontal", bg=BG, sashwidth=6,
@@ -1582,6 +1589,42 @@ class CortexPCCGui:
             except Exception as exc:
                 self._event_q.put(("volume-error", str(exc)))
 
+        threading.Thread(target=work, daemon=True).start()
+
+    def _refresh_volume_directory(self, relative: str | None) -> None:
+        """An explicit, nonrecursive refresh; never starts a whole-drive rebuild."""
+        if self._vault_busy or self._volume_running:
+            self._popup("Inventory Refresh", "Finish the current Vault operation first.", kind="warning")
+            return
+        if not self._volume_result or self._volume_result.get("state") != "complete":
+            self._popup("Inventory Refresh", "A completed inventory is required. Resume any pending scan first.",
+                        kind="warning")
+            return
+        if not self._volume_root or not self._volume_db_path or not self._volume_id:
+            self._popup("Inventory Refresh", "The marked portable volume is unavailable.", kind="warning")
+            return
+        if relative is None:
+            if self._volume_view_mode != "paths":
+                self._popup("Inventory Refresh", "Choose a directory in All paths first.", kind="warning")
+                return
+            selected = self.volume_tree.selection()
+            entry = self._volume_rows.get(selected[0]) if selected else None
+            if not entry or entry.get("type") != "directory" or entry.get("boundary"):
+                self._popup("Inventory Refresh", "Select a traversable directory in the results list.", kind="warning")
+                return
+            relative = str(entry["path"])
+        self._vault_busy = True
+        root, db, volume_id = self._volume_root, self._volume_db_path, self._volume_id
+        self.volume_refresh_root_btn.configure(state="disabled")
+        self.volume_refresh_folder_btn.configure(state="disabled")
+        self.volume_results_status.configure(text=f"Refreshing directory metadata: {relative or 'Top level'}…", fg=CYAN)
+
+        def work() -> None:
+            try:
+                result = persistent_volume_refresh_directory(root, db, volume_id=volume_id, relative=relative)
+                self._event_q.put(("volume-refresh-done", result))
+            except Exception as exc:
+                self._event_q.put(("volume-refresh-error", str(exc)))
         threading.Thread(target=work, daemon=True).start()
 
     def _cancel_volume_inventory(self) -> None:
@@ -4126,6 +4169,29 @@ class CortexPCCGui:
                     self.volume_status.configure(text="Inventory stopped · committed batches remain resumable", fg=RED)
                     self._append_log(f"[FAIL] Persistent drive inventory: {payload}\n", "fail")
                     self._popup("Volume Inventory", str(payload), kind="error")
+                elif kind == "volume-refresh-done":
+                    self._vault_busy = False
+                    self.volume_refresh_root_btn.configure(state="normal")
+                    self.volume_refresh_folder_btn.configure(state="normal")
+                    status = payload["status"]
+                    changes = payload["refresh"]
+                    self._volume_refresh_status(status)
+                    if changes.get("unreadable"):
+                        self.volume_results_status.configure(text="Directory was inaccessible; old records retained.", fg=YELLOW)
+                        self._append_log(f"[WARN] Inventory refresh {changes.get('directory')}: {changes['unreadable']}\n", "warn")
+                    else:
+                        detail = (f"Refresh {changes['directory']}: +{changes['added']} added, "
+                                  f"{changes['changed']} changed, -{changes['removed']} removed; "
+                                  f"{changes['new_directories']} new folders queued")
+                        self.volume_results_status.configure(text=detail, fg=GREEN if not status.get("pending_directories") else YELLOW)
+                        self._append_log(f"[PASS] {detail}. Source files unchanged.\n", "pass")
+                    self._show_volume_inventory()
+                elif kind == "volume-refresh-error":
+                    self._vault_busy = False
+                    self.volume_refresh_root_btn.configure(state="normal")
+                    self.volume_refresh_folder_btn.configure(state="normal")
+                    self.volume_results_status.configure(text=f"Refresh failed: {payload}", fg=RED)
+                    self._append_log(f"[FAIL] Inventory refresh: {payload}\n", "fail")
                 elif kind == "volume-view-done":
                     generation, mode, view, report = payload
                     self._volume_filter_busy = False
@@ -4357,13 +4423,8 @@ class CortexPCCGui:
         return patch_id, title
 
     def _green_commit_default(self) -> tuple[str, str]:
-        patch = self._latest_applied_patch_identity()
-        if patch:
-            patch_id, title = patch
-            subject = f"{self.contract.name} GREEN {patch_id}"
-            if title:
-                subject += f" - {title}"
-            return subject, f"Current applied patch: {patch_id}" + (f" — {title}" if title else "")
+        # Historical patch receipts may be much older than the certified source.
+        # Never reuse a stale patch title as the default GREEN commit identity.
         marker = self.root_path / ".cortex" / "last-green-quality-gate.json"
         if marker.is_file():
             try:

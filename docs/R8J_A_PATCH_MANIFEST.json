@@ -1,0 +1,71 @@
+{
+  "id": "CORTEX-R8J-A",
+  "baseline": "R8I-W3 / published commit 7041070",
+  "installation": "Extract to existing Cortex project root; overwrite declared paths only",
+  "schema_migration": false,
+  "inventory_rebuild": false,
+  "source_file_mutation": false,
+  "vault_catalog_mutation": false,
+  "file_records": [
+    {
+      "path": "tools/control/CortexPersistentVolumeInventory.py",
+      "base_sha256": "f714bce39a757ec6a4beef7e2eeef46865c41383da1a1c640716b45cf9d9b497",
+      "payload_sha256": "1c0dd86564f5cd43a4abea2484e141fd52546b7d1b1ab7408d96d10998739215",
+      "bytes": 33575
+    },
+    {
+      "path": "tools/control/CortexPCCGui.py",
+      "base_sha256": "fcd58abd3b5bd1ea2e92071a9d58678fabe4bd3ed9874a1f6e015b3c32e29d20",
+      "payload_sha256": "cf9a71dbd07a6c4f416c4dff3d1694e140d2e08dd2d2e8d5b4adc305ed112597",
+      "bytes": 223370
+    },
+    {
+      "path": "tools/control/CortexPCC.py",
+      "base_sha256": "66c545b73d53b03eb35160258cc321cd5ced04a99f377d04eb21373a52a56d0b",
+      "payload_sha256": "fa3baaf847b3a2fa655855bc5c0b526b26ac05ae78cd0b4dc48d773870fe97e0",
+      "bytes": 74333
+    },
+    {
+      "path": "tests/test_volume_inventory_pcc_integration.py",
+      "base_sha256": "305d7bd1f7a5bfcc50ff91839e149fcf2a432563de66d9c8305c29942f22765e",
+      "payload_sha256": "51ab08a11540be3e6c37549e2d02c2a9f403a435db889f12b86095fd84a16a0b",
+      "bytes": 6005
+    },
+    {
+      "path": "tests/test_volume_inventory_workspace.py",
+      "base_sha256": "95e716b63bd73a413642a35054627b58af80be7894e98e3817de871f89333e02",
+      "payload_sha256": "3ddcc174c9ef598caf0b4dff625ca470e3f7b2eac8c120d03d419651fee36c70",
+      "bytes": 5120
+    },
+    {
+      "path": "tools/control/tests/test_cortex_pcc.py",
+      "base_sha256": "425bdc386dbd9b2aa0fb844ad2d3f3131e0992ba37d445c3a6bf7101fd6ca703",
+      "payload_sha256": "0c390fedb5a9479bf2cea47304a35460c6a4b1b1b60a0a4e35f0040da85d13f8",
+      "bytes": 38201
+    },
+    {
+      "path": "tools/control/tests/test_pcc_console_chat_runtime.py",
+      "base_sha256": "a72001bfaaa13d5a4258029b78d62fc4047ec3343ed79a5bc01769e6e8f952cf",
+      "payload_sha256": "e36190e0b677ea9d4f324ceaf22996b4c954b207c88651ed1ba97ed38325913a",
+      "bytes": 2560
+    },
+    {
+      "path": "tools/control/tests/test_pcc_failure_evidence_performance.py",
+      "base_sha256": "143f12424c11feaeb93ababfe59890bbae42a55dc60979ffbc19ceadff018ed2",
+      "payload_sha256": "7b08688ed9442a6b3c5a96fc49b83541cf3a873f91b909d8310612d7e20f258b",
+      "bytes": 1407
+    },
+    {
+      "path": "tests/test_inventory_incremental_refresh.py",
+      "base_sha256": null,
+      "payload_sha256": "db1ce0da23befe6654a299e5e03509828cb2f9eec0feca099694bd0b1da881a7",
+      "bytes": 7701
+    },
+    {
+      "path": "docs/R8J_A_INCREMENTAL_REFRESH.md",
+      "base_sha256": null,
+      "payload_sha256": "ae9d06bfa8a7ccfb4c79dac5d917cf0805c4f8889dd999344c8e44579deadeb4",
+      "bytes": 3821
+    }
+  ]
+}
