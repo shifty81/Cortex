@@ -1,0 +1,24 @@
+{
+  "schema": "cortex.python_bridge.conversation.v2",
+  "workspace": "G:\\Cortex",
+  "conversationId": "e25c08025a274fa69cf7ca879a427252",
+  "updatedUnixMs": 1790384608182,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hi!"
+    },
+    {
+      "role": "assistant",
+      "content": "Hi! How can I help you today?"
+    },
+    {
+      "role": "user",
+      "content": "what can we do here?"
+    },
+    {
+      "role": "assistant",
+      "content": "Hi there! It seems like we're in the middle of a development session for the Cortex Rust workspace. From the BuildDoctor output, there's a failure detected, but the confidence is low, so it might not be a critical issue yet. I can help by reviewing the logs, suggesting ways to debug the failure, or assisting with any code or project tasks you have in mind.\n\nFor example, looking at the recent logs, we have session summaries and scans that passed, which could give us a starting point. If you're working on something specific, let me know how I can help!"
+    }
+  ]
+}
