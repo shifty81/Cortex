@@ -77,6 +77,15 @@
   ],
   "notes": [
     "products/forge-rust remains active source until its project.control.json and command consumers are deliberately migrated.",
-    "keep_review_root_files are not deleted by this pass because current source still references several of them."
+    "keep_review_root_files are not deleted by this pass because current source still references several of them.",
+    "The six tracked logs/*/.gitkeep files are repository scaffolding, not runtime log data. Convergence migrates untracked runtime contents file-by-file and retains tracked placeholders."
+  ],
+  "preserve_runtime_placeholders": [
+    "logs/arbiter_engine/.gitkeep",
+    "logs/host_app/.gitkeep",
+    "logs/python_bridge/.gitkeep",
+    "logs/self_build/.gitkeep",
+    "logs/steam_server_admin/.gitkeep",
+    "logs/vs_extension/.gitkeep"
   ]
 }

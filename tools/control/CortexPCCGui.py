@@ -44,6 +44,8 @@ from PCCVaultCatalog import (
     search_catalog as vault_search_catalog,
     vault_root as global_vault_root,
 )
+from CortexVolumeInventory import inventory as volume_inventory
+from CortexVolumeInventoryPresentation import render_inventory as volume_render_inventory
 from PCCRepoHygiene import prepare as repo_hygiene_prepare
 from PCCVaultIntakeAudit import (
     audit_dir as vault_intake_audit_dir,
@@ -144,6 +146,8 @@ class CortexPCCGui:
         self._vault_cancel = False
         self._vault_node_paths: dict[str, Path] = {}
         self._vault_metrics: dict[str, Any] = {}
+        self._volume_result: dict[str, Any] | None = None
+        self._volume_running = False
 
         self._configure_styles()
         self._build_shell()
@@ -860,6 +864,45 @@ class CortexPCCGui:
             bg=BG, fg=MUTED, font=("Segoe UI", 8), anchor="w",
         ).pack(fill="x", padx=2, pady=(4, 0))
 
+        # Deliberately separate from Vault catalog/mirroring: this is a bounded,
+        # explicit in-memory metadata walk of the *current* portable drive.
+        volume_box = tk.Frame(shell, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        volume_box.pack(fill="x", pady=(0, 9))
+        volume_head = tk.Frame(volume_box, bg=PANEL)
+        volume_head.pack(fill="x", padx=10, pady=(8, 4))
+        tk.Label(volume_head, text="External Drive Inventory · Read Only", bg=PANEL, fg=TEXT,
+                 font=("Segoe UI Semibold", 9)).pack(side="left")
+        self.volume_status = tk.Label(volume_head, text="Not scanned", bg=PANEL, fg=MUTED,
+                                      font=("Segoe UI", 8))
+        self.volume_status.pack(side="right")
+        volume_actions = tk.Frame(volume_box, bg=PANEL)
+        volume_actions.pack(fill="x", padx=10, pady=(0, 5))
+        self._button(volume_actions, "Inventory Current Drive", self._start_volume_inventory,
+                     compact=True).pack(side="left", padx=(0, 6))
+        self._button(volume_actions, "Cancel Inventory", self._cancel_volume_inventory,
+                     compact=True).pack(side="left", padx=(0, 8))
+        self.volume_query_var = tk.StringVar()
+        volume_search = tk.Entry(volume_actions, textvariable=self.volume_query_var,
+                                 bg="#090c10", fg=TEXT, insertbackground=TEXT,
+                                 relief="flat", font=("Segoe UI", 9))
+        volume_search.pack(side="left", fill="x", expand=True, ipady=5)
+        volume_search.bind("<Return>", lambda _e: self._show_volume_inventory())
+        self._button(volume_actions, "Filter Paths", self._show_volume_inventory,
+                     compact=True).pack(side="left", padx=(6, 0))
+        volume_body = tk.Frame(volume_box, bg="#07090b")
+        volume_body.pack(fill="x", padx=10, pady=(0, 8))
+        self.volume_detail = tk.Text(volume_body, height=7, wrap="none", bg="#07090b",
+                                     fg=TEXT, insertbackground=TEXT, bd=0, relief="flat",
+                                     font=("Consolas", 9))
+        volume_scroll = self._dark_scrollbar(volume_body, orient="vertical",
+                                              command=self.volume_detail.yview)
+        self.volume_detail.configure(yscrollcommand=volume_scroll.set)
+        self.volume_detail.pack(side="left", fill="x", expand=True)
+        volume_scroll.pack(side="right", fill="y")
+        self.volume_detail.insert("1.0", "An explicit scan inventories this drive's metadata only. "
+                                  "Use Filter Paths to inspect results; no Vault DB writes or project registration.")
+        self.volume_detail.configure(state="disabled")
+
         storage_toolbar = tk.Frame(shell, bg=BG)
         storage_toolbar.pack(fill="x", pady=(0, 9))
         tk.Label(storage_toolbar, text="Storage authority", bg=BG, fg=MUTED, font=("Segoe UI Semibold", 8)).pack(anchor="w", pady=(0, 3))
@@ -1126,6 +1169,53 @@ class CortexPCCGui:
             iid = f"search:{index}"
             self.vault_tree.insert(root_iid, "end", iid=iid, text=rel, values=(item.get("classification") or "", self._human_bytes(int(item.get("bytes") or 0)), ""), tags=(str(item.get("classification") or ""),))
             self._vault_node_paths[iid] = path
+
+    def _start_volume_inventory(self) -> None:
+        if self._vault_busy:
+            self._popup("Volume Inventory", "Another Vault operation is running.", kind="warning")
+            return
+        # The anchor of the active project's resolved root follows G:/D:/etc.
+        # Never persist its drive letter as project identity.
+        drive_root = Path(self.root_path.anchor)
+        if not drive_root.is_dir():
+            self._popup("Volume Inventory", f"Drive root is unavailable: {drive_root}", kind="error")
+            return
+        self._vault_busy = True
+        self._volume_running = True
+        self._vault_cancel = False
+        self._volume_result = None
+        self.volume_status.configure(text=f"Scanning {drive_root}…", fg=CYAN)
+        self._append_log(f"[INFO] Explicit read-only drive inventory started: {drive_root}\n", "info")
+
+        def progress(payload: dict[str, int]) -> None:
+            self._event_q.put(("volume-progress", payload))
+
+        def work() -> None:
+            try:
+                result = volume_inventory(drive_root, max_entries=2_000_000,
+                                          progress=progress, cancelled=lambda: self._vault_cancel)
+                self._event_q.put(("volume-done", result))
+            except Exception as exc:
+                self._event_q.put(("volume-error", str(exc)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _cancel_volume_inventory(self) -> None:
+        if not self._volume_running:
+            self.volume_status.configure(text="No active drive scan", fg=MUTED)
+            return
+        self._vault_cancel = True
+        self.volume_status.configure(text="Cancellation requested…", fg=YELLOW)
+
+    def _show_volume_inventory(self) -> None:
+        result = self._volume_result
+        if result is None:
+            return
+        detail = volume_render_inventory(result, query=self.volume_query_var.get(), limit=100)
+        self.volume_detail.configure(state="normal")
+        self.volume_detail.delete("1.0", "end")
+        self.volume_detail.insert("1.0", detail)
+        self.volume_detail.configure(state="disabled")
 
     def _start_vault_scan(self, deep: bool) -> None:
         if self._vault_busy:
@@ -3540,6 +3630,30 @@ class CortexPCCGui:
                     root, detail = payload
                     self._append_log(f"[WARN] Project onboarding catalog incomplete: {root}: {detail}\n", "warn")
                     self._refresh_projects()
+                elif kind == "volume-progress":
+                    n = int((payload or {}).get("entries") or 0)
+                    if self._volume_running:
+                        self.volume_status.configure(text=f"Scanning metadata · {n:,} entries", fg=CYAN)
+                elif kind == "volume-done":
+                    self._vault_busy = False
+                    self._volume_running = False
+                    self._volume_result = payload
+                    n = len(payload.get("entries") or [])
+                    partial = bool(payload.get("truncated"))
+                    errors = len(payload.get("errors") or [])
+                    state = "CANCELLED / PARTIAL" if payload.get("cancelled") else "LIMIT / PARTIAL" if partial else "COMPLETE"
+                    self.volume_status.configure(text=f"{state} · {n:,} entries · {errors:,} error(s)",
+                                                 fg=YELLOW if partial or errors else GREEN)
+                    self._show_volume_inventory()
+                    self._append_log(f"[{'WARN' if partial or errors else 'PASS'}] Read-only drive inventory: "
+                                     f"{state} · {n:,} entries · {errors:,} unreadable. No files modified.\n",
+                                     "warn" if partial or errors else "pass")
+                elif kind == "volume-error":
+                    self._vault_busy = False
+                    self._volume_running = False
+                    self.volume_status.configure(text="Drive scan failed", fg=RED)
+                    self._append_log(f"[FAIL] Drive inventory: {payload}\n", "fail")
+                    self._popup("Volume Inventory", str(payload), kind="error")
                 elif kind == "vault-progress":
                     files = int((payload or {}).get("files") or 0)
                     hashed = int((payload or {}).get("hashed") or 0)

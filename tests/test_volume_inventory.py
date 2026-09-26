@@ -121,3 +121,51 @@ class VolumeInventoryExtendedSafetyTests(unittest.TestCase):
                 self.assertNotIn('junction/outside.txt', paths)
             finally:
                 os.rmdir(junction)
+
+class VolumeInventoryInteractiveTests(unittest.TestCase):
+    def test_progress_and_cancellation_are_partial_and_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for index in range(620):
+                (root / f"file_{index:04d}.txt").write_text("x", encoding="utf-8")
+            seen = []
+            stop = [False]
+            def progress(payload):
+                seen.append(payload["entries"])
+                if payload["entries"] >= 500:
+                    stop[0] = True
+            result = module.inventory(root, progress=progress, cancelled=lambda: stop[0])
+            self.assertTrue(result["cancelled"])
+            self.assertTrue(result["truncated"])
+            self.assertEqual(len(result["entries"]), 500)
+            self.assertIn(500, seen)
+            self.assertEqual(len(list(root.iterdir())), 620)
+
+    def test_successful_progress_has_final_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "hello").write_text("hello", encoding="utf-8")
+            updates = []
+            result = module.inventory(root, progress=updates.append)
+            self.assertFalse(result["cancelled"])
+            self.assertEqual(updates[-1]["entries"], 1)
+            self.assertEqual(updates[-1]["file"], 1)
+
+    def test_bounded_presentation_filters_without_persistence(self):
+        import importlib.util as _util
+        source = MODULE.with_name("CortexVolumeInventoryPresentation.py")
+        spec2 = _util.spec_from_file_location("volume_view_r8f", source)
+        view = _util.module_from_spec(spec2)
+        spec2.loader.exec_module(view)
+        report = {"root": "G:\\\\", "read_only": True,
+                  "entries": [{"path": "projects", "type": "directory"},
+                              {"path": "Git", "type": "directory"},
+                              {"path": "projects/havenwild/readme.txt", "type": "file"}],
+                  "counts": {"file": 1, "directory": 2}, "errors": [], "truncated": False}
+        top = view.render_inventory(report)
+        self.assertIn("[directory] projects", top)
+        self.assertNotIn("[file] projects/havenwild/readme.txt", top)
+        filtered = view.render_inventory(report, query="havenwild")
+        self.assertIn("projects/havenwild/readme.txt", filtered)
+        self.assertIn("No files imported, moved, hashed, registered", filtered)
+        self.assertEqual(len(report["entries"]), 3)

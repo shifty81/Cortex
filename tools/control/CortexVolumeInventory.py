@@ -12,12 +12,18 @@ import stat
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 SCHEMA = "cortex.volume_inventory.r8a.v1"
 
 
-def inventory(root: os.PathLike[str] | str, *, max_entries: int = 2_000_000) -> dict[str, Any]:
+def inventory(
+    root: os.PathLike[str] | str,
+    *,
+    max_entries: int = 2_000_000,
+    progress: Callable[[dict[str, int]], None] | None = None,
+    cancelled: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
     """Walk an existing volume/root without following links or crossing mount points.
 
     Inventory paths are relative to root, retaining original spelling/case. Every
@@ -35,7 +41,12 @@ def inventory(root: os.PathLike[str] | str, *, max_entries: int = 2_000_000) -> 
     errors: list[dict[str, str]] = []
     stack = [(base, "")]
     truncated = False
+    was_cancelled = False
+    counts = {kind: 0 for kind in ("file", "directory", "symlink", "other")}
     while stack:
+        if cancelled is not None and cancelled():
+            truncated = was_cancelled = True
+            break
         folder, relative = stack.pop()
         try:
             with os.scandir(folder) as scan:
@@ -45,6 +56,9 @@ def inventory(root: os.PathLike[str] | str, *, max_entries: int = 2_000_000) -> 
             continue
         dirs = []
         for child in children:
+            if cancelled is not None and cancelled():
+                truncated = was_cancelled = True
+                break
             if len(entries) >= max_entries:
                 truncated = True
                 break
@@ -60,6 +74,9 @@ def inventory(root: os.PathLike[str] | str, *, max_entries: int = 2_000_000) -> 
                     "modified_ns": info.st_mtime_ns,
                 }
                 entries.append(record)
+                counts[kind] += 1
+                if progress is not None and len(entries) % 500 == 0:
+                    progress({"entries": len(entries), **counts})
                 if kind == "directory":
                     # Windows st_dev/ismount semantics can mark ordinary folders as
                     # boundaries. Use the drive identity there, and explicitly
@@ -85,10 +102,11 @@ def inventory(root: os.PathLike[str] | str, *, max_entries: int = 2_000_000) -> 
         if truncated:
             break
         stack.extend(reversed(dirs))
-    counts = {kind: sum(e["type"] == kind for e in entries) for kind in ("file", "directory", "symlink", "other")}
+    if progress is not None:
+        progress({"entries": len(entries), **counts})
     return {
         "schema": SCHEMA, "root": str(base), "scanned_at_utc": datetime.now(timezone.utc).isoformat(),
-        "entries": entries, "counts": counts, "errors": errors, "truncated": truncated,
+        "entries": entries, "counts": counts, "errors": errors, "truncated": truncated, "cancelled": was_cancelled,
         "max_entries": max_entries, "read_only": True,
     }
 
