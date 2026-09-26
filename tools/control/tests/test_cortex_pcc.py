@@ -577,7 +577,7 @@ class PCC60PassTests(TempRoot):
             "Command Registry",
             "_scrollable_page_body",
             "_responsive_action_grid",
-            'GUI_VERSION = "PCC-GUI-0.15.0"',
+            'GUI_VERSION = "PCC-GUI-0.15.1"',
         ):
             self.assertIn(token, source)
 
@@ -690,7 +690,7 @@ class PCC60PassTests(TempRoot):
     def test_68_console_uses_python_cortex_bridge_without_building_on_prompt(self):
         source=(TOOLS/"CortexPCCGui.py").read_text(encoding="utf-8")
         bridge=(TOOLS/"CortexPythonBridge.py").read_text(encoding="utf-8")
-        self.assertIn('GUI_VERSION = "PCC-GUI-0.15.0"', source)
+        self.assertIn('GUI_VERSION = "PCC-GUI-0.15.1"', source)
         self.assertIn('def _cortex_runtime_root', source)
         self.assertIn('CortexPythonBridge.py', source)
         self.assertIn('environment_root=cortex_root', source)
@@ -750,7 +750,7 @@ class PCC60PassTests(TempRoot):
             "--git-name",
             "--git-email",
             "--git-scope",
-            'GUI_VERSION = "PCC-GUI-0.15.0"',
+            'GUI_VERSION = "PCC-GUI-0.15.1"',
         ):
             self.assertIn(token, source)
         pcc_source=(TOOLS/"CortexPCC.py").read_text(encoding="utf-8")
@@ -780,6 +780,21 @@ class PCC60PassTests(TempRoot):
         self.assertEqual(status["effectiveName"], "shifty81")
         self.assertEqual(status["effectiveEmail"], "50773914+shifty81@users.noreply.github.com")
 
+
+
+
+class VaultHealthGuiRegressionTests(unittest.TestCase):
+    def test_storage_health_is_dispatched_as_background_metadata_job(self):
+        gui = (TOOLS / "CortexPCCGui.py").read_text(encoding="utf-8")
+        store = (TOOLS / "PCCVaultStorage.py").read_text(encoding="utf-8")
+        self.assertIn('self._start_vault_health_job("Storage Health", vault_quick_storage_health)', gui)
+        self.assertIn('self._start_vault_health_job("Deep Health", vault_storage_health, deep=True)', gui)
+        self.assertIn('self._start_vault_health_job("CAS GC Plan", vault_cas_gc_plan, deep=True)', gui)
+        self.assertIn('threading.Thread(target=work, name=f"vault-health-', gui)
+        self.assertIn('elif kind == "vault-health-done":', gui)
+        self.assertIn('elif kind == "vault-health-error":', gui)
+        self.assertIn('"deepChecksPerformed": False', store)
+        self.assertNotIn('ensure_layout(root)\n    deps = dependency_status(root)', store)
 
 
 if __name__ == "__main__":

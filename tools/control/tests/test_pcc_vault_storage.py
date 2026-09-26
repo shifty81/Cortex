@@ -235,6 +235,23 @@ class VaultStorageTests(unittest.TestCase):
         self.assertIn("cargo_home", health["sharedStores"])
 
 
+    def test_quick_health_never_walks_or_provisions_vault_trees(self) -> None:
+        (self.vault / "projects").mkdir(parents=True)
+        with mock.patch.object(storage, "_dir_stats", side_effect=AssertionError("recursive walk")), \
+             mock.patch.object(storage, "ensure_layout", side_effect=AssertionError("provisioning")), \
+             mock.patch.object(storage, "cas_gc_plan", side_effect=AssertionError("CAS sweep")), \
+             mock.patch.object(storage, "reclaim_plan", side_effect=AssertionError("reclaim walk")):
+            summary = storage.quick_storage_health(self.root)
+        self.assertEqual(summary["mode"], "QUICK_METADATA_ONLY")
+        self.assertFalse(summary["deepChecksPerformed"])
+        self.assertIn("disk", summary)
+        self.assertFalse((self.vault / "objects").exists())
+
+    def test_deep_health_does_not_provision_during_read_only_inspection(self) -> None:
+        with mock.patch.object(storage, "ensure_layout", side_effect=AssertionError("provisioning")):
+            health = storage.storage_health(self.root)
+        self.assertIn(health["status"], {"PASS", "WARN"})
+
     def test_universal_backend_inherits_shared_dependency_environment(self) -> None:
         client = object.__new__(surface.BackendClient)
         client.root = self.root

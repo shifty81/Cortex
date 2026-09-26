@@ -67,12 +67,13 @@ from PCCVaultStorage import (
     mirror_status as vault_mirror_status,
     reclaim_plan as vault_reclaim_plan,
     storage_health as vault_storage_health,
+    quick_storage_health as vault_quick_storage_health,
     snapshot_retention_plan as vault_retention_plan,
     cas_gc_plan as vault_cas_gc_plan,
     verify_latest_mirror as vault_verify_latest_mirror,
 )
 
-GUI_VERSION = "PCC-GUI-0.15.0"
+GUI_VERSION = "PCC-GUI-0.15.1"
 
 BG = "#090b0e"
 PANEL = "#11151a"
@@ -148,6 +149,7 @@ class CortexPCCGui:
         self._vault_tree_initialized = False
         self._console_compacting_diff = False
         self._vault_busy = False
+        self._vault_health_busy = False
         self._vault_cancel = False
         self._vault_node_paths: dict[str, Path] = {}
         self._vault_metrics: dict[str, Any] = {}
@@ -1155,9 +1157,28 @@ class CortexPCCGui:
                  font=("Segoe UI Semibold", 13)).pack(anchor="w", pady=(0, 8))
         self._toolbar_grid(parent, (
             ("Storage Health", self._vault_storage_health, True, False),
+            ("Deep Health", self._vault_storage_health_deep, False, False),
             ("Retention Plan", self._vault_retention_plan, False, False),
             ("CAS GC Plan", self._vault_gc_plan, False, False),
-        ), preferred_columns=3, minimum_cell_width=150)
+        ), preferred_columns=4, minimum_cell_width=150)
+        self.vault_health_status = tk.Label(
+            parent, text="Ready · Storage Health uses fast metadata only; Deep Health requires a paused inventory.",
+            bg=BG, fg=MUTED, anchor="w", justify="left", font=("Segoe UI", 10),
+        )
+        self.vault_health_status.pack(fill="x", pady=(12, 7))
+        body = tk.Frame(parent, bg=PANEL, highlightbackground=BORDER, highlightthickness=1)
+        body.pack(fill="both", expand=True)
+        self.vault_health_detail = tk.Text(
+            body, bg=PANEL, fg=TEXT, insertbackground=CYAN, relief="flat", bd=0,
+            font=("Consolas", 10), padx=12, pady=12, wrap="word", state="disabled",
+        )
+        scroll = self._dark_scrollbar(body, orient="vertical", command=self.vault_health_detail.yview)
+        scroll.pack(side="right", fill="y")
+        self.vault_health_detail.configure(yscrollcommand=scroll.set)
+        self.vault_health_detail.pack(side="left", fill="both", expand=True)
+        self._vault_health_set_detail("Select Storage Health for a non-recursive overview.\n"
+                                      "Deep Health, retention and GC plans are asynchronous and read-only.\n"
+                                      "Source files, Vault catalog and persistent inventory are not modified.")
         tk.Label(parent, text="Mutating maintenance remains CLI + --yes until Windows certification.",
                  bg=BG, fg=MUTED, anchor="w", font=("Segoe UI", 10)).pack(fill="x", pady=(9, 0))
 
@@ -1693,59 +1714,98 @@ class CortexPCCGui:
         )
         self._popup("Shared Dependency Storage", message, kind="info")
 
-    def _vault_storage_health(self) -> None:
-        try:
-            result = vault_storage_health(self.root_path)
-        except Exception as exc:
-            self._popup("Storage Health", str(exc), kind="error")
+    def _vault_health_set_detail(self, detail: str) -> None:
+        self.vault_health_detail.configure(state="normal")
+        self.vault_health_detail.delete("1.0", "end")
+        self.vault_health_detail.insert("1.0", detail)
+        self.vault_health_detail.configure(state="disabled")
+
+    def _start_vault_health_job(self, action: str, worker: Callable[[Path], dict[str, Any]], *, deep: bool = False) -> None:
+        # UI callbacks never walk the filesystem. All Tk work remains on the GUI thread.
+        if self._vault_health_busy:
+            self.vault_health_status.configure(text="Health operation already running; wait for its result.", fg=YELLOW)
             return
-        cas = result.get("cas") or {}
-        disk = result.get("disk") or {}
-        warnings = list(result.get("warnings") or [])
-        message = (
-            f"Status: {result.get('status')}\n"
-            f"Vault: {result.get('vaultRoot')}\n\n"
-            f"Projects: {result.get('projects', 0)}\n"
-            f"Snapshots: {result.get('snapshots', 0)}\n"
-            f"CAS: {cas.get('files', 0)} objects / {self._human_bytes(int(cas.get('bytes') or 0))}\n"
-            f"Vault free: {self._human_bytes(int(disk.get('free') or 0))}\n"
-            f"GC eligible: {result.get('gcGarbageObjects', 0)} objects / {self._human_bytes(int(result.get('gcGarbageBytes') or 0))}\n"
-            f"Current project reclaim: {self._human_bytes(int(result.get('currentProjectReclaimBytes') or 0))}"
-        )
-        if warnings:
-            message += "\n\nWarnings:\n- " + "\n- ".join(str(x) for x in warnings)
-        self._popup("Vault Storage Health", message, kind="warning" if warnings else "success")
+        if deep and self._volume_running:
+            self.vault_health_status.configure(
+                text="Pause the persistent inventory first, then run Deep Health or the GC plan.", fg=YELLOW,
+            )
+            return
+        self._vault_health_busy = True
+        root = self.root_path
+        self.vault_health_status.configure(text=f"{action}: running in background…", fg=CYAN)
+        self._vault_health_set_detail(f"{action} in progress. The GUI remains usable.\n"
+                                      "This action does not modify source files or the Vault catalog.")
+
+        def work() -> None:
+            try:
+                result = worker(root)
+            except Exception as exc:
+                self._event_q.put(("vault-health-error", (action, str(exc))))
+            else:
+                self._event_q.put(("vault-health-done", (action, result)))
+
+        threading.Thread(target=work, name=f"vault-health-{action.lower().replace(' ', '-')}", daemon=True).start()
+
+    def _vault_storage_health(self) -> None:
+        self._start_vault_health_job("Storage Health", vault_quick_storage_health)
+
+    def _vault_storage_health_deep(self) -> None:
+        self._start_vault_health_job("Deep Health", vault_storage_health, deep=True)
 
     def _vault_retention_plan(self) -> None:
-        try:
-            result = vault_retention_plan(self.root_path)
-        except Exception as exc:
-            self._popup("Snapshot Retention", str(exc), kind="error")
-            return
-        message = (
-            f"Snapshots: {result.get('snapshotCount', 0)}\n"
-            f"Keep: {result.get('keepCount', 0)}\n"
-            f"Eligible metadata prune: {result.get('pruneCount', 0)}\n"
-            f"Certified retention: {result.get('certifiedKeep', 0)}\n"
-            f"Working retention: {result.get('workingKeep', 0)}\n\n"
-            "Dry-run only from the GUI. Retention apply requires explicit CLI --yes."
-        )
-        self._popup("Vault Snapshot Retention", message, kind="info")
+        self._start_vault_health_job("Retention Plan", vault_retention_plan)
 
     def _vault_gc_plan(self) -> None:
-        try:
-            result = vault_cas_gc_plan(self.root_path)
-        except Exception as exc:
-            self._popup("CAS GC Plan", str(exc), kind="error")
-            return
-        message = (
-            f"CAS objects: {result.get('casObjects', 0)}\n"
-            f"Referenced: {result.get('referencedObjects', 0)}\n"
-            f"Eligible for quarantine: {result.get('garbageObjects', 0)}\n"
-            f"Potential reclaim after purge: {self._human_bytes(int(result.get('garbageBytes') or 0))}\n\n"
-            "Plan only. GC first stages objects into reversible Vault quarantine; purge is a separate explicit --yes action."
-        )
-        self._popup("Vault CAS Garbage Collection", message, kind="info")
+        self._start_vault_health_job("CAS GC Plan", vault_cas_gc_plan, deep=True)
+
+    def _vault_health_render(self, action: str, result: dict[str, Any]) -> tuple[str, str]:
+        """Build a bounded user-facing report from a background-worker result."""
+        if action == "Storage Health":
+            disk = result.get("disk") or {}
+            stores = result.get("sharedStores") or {}
+            present = sum(bool(row.get("exists")) for row in stores.values())
+            message = (
+                "QUICK METADATA SUMMARY (no recursive file traversal)\n\n"
+                f"Vault: {result.get('vaultRoot')}\n"
+                f"Disk free: {self._human_bytes(int(disk.get('free') or 0))} / "
+                f"{self._human_bytes(int(disk.get('total') or 0))}\n"
+                f"Shared store locations present: {present}/{len(stores)}\n"
+                f"Current mirror manifest: {'Present' if result.get('mirrorManifestPresent') else 'Not present'}\n\n"
+                f"{result.get('note') or ''}"
+            )
+        elif action == "Deep Health":
+            cas = result.get("cas") or {}
+            disk = result.get("disk") or {}
+            warnings = list(result.get("warnings") or [])
+            message = (
+                f"Status: {result.get('status')}\nVault: {result.get('vaultRoot')}\n\n"
+                f"Projects: {result.get('projects', 0)}\nSnapshots: {result.get('snapshots', 0)}\n"
+                f"CAS: {cas.get('files', 0):,} objects / {self._human_bytes(int(cas.get('bytes') or 0))}\n"
+                f"Vault free: {self._human_bytes(int(disk.get('free') or 0))}\n"
+                f"GC eligible: {result.get('gcGarbageObjects', 0):,} objects / "
+                f"{self._human_bytes(int(result.get('gcGarbageBytes') or 0))}\n"
+                f"Current project reclaim: {self._human_bytes(int(result.get('currentProjectReclaimBytes') or 0))}"
+            )
+            if warnings:
+                message += "\n\nWarnings:\n- " + "\n- ".join(str(item) for item in warnings[:20])
+        elif action == "Retention Plan":
+            message = (
+                f"Snapshots: {result.get('snapshotCount', 0)}\n"
+                f"Keep: {result.get('keepCount', 0)}\n"
+                f"Eligible metadata prune: {result.get('pruneCount', 0)}\n"
+                f"Certified retention: {result.get('certifiedKeep', 0)}\n"
+                f"Working retention: {result.get('workingKeep', 0)}\n\n"
+                "Dry-run only. Nothing was deleted."
+            )
+        else:
+            message = (
+                f"CAS objects: {result.get('casObjects', 0)}\n"
+                f"Referenced: {result.get('referencedObjects', 0)}\n"
+                f"Eligible for quarantine: {result.get('garbageObjects', 0)}\n"
+                f"Potential reclaim: {self._human_bytes(int(result.get('garbageBytes') or 0))}\n\n"
+                "Plan only; nothing was moved, deleted, or purged."
+            )
+        return message, YELLOW if result.get("warnings") else GREEN
 
     def _vault_capture_baseline(self) -> None:
         try:
@@ -4079,6 +4139,19 @@ class CortexPCCGui:
                     self.vault_scan_status.configure(text="Intake audit failed", fg=RED)
                     self._append_log(f"[FAIL] Vault Intake audit: {payload}\n", "fail")
                     self._popup("Vault Intake Audit", str(payload), kind="error")
+                elif kind == "vault-health-done":
+                    action, result = payload
+                    self._vault_health_busy = False
+                    detail, color = self._vault_health_render(str(action), result)
+                    self.vault_health_status.configure(text=f"{action}: completed · read-only", fg=color)
+                    self._vault_health_set_detail(detail)
+                    self._append_log(f"[PASS] Vault {action}: completed without blocking GUI.\n", "pass")
+                elif kind == "vault-health-error":
+                    action, detail = payload
+                    self._vault_health_busy = False
+                    self.vault_health_status.configure(text=f"{action}: failed; see details", fg=RED)
+                    self._vault_health_set_detail(str(detail))
+                    self._append_log(f"[FAIL] Vault {action}: {detail}\n", "fail")
                 elif kind == "vault-mirror-all-progress":
                     index = int((payload or {}).get("index") or 0)
                     total = int((payload or {}).get("total") or 0)

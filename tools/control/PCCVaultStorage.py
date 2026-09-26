@@ -1001,10 +1001,45 @@ def _dir_stats(path: Path) -> dict[str, int]:
     return {"files": files, "bytes": total}
 
 
+
+def quick_storage_health(root: Path) -> dict[str, Any]:
+    """Non-recursive, read-only Vault health overview for the GUI.
+
+    Never enumerate build caches, CAS trees, snapshot directories, or source files.
+    This is a limited metadata overview, not a substitute for Deep Health.
+    """
+    root = root.expanduser().resolve()
+    vault = resolve_vault_root(root)
+    try:
+        usage = shutil.disk_usage(vault if vault.exists() else vault.parent)
+        disk = {"total": usage.total, "used": usage.used, "free": usage.free}
+    except OSError:
+        disk = {"total": 0, "used": 0, "free": 0}
+    paths = dependency_paths(root)
+    stores = {key: {"path": str(path), "exists": path.is_dir()}
+              for key, path in paths.items() if key not in {"vault_root", "project_vault"}}
+    total = int(disk["total"])
+    free = int(disk["free"])
+    warnings = ["Vault volume has less than 10% free space"] if total and free / total < 0.10 else []
+    return {
+        "schema": "pcc.storage_health_quick.v1",
+        "mode": "QUICK_METADATA_ONLY",
+        "status": "WARN" if warnings else "SUMMARY",
+        "projectRoot": str(root),
+        "vaultRoot": str(vault),
+        "disk": disk,
+        "sharedStores": stores,
+        "mirrorManifestPresent": (project_vault_dir(root) / "snapshots" / "latest.json").is_file(),
+        "deepChecksPerformed": False,
+        "warnings": warnings,
+        "note": "CAS counts, garbage collection, snapshot verification and reclaim estimates were not assessed. Use Deep Health explicitly after pausing the inventory.",
+    }
+
+
 def storage_health(root: Path) -> dict[str, Any]:
     """Global Vault/storage accounting suitable for PCC UI and debug bundles."""
     root = root.expanduser().resolve()
-    ensure_layout(root)
+    # Health must never provision/migrate directories as a side effect of inspection.
     deps = dependency_status(root)
     vault = Path(str(deps["vaultRoot"]))
     cas = _dir_stats(vault / "objects" / "sha256")
