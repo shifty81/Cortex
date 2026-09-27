@@ -1,56 +1,41 @@
+# Cortex W12 — Candidate Survival and Safe Failure Evidence
 
-## Portable external-drive Vault setup
+**Testing candidate; NOT Windows/Rust/full-gate certified.** No changes to Havenwild. This is a strict, small **incremental source updater** for the user-published, post-rustfmt W11 GREEN Cortex source. It is not a full source rollup and is not a governed root-drop archive: do not drop this ZIP into Cortex `updates/`. A later cumulative replacement should be assembled from a newly certified W12 source checkpoint.
 
-For a laptop/external-drive setup, keep this source in a project folder such as `E:\\Cortex\\` and run `SETUP_EXTERNAL_DRIVE_VAULT_ROOT.cmd`. The setup binds the **drive root itself** (for example `E:\\`) as the machine Vault authority. See `docs/EXTERNAL_DRIVE_ROOT_VAULT.md`.
+## Provenance and scope
 
-# Forge + Cortex — Current Project Authority
+- Live W11 GREEN GitHub checkpoint: `shifty81/Cortex` at `71c63c7c8a5ae037b3c8294acb4b751580ea10fa` (27 Sep 2026 00:59 checkpoint). The updater verifies **exact Git blob hashes** for `crates/cortex_cli/src/lib.rs` and `crates/cortex_core/src/lib.rs` before any writes, rather than assuming a drive letter, branch name, or stale preformatted W11 archive.
+- Writes only these two existing Rust source files when `--apply` is specified. Keeps byte-exact backups and a manifest in `G:\Cortex\artifacts\updates\w12-green-source-<UTC>/` (substituting the actual selected project root). No automatic Git operations, builds, registry edits, Drive inventory reads, Vault changes, source moves, or Havenwild writes.
+- The updater preserves the currently installed green source and applies anchored source modifications in memory. If any anchor or preimage differs it refuses before writing anything. It does not overwrite the previously formatted Rust files with older W11 ZIP contents.
 
-**Date:** 2026-09-23
+## Correct PowerShell usage
 
-## Product hierarchy
+Extract this ZIP to a separate directory, such as your Desktop, not within Cortex. From that extracted directory:
 
-- **Forge** is the primary user-facing universal workstation, project manager and project-control shell.
-- **Cortex** is Forge's integrated intelligence/automation backend and remains independently testable/service-capable.
-- **Vault** is the shared storage, catalog, provenance and recovery subsystem used by the control plane.
-- **PCC capabilities** are universal project-control capabilities inside this same system, not a competing end-user product.
-- **Ember and other games/tools** remain independent managed projects that consume the universal contracts.
+```powershell
+$py = "G:\shared\toolchains\python\3.14.7\python.exe"
+& $py .\W12_GREEN_APPLY.py --root "G:\Cortex"          # PREVIEW: no changes
+& $py .\W12_GREEN_APPLY.py --root "G:\Cortex" --apply  # EXPLICIT source update
 
-The target is one cohesive application/repository direction for Forge + Cortex + Vault + PCC behavior while keeping hosted projects independently buildable and recoverable.
+Set-Location "G:\Cortex"
+cargo fmt --all
+cargo fmt --all -- --check
+git diff --check
+& .\PROJECT_CONTROL_CENTER.cmd
+```
 
-## Current authority boundary
+Choose **FULL**. Do **not** commit or push until the complete Windows quality gate is GREEN. If preimage validation fails, stop and provide a current source rollup; do not force the updater or apply an old W11 archive. This script will not itself run FULL.
 
-The Python Forge/PCC lane remains production authority today. Rust Forge RS04–RS293 is a candidate lane and must pass local build/runtime/parity/takeover certification before replacing the production control plane.
+## What W12 changes
 
-Cortex owns AI/agent orchestration, conversations, context/memory, providers/models, tools/permissions, jobs/activity, project intelligence, review evidence, plugins/skills/protocol contracts and Cortex CLI/API/service behavior.
+1. **Candidate survival barrier:** after the agent turn, check actual transaction status, original transaction ID and touched/created ledger **before** invoking a project-owned checkpoint. An already rolled-back mutation immediately yields `candidate_not_active_after_model`, without rerunning native FULL against restored source.
+2. **Unexecuted tool-call barrier:** if the final repair narrative still contains a line beginning `<tool_call>` or `<function_call>`, record `unexecuted_tool_call_in_model_report`, leave the retained candidate for review and do not invoke FULL.
+3. **Evidence schema v3:** receipt gains pre-gate status/ledger, `checkpoint_executed`, `checkpoint_skip_reason`, and per-call bounded source-relative `target_path`, fixed-vocabulary `failure_class` and `candidate_decision`. It does **not** include raw mutation payloads, full error bodies, or credentials in those fields. The receipt still includes the user's original prompt and verification outputs, so keep it private.
+4. **Regression coverage:** adds in-source Rust tests for rolled-back candidate, retained candidate, pseudo-tool-call rejection, safe error classification, sensitive text exclusion and controller disposition. The standalone Python tests verify fail-closed preimage/anchor checks, backups and reapplication refusal.
 
-Forge/PCC owns universal project discovery/control, build/test/run/gate orchestration, update transactions, Vault/project mirrors, artifacts/provenance, source control, recovery and takeover certification.
+## Known limitations and acceptance
 
-## Storage rule
-
-Use one governed Vault. Shared dependency/download caches are machine-wide; project build outputs remain safely namespaced; each registered project has a deduplicated content-addressed mirror. FULL GREEN requires a source-stable, deep-verified project mirror and a recovery certification tied to the GREEN source fingerprint.
-
-Do not silently delete legacy caches or recovery material. Cleanup remains explicit, planned, quarantined and reversible before purge.
-
-## Current testing truth
-
-Python/PCC behavior can be certified in this source environment. Rust compilation, Windows GUI startup and real provider/chat behavior remain authoritative only when run on the Windows development machine.
-
-See `README.md`, `docs/QUALITY_GATE_CONTRACT.md`, `docs/CURRENT_IMPLEMENTATION_AUDIT_RS293.md`, and `products/forge-rust/docs/FORGEPY_PARITY_MATRIX.md`.
-
-## Portable first-run environment hydration
-
-On a fresh Windows machine, Cortex no longer requires Python to be installed manually before the PCC can start. `PROJECT_CONTROL_CENTER.cmd` now runs a PowerShell bootstrap first and can hydrate shared Python, Git, Rust, rustfmt and clippy into the configured Vault.
-
-For the external-drive-root layout, run `SETUP_EXTERNAL_DRIVE_VAULT_ROOT.cmd` once, then launch `PROJECT_CONTROL_CENTER.cmd`. You can also force the first hydration with `BOOTSTRAP_CORTEX_ENVIRONMENT.cmd`. If Windows C++/MSVC linker tooling is missing, run `HYDRATE_CORTEX_BUILD_TOOLS.cmd` once before Full Gate certification.
-
-Environment evidence is written to `artifacts/bootstrap/environment-health.json`; hydrated toolchains live under the Vault `shared/` namespace rather than inside every project. See `docs/CORTEX_ENVIRONMENT_HYDRATION.md`.
-
-## Portable bootstrap recovery (R8A)
-
-Portable-drive builds carry `config/cortex/portable_drive_root_vault.v1.json`, so a repository at `E:\Cortex` automatically selects `E:\` as Vault authority unless `CORTEX_VAULT_ROOT` or `PCC_VAULT_ROOT` explicitly overrides it.
-
-If dependency hydration fails after Python has already installed, PCC should still launch and report the remaining build dependency as unhealthy. Rustup downloads are SHA-256 verified from Rust's official `.sha256` endpoint; stale or mismatched cached installers are deleted and retried up to three times.
-
-## Portable bootstrap recovery (R8B)
-
-R8B hardens the portable Windows bootstrap after real external-drive testing. Rust's official `.sha256` endpoint may be returned by Windows PowerShell as binary `application/octet-stream`; the bootstrap now decodes byte content before parsing the digest. Portable Python remains the full Windows distribution because the PCC GUI requires Tkinter. If Python 3.14.7 was already installed by an earlier Cortex bootstrap under the legacy AppData Vault or another registered per-user location, the installer may no-op instead of creating a second target directory. R8B discovers that complete runtime, migrates it into the active drive-root Vault, and validates both Python 3.11+ and Tkinter before marking launch readiness.
+- Python fixture suite here: 4 tests passed. This environment has no Rust/Cargo compiler, so `cargo fmt`, Rust compilation, Clippy and Windows FULL are **not yet certified**; only the real Windows gate can promote W12 to GREEN.
+- The updater targets current exact source hashes. The fixture contains **historical pre-format W11 source only for offline transformation tests**; those fixture files are not applied to your project.
+- W12 prevents wasted FULL after candidate loss; it does **not** guarantee that the local model invents a valid dependency fix or eliminate the first 280 seconds of model inference. A future pass can optimize resident provider/worker latency and add a bounded agent retry policy.
+- If the failure is `candidate_not_active_after_model`, do not immediately re-run repair; attach the v3 evidence receipt. The candidate may already be safely rolled back, and the tool's recorded disposition/error classes should explain the next correction.
