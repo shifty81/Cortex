@@ -78,7 +78,7 @@ from PCCVaultStorage import (
     verify_latest_mirror as vault_verify_latest_mirror,
 )
 
-GUI_VERSION = "PCC-GUI-0.15.6a"
+GUI_VERSION = "PCC-GUI-0.15.6b"
 
 BG = "#090b0e"
 PANEL = "#11151a"

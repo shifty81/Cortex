@@ -23,7 +23,7 @@ from typing import Any
 
 from PCCChatStore import load_messages, save_messages
 
-BRIDGE_VERSION = "CORTEX-PY-BRIDGE-0.8"
+BRIDGE_VERSION = "CORTEX-PY-BRIDGE-0.9"
 CHAT_HISTORY_LIMIT = 20
 CONTEXT_TEXT_LIMIT = 24000
 
@@ -364,8 +364,30 @@ def _bounded_recent_logs(log_dir: Path, *, limit: int = 3, budget: int = 256) ->
     return [path for _, path in candidates[:limit]]
 
 
+def _workspace_root_evidence(workspace: Path) -> str:
+    """Bounded, explicit project-root evidence; missing SOURCE_MANIFEST is irrelevant."""
+    try:
+        # The root only: no recursive traversal or dependency/source-body reads.
+        with os.scandir(workspace) as items:
+            sample = []
+            for i, entry in enumerate(items):
+                if i >= 48:
+                    break
+                sample.append(entry.name)
+        sample.sort()
+    except OSError as exc:
+        return f"Root enumeration FAILED: {exc}; do not conclude the project is empty."
+    markers = ("Cargo.toml", "Cargo.lock", "src", "PCC.cmd", "ProjectControlCenter.py", "ForgePY.py", "project.control.json", "CMakeLists.txt", "pyproject.toml", "package.json")
+    present = [name for name in markers if (workspace / name).exists()]
+    return (
+        f"Verified root markers: {present}; sampled top-level entries: {sample}. "
+        "SOURCE_MANIFEST.json is optional: its missing/zero file_count and a standalone "
+        "Cargo package's zero explicit workspace members do NOT mean this folder is empty."
+    )
+
+
 def _workspace_context(workspace: Path, *, include_logs: bool = True) -> str:
-    rows: list[str] = [f"Workspace: {workspace}"]
+    rows: list[str] = [f"Workspace: {workspace}", _workspace_root_evidence(workspace)]
     # A chat message is not a build-diagnostics request.  BuildDoctor enumerates
     # historical log files and must only run for a deliberately diagnostic mode.
     if include_logs:
@@ -407,8 +429,17 @@ def _workspace_context(workspace: Path, *, include_logs: bool = True) -> str:
             tail = "\n".join(text.splitlines()[-80:])
             rows.append(f"Recent log {path.relative_to(workspace)}:\n{tail}")
 
-    value = "\n\n".join(rows)
-    return value[-CONTEXT_TEXT_LIMIT:]
+    # Preserve early authoritative root identity, then bounded diagnostic records.
+    # Truncating the tail of the complete blob used to delete the true project root.
+    collected: list[str] = []
+    remaining = CONTEXT_TEXT_LIMIT
+    for row in rows:
+        if remaining <= 0:
+            break
+        part = row[:remaining]
+        collected.append(part)
+        remaining -= len(part) + 2
+    return "\n\n".join(collected)
 
 
 def _python_model(cortex_root: Path, workspace: Path, conversation_id: str, mode: str, prompt: str) -> int:
@@ -458,13 +489,14 @@ def _worker_request_text(
     """Supply the transactional worker the same project evidence/history the Python path sees."""
     history = load_messages(cortex_root, workspace, conversation_id)[-CHAT_HISTORY_LIMIT:]
     history_text = "\n".join(
-        f"{row.get('role', 'unknown')}: {row.get('content', '')}"
+        f"{row.get('role', 'unknown')}: {str(row.get('content', ''))[-1600:]}"
         for row in history
         if isinstance(row, dict) and str(row.get("content") or "").strip()
     )
     # Ordinary chat does not need to enumerate the artifact log tree on every turn.
     # Inspect/Plan/Apply/Repair still receive bounded supplemental log evidence.
     context = _workspace_context(workspace, include_logs=(mode in {"inspect", "plan", "apply", "repair"}))
+    history_text = history_text[-6000:]
     return (
         f"Mode: {mode}\nConversation: {conversation_id}\n\n"
         f"Recent conversation:\n{history_text or '<none>'}\n\n"

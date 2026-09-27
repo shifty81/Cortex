@@ -151,6 +151,26 @@ pub fn detect_project_checkpoint_authority(root: &Path) -> ProjectCheckpointAuth
         };
     }
 
+    // A project's own PCC is the quality authority, even when it is not the
+    // Universal-PCC Python module. Execute its anchored Python entry point with
+    // a fixed `full` argument rather than passing model-controlled shell text.
+    if root.join("PCC.cmd").is_file() && root.join("ProjectControlCenter.py").is_file() {
+        let script = root.join("ProjectControlCenter.py");
+        return ProjectCheckpointAuthority {
+            schema_version: DEVELOPMENT_SCHEMA_VERSION,
+            kind: CheckpointAuthorityKind::ProjectNative,
+            label: "Project-local PCC FULL quality gate".into(),
+            program: Some("python".into()),
+            args: vec![script.to_string_lossy().to_string(), "full".into()],
+            log_path: None,
+            protected_paths: vec![
+                PathBuf::from("PCC.cmd"),
+                PathBuf::from("ProjectControlCenter.py"),
+            ],
+            covers_runtime: false,
+        };
+    }
+
     let open2d_checkpoint = root
         .join("scripts")
         .join("Invoke-Open2DCortexCheckpoint.ps1");
@@ -1127,6 +1147,21 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(fixture_root);
+    }
+
+    #[test]
+    fn project_local_pcc_is_checkpoint_authority_without_universal_pcc_module() {
+        let root = std::env::temp_dir().join(format!("cortex-w11-pcc-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("PCC.cmd"), "@echo off\n").unwrap();
+        fs::write(root.join("ProjectControlCenter.py"), "# test fixture\n").unwrap();
+        fs::write(root.join("Cargo.toml"), "[package]\nname=\"fixture\"\n").unwrap();
+        let authority = detect_project_checkpoint_authority(&root);
+        assert!(authority.project_native());
+        assert_eq!(authority.program.as_deref(), Some("python"));
+        assert_eq!(authority.args.last().map(String::as_str), Some("full"));
+        assert!(authority.args[0].ends_with("ProjectControlCenter.py"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

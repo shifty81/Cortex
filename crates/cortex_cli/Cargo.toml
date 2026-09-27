@@ -16,6 +16,7 @@ cortex_vault = { path = "../cortex_vault" }
 cortex_service = { path = "../cortex_service" }
 cortex_plugin = { path = "../cortex_plugin" }
 cortex_desktop_core = { path = "../cortex_desktop_core" }
+cortex_development = { path = "../cortex_development" }
 cortex_adapter_git = { path = "../cortex_adapter_git" }
 cortex_conversation = { path = "../cortex_conversation" }
 cortex_registry = { path = "../cortex_registry" }

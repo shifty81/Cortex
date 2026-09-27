@@ -745,11 +745,6 @@ fn is_repair_model_tool(name: &str) -> bool {
             | "source.transaction_files"
             | "source.write_text"
             | "source.replace_text"
-            | "vscode.workspace_info"
-            | "vscode.open_file"
-            | "vscode.get_diagnostics"
-            | "vscode.apply_workspace_edit"
-            | "vscode.save_all"
     )
 }
 
@@ -1848,6 +1843,8 @@ mod tests {
     fn repair_tool_profile_excludes_controller_orchestration_tools() {
         assert!(is_repair_model_tool("source.read"));
         assert!(is_repair_model_tool("source.replace_text"));
+        assert!(!is_repair_model_tool("vscode.get_diagnostics"));
+        assert!(!is_repair_model_tool("vscode.apply_workspace_edit"));
         assert!(!is_repair_model_tool("dependency.ground"));
         assert!(is_controller_only_tool("dependency.ground"));
         assert!(!is_repair_model_tool("source.begin_transaction"));

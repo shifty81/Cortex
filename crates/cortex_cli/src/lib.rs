@@ -1471,8 +1471,13 @@ fn transaction_command(service: &mut CortexService, args: &[String]) -> Result<(
         }
         "commit" => {
             if !args.iter().any(|arg| arg == "--force") {
-                let verification =
-                    execute_named_tool(service, "build.cargo_check", json!({}), "tx-commit-check");
+                let root = service.engine.tools().workspace_root().to_path_buf();
+                let verification = execute_named_tool(
+                    service,
+                    project_validation_tool(&root),
+                    json!({}),
+                    "tx-commit-check",
+                );
                 if !tool_result_success(&verification) {
                     println!(
                         "{}",
@@ -1480,7 +1485,7 @@ fn transaction_command(service: &mut CortexService, args: &[String]) -> Result<(
                             .map_err(|e| e.to_string())?
                     );
                     return Err(
-                        "transaction commit blocked because cargo check failed; repair, rollback, or use tx commit --force intentionally"
+                        "transaction commit blocked because project-authoritative verification failed; repair or rollback the candidate (the --force override is explicit and unsafe)"
                             .into(),
                     );
                 }
@@ -1509,6 +1514,68 @@ fn transaction_command(service: &mut CortexService, args: &[String]) -> Result<(
         Err(format!("transaction command failed: {command}"))
     } else {
         Ok(())
+    }
+}
+
+/// W11: ground the physical active root before starting a mutating repair.
+/// The optional SOURCE_MANIFEST and [workspace].members fields are not filesystem counts.
+fn repair_project_preflight(root: &Path) -> Result<Value, String> {
+    let items = fs::read_dir(root).map_err(|error| {
+        format!(
+            "repair preflight cannot enumerate {}: {error}",
+            root.display()
+        )
+    })?;
+    let mut observed = Vec::new();
+    let mut truncated = false;
+    for item in items {
+        let item = item.map_err(|error| format!("repair root enumeration failed: {error}"))?;
+        if observed.len() >= 48 {
+            truncated = true;
+            break;
+        }
+        observed.push(item.file_name().to_string_lossy().to_string());
+    }
+    observed.sort();
+    let markers = [
+        "Cargo.toml",
+        "PCC.cmd",
+        "PCC.sh",
+        "project.control.json",
+        "CMakeLists.txt",
+        "pyproject.toml",
+        "package.json",
+        "build.gradle",
+        "build.gradle.kts",
+    ];
+    let present = markers
+        .iter()
+        .filter(|marker| root.join(marker).is_file())
+        .copied()
+        .collect::<Vec<_>>();
+    if present.is_empty() {
+        return Err(format!(
+            "repair blocked before any transaction: no authoritative project/build marker was observed in {}. Found root entries {:?}. Do not initialize, delete, or infer an empty project; select the correct registered project or inspect its build contract first.",
+            root.display(), observed
+        ));
+    }
+    Ok(json!({
+        "active_root":root,
+        "root_enumeration":"verified",
+        "root_entries_sample":observed,
+        "root_sample_truncated":truncated,
+        "project_markers":present,
+        "src_directory_exists":root.join("src").is_dir(),
+        "Cargo_lock_exists":root.join("Cargo.lock").is_file(),
+        "note":"SOURCE_MANIFEST file_count and explicit Cargo workspace members are NOT actual filesystem counts; never conclude empty project from those values."
+    }))
+}
+
+fn project_validation_tool(root: &Path) -> &'static str {
+    if cortex_development::detect_project_checkpoint_authority(root).project_native() {
+        "build.project_checkpoint"
+    } else {
+        "build.project_validate"
     }
 }
 
@@ -1552,6 +1619,16 @@ fn project_agent_command(
     };
     service.engine.set_mode(mode);
 
+    let repair_grounding = if action == "repair" {
+        let root = service.engine.tools().workspace_root().to_path_buf();
+        Some(repair_project_preflight(&root)?)
+    } else {
+        None
+    };
+    if let (OutputMode::Human, Some(evidence)) = (output, &repair_grounding) {
+        eprintln!("[PASS] Physical project-root preflight: {evidence}");
+    }
+
     let tx_id = if mutating {
         Some(ensure_active_transaction(
             service,
@@ -1570,7 +1647,8 @@ fn project_agent_command(
             "An active durable Cortex transaction is already open. Do not begin another transaction and do not commit or roll it back. You have authoritative project source inspection and project-file mutation tools in this mode. Never tell the user to edit files manually or claim that you cannot edit/save project files. Apply the requested bounded changes using Cortex source tools, then run build.cargo_check before finishing. Leave the transaction active for human review.\n\nUser request: {prompt}"
         ),
         "repair" => format!(
-            "An active durable Cortex transaction is already open and the deterministic Repair Coordinator owns transaction lifecycle, dependency grounding, quality-gate execution, rollback, commit, and completion authority. Do not begin/commit/rollback transactions and do not run build/development orchestration tools. Review the supplied repair evidence, inspect only source needed to understand it, and make one coherent bounded candidate repair with the offered source-edit tools. Never tell the user to edit files manually. Leave verification to the controller.\n\nRepair request: {prompt}"
+            "An active durable Cortex transaction is open. Controller-verified project-root facts (not a model inference): {}. These override any optional SOURCE_MANIFEST file_count=0 or Cargo member_count=0. If the native PCC failure excerpt is missing, say that diagnostic evidence is missing; do not invent an empty project or initialize Cargo. First inspect the actual root manifest and failing diagnostics using structured tools. Use actual source.read/source.search and source.replace_text/source.write_text calls: fenced pseudo-commands are NOT executed. Make one bounded candidate change grounded in real source, and never modify registry cache or unrelated projects. Do not begin/commit/rollback transactions or run build/orchestration tools; the controller alone verifies changes and reports real transaction state. A suggestion or prose diagnosis is not a repair.\n\nRepair request: {prompt}",
+            repair_grounding.as_ref().unwrap_or(&Value::Null)
         ),
         _ => prompt.to_string(),
     };
@@ -1641,9 +1719,22 @@ fn project_agent_command(
         ));
     }
 
-    let verification = if mutating {
-        let check = execute_named_tool(service, "build.cargo_check", json!({}), "post-agent-check");
-        Some(check)
+    let validation_tool = mutating.then(|| {
+        let root = service.engine.tools().workspace_root();
+        project_validation_tool(root)
+    });
+    let verification = if let Some(tool) = validation_tool {
+        if output == OutputMode::Human {
+            eprintln!(
+                "[INFO] Controller verification: {tool} (project-owned checkpoint takes precedence)"
+            );
+        }
+        Some(execute_named_tool(
+            service,
+            tool,
+            json!({}),
+            "post-agent-check",
+        ))
     } else {
         None
     };
@@ -1659,6 +1750,16 @@ fn project_agent_command(
         None
     };
 
+    let tx_files = if mutating {
+        Some(execute_named_tool(
+            service,
+            "source.transaction_files",
+            json!({}),
+            "post-agent-tx-files",
+        ))
+    } else {
+        None
+    };
     let evidence_input = AgentEvidenceWrite {
         session_dir: service.engine.tools().session().directory.as_path(),
         mode: action,
@@ -1667,19 +1768,30 @@ fn project_agent_command(
         result: &result,
         transaction_id: tx_id.as_deref(),
         verification: verification.as_ref(),
+        verification_tool: validation_tool,
         transaction_status: tx_status.as_ref(),
+        transaction_files: tx_files.as_ref(),
+        project_grounding: repair_grounding.as_ref(),
     };
     let evidence_path = write_agent_evidence(&evidence_input)?;
 
+    let transaction_active = tx_status
+        .as_ref()
+        .and_then(|status| status.output.pointer("/transaction/id"))
+        .and_then(Value::as_str)
+        .is_some_and(|id| tx_id.as_deref() == Some(id));
     let verification_ok = verification
         .as_ref()
         .map(tool_result_success)
-        .unwrap_or(true);
+        .unwrap_or(true)
+        && (!mutating || transaction_active);
 
     match output {
         OutputMode::Human => {
-            println!("{}", result.text);
-            eprintln!("Grounding : VERIFIED");
+            println!("Model report (unverified narrative):\n{}", result.text);
+            eprintln!(
+                "Grounding : physical-root preflight + structured tool evidence; model narrative is not verification"
+            );
             eprintln!(
                 "Evidence  : {} structured tool call(s)",
                 result.evidence.len()
@@ -1696,10 +1808,16 @@ fn project_agent_command(
                 eprintln!(
                     "Post-check : {}",
                     if verification_ok {
-                        "PASS"
+                        "PASS - candidate remains reviewable"
+                    } else if transaction_active {
+                        "FAIL - transaction remains active for review"
                     } else {
-                        "FAIL - transaction remains active"
+                        "FAIL - no active candidate (controller rolled back or transaction ended)"
                     }
+                );
+                eprintln!(
+                    "Verification authority: {}",
+                    validation_tool.unwrap_or("not selected")
                 );
             }
             eprintln!("Evidence file: {}", evidence_path.display());
@@ -1710,7 +1828,7 @@ fn project_agent_command(
             serde_json::to_string_pretty(&json!({
                 "schema_version":1,
                 "mode":action,
-                "grounding":"verified",
+                "grounding":"controller_root_preflight_and_tool_evidence",
                 "model":model,
                 "text":result.text,
                 "iterations":result.iterations,
@@ -1718,6 +1836,10 @@ fn project_agent_command(
                 "transaction_id":tx_id,
                 "verification":verification,
                 "transaction_status":tx_status,
+                "transaction_files":tx_files,
+                "project_grounding":repair_grounding,
+                "verification_tool":validation_tool,
+                "transaction_active":transaction_active,
                 "evidence_file":evidence_path,
                 "success":verification_ok
             }))
@@ -1728,7 +1850,7 @@ fn project_agent_command(
             "agent_finished",
             json!({
                 "mode":action,
-                "grounding":"verified",
+                "grounding":"controller_root_preflight_and_tool_evidence",
                 "model":model,
                 "text":result.text,
                 "iterations":result.iterations,
@@ -1736,6 +1858,10 @@ fn project_agent_command(
                 "transaction_id":tx_id,
                 "verification":verification,
                 "transaction_status":tx_status,
+                "transaction_files":tx_files,
+                "project_grounding":repair_grounding,
+                "verification_tool":validation_tool,
+                "transaction_active":transaction_active,
                 "evidence_file":evidence_path,
                 "success":verification_ok
             }),
@@ -1744,7 +1870,13 @@ fn project_agent_command(
 
     if !verification_ok {
         return Err(format!(
-            "{action} completed edits but post-agent cargo check failed; review or roll back the active transaction"
+            "{action} did not pass project-authoritative verification ({}) ; transaction {}. Review the evidence receipt before another mutation",
+            validation_tool.unwrap_or("not selected"),
+            if transaction_active {
+                "remains active for review"
+            } else {
+                "is not active (possible controller rollback)"
+            }
         ));
     }
     Ok(())
@@ -1902,7 +2034,10 @@ struct AgentEvidenceWrite<'a> {
     result: &'a AgentTurnResult,
     transaction_id: Option<&'a str>,
     verification: Option<&'a cortex_protocol::ToolResultInput>,
+    verification_tool: Option<&'a str>,
     transaction_status: Option<&'a cortex_protocol::ToolResultInput>,
+    transaction_files: Option<&'a cortex_protocol::ToolResultInput>,
+    project_grounding: Option<&'a Value>,
 }
 
 fn write_agent_evidence(input: &AgentEvidenceWrite<'_>) -> Result<PathBuf, String> {
@@ -1912,7 +2047,10 @@ fn write_agent_evidence(input: &AgentEvidenceWrite<'_>) -> Result<PathBuf, Strin
     let report = json!({
         "schema_version": 2,
         "mode": input.mode,
-        "grounding": "verified",
+        "grounding": "controller_root_preflight_and_tool_evidence",
+        "project_grounding": input.project_grounding,
+        "verification_tool": input.verification_tool,
+        "transaction_files": input.transaction_files,
         "prompt": input.prompt,
         "model": input.model,
         "iterations": input.result.iterations,
@@ -3165,7 +3303,9 @@ fn print_cli_help() {
     println!("  tx files");
     println!("  tx begin [label]");
     println!("  tx checkpoint <path>");
-    println!("  tx commit [--force]    (cargo check required unless forced)");
+    println!(
+        "  tx commit [--force]    (project-authoritative verification required unless forced)"
+    );
     println!("  tx rollback");
 }
 
@@ -3826,6 +3966,38 @@ mod mutation_guard_tests {
             true,
             true,
         )));
+    }
+
+    #[test]
+    fn w11_repair_preflight_does_not_treat_standalone_cargo_as_empty() {
+        let root =
+            std::env::temp_dir().join(format!("cortex-w11-preflight-{}", std::process::id()));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("Cargo.toml"), "[package]\nname=\"fixture\"\n").unwrap();
+        let evidence = repair_project_preflight(&root).unwrap();
+        assert_eq!(evidence.get("root_enumeration"), Some(&json!("verified")));
+        assert_eq!(evidence.get("src_directory_exists"), Some(&json!(true)));
+        assert_eq!(project_validation_tool(&root), "build.project_validate");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn w11_repair_preflight_fails_closed_before_transaction_on_unknown_root() {
+        let root = std::env::temp_dir().join(format!("cortex-w11-unknown-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        assert!(repair_project_preflight(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn w11_project_local_pcc_overrides_generic_cargo_validation() {
+        let root = std::env::temp_dir().join(format!("cortex-w11-gate-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("Cargo.toml"), "[package]\nname=\"fixture\"\n").unwrap();
+        fs::write(root.join("PCC.cmd"), "@echo off\n").unwrap();
+        fs::write(root.join("ProjectControlCenter.py"), "# fixture\n").unwrap();
+        assert_eq!(project_validation_tool(&root), "build.project_checkpoint");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -1,9 +1,9 @@
 {
   "schema": "cortex.incremental_patch_manifest.v1",
-  "patch_id": "CORTEX-W10-CUMULATIVE-AGENT-EXECUTION-AND-CHAT-LATENCY-OVER-R8J-A",
-  "prerequisite": "Published R8J-A or already installed W9 / current W9 GREEN checkpoint; cumulative repository-root overwrite, no older package required",
-  "operation": "One explicit repository-root overwrite only; all W9 payloads plus W10 bridge/GUI diagnostics and guided repair routing",
-  "visible_gui_version": "PCC-GUI-0.15.6a",
+  "patch_id": "CORTEX-W11-CUMULATIVE-REPAIR-AGENT-CORRECTNESS-OVER-R8J-A",
+  "prerequisite": "Published R8J-A or existing W10 GREEN / same intervening patch lineage; W11 is one cumulative repository-root overwrite with all W10 payloads, no older B1 ZIP required. Verify current source preimages before applying.",
+  "operation": "One governed Cortex repository-root overwrite only; retain all W10 payloads, repair engine grounding, project-local PCC evidence and validation, transaction truth, bounded context and synthetic tests.",
+  "visible_gui_version": "PCC-GUI-0.15.6b",
   "inventory_schema_migration": false,
   "inventory_rebuild": false,
   "existing_inventory_preserved": true,
@@ -11,14 +11,55 @@
   "vault_catalog_mutation": false,
   "automatic_registration": false,
   "recovery_full_certified": false,
-  "windows_full": "W9 successfully passed Windows FULL and was pushed; W10 Windows FULL and live repair certification pending",
-  "p0_p2_scope": "Retains W9 P0–P2 testing preview; adds approved transactional repair routing from GUI and bounded ordinary-chat context collection. Not a resident worker daemon or full repair success certification.",
+  "windows_full": "W10 GREEN was reported by user; W11 Rust/Cargo and Windows FULL untested; do not publish W11 as GREEN before full native acceptance.",
+  "p0_p2_scope": "Retains prior W10 lineage and adds bounded native repair-grounding correctness. No claim of full P0–P2 completion, resident worker, general autonomous repair reliability or Havenwild patch.",
   "files": [
+    {
+      "path": "crates/cortex_cli/Cargo.toml",
+      "action": "replace",
+      "base_sha256": "cd51277ece1ee0bc7404b4127b17b3424902690c041956e741825e83a4cd3319",
+      "acceptable_prior_sha256": [],
+      "replacement_sha256": "88eba889be018b95c6c4af777cfb390d031b8f3ab2fb61af6abe9d2463d9cbf4",
+      "bytes": 1533
+    },
+    {
+      "path": "crates/cortex_cli/src/lib.rs",
+      "action": "replace",
+      "base_sha256": "cd639ed2d80948ebb8401f4283f5532201f7509527e9a0e2769a2df170ffd767",
+      "acceptable_prior_sha256": [],
+      "replacement_sha256": "6f88c08932ebae9abf3db7ed490c964ad6bfd92a1a48ed47c9e401e301617be2",
+      "bytes": 149428
+    },
+    {
+      "path": "crates/cortex_core/src/lib.rs",
+      "action": "replace",
+      "base_sha256": "c95ea801bf838bbf6b4afa27cf5967c5e5fc51f2aaa712980cb371e54c1cc4be",
+      "acceptable_prior_sha256": [],
+      "replacement_sha256": "7a26fafa1827154fb2950bf4a462dd1dcb5dbcb363d8843d653a0c07c51c22cb",
+      "bytes": 94936
+    },
+    {
+      "path": "crates/cortex_development/src/lib.rs",
+      "action": "replace",
+      "base_sha256": "290293631e7719b7ed115bd9681434769d469036c936ec4d24ecf3cddc071d97",
+      "acceptable_prior_sha256": [],
+      "replacement_sha256": "dc1631b898e2445ec7a809b3804cda4510617a8f3e18ac3f1e5e235ba4c0ccf1",
+      "bytes": 42790
+    },
+    {
+      "path": "crates/cortex_tools/src/lib.rs",
+      "action": "replace",
+      "base_sha256": "3230ef55da1043a5840fa6964c40dd110e0ca134c34a499b815d5002e61bc404",
+      "acceptable_prior_sha256": [],
+      "replacement_sha256": "6443bb3af03147d27d391a64fd2be7a4db0c333de520c0cc24bead287f81c5ab",
+      "bytes": 299164
+    },
     {
       "path": "docs/CORTEX_P0_P2_STATUS_MATRIX.json",
       "action": "add",
       "base_sha256": null,
       "acceptable_prior_sha256": [
+        "02ec843339a063301ec49f6c84de280d87f010d9bac04926df1a6d4281061bb7",
         "ef9e4ec9a4433c8a12c520b7cba2f1dfb253fdcf317e69c3bf924f0a2dcadabd"
       ],
       "replacement_sha256": "02ec843339a063301ec49f6c84de280d87f010d9bac04926df1a6d4281061bb7",
@@ -59,9 +100,19 @@
       "path": "docs/CORTEX_W10_AGENT_EXECUTION_AND_LATENCY_ACCEPTANCE.md",
       "action": "add",
       "base_sha256": null,
-      "acceptable_prior_sha256": [],
+      "acceptable_prior_sha256": [
+        "6c60862af18f79ed361f02a276dfb509fc6ce273655694c64c9e6d7038180179"
+      ],
       "replacement_sha256": "6c60862af18f79ed361f02a276dfb509fc6ce273655694c64c9e6d7038180179",
       "bytes": 4070
+    },
+    {
+      "path": "docs/CORTEX_W11_REPAIR_AGENT_CORRECTNESS.md",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [],
+      "replacement_sha256": "149fe533acddef4475f5a46ad288a353c4bb3b6337050d59d897f48bef822732",
+      "bytes": 7517
     },
     {
       "path": "docs/CORTEX_W9_WINDOWS_FULL_FAILURE_RECONCILIATION.md",
@@ -276,6 +327,7 @@
       "acceptable_prior_sha256": [
         "20aa8138d633ada280af4214ba1d1b48c01022933ea9c9d7ab3541518332d90b",
         "250547191ae4ac596fa3fdc6507f64b5026c7bca712c74e2b796175d99879410",
+        "28fcb065893cb593d99c9f4cf2d72617403aa2d9edbb16fe91358f18089d271f",
         "753ae8f0f5bd9d481830f91684ce40ad017f12a05d81e820bb12ab67030d37ba",
         "b20c8c8932d0f7289f6c020bd44b71eb7aa62aab08d53a5a71254cd7d902e6b8",
         "b3a7605402542385d2eecd01e0e11b8cd86d76d1e7c029991e53d22472a57a41",
@@ -284,7 +336,7 @@
         "cf9a71dbd07a6c4f416c4dff3d1694e140d2e08dd2d2e8d5b4adc305ed112597",
         "f89a0219775f5d11c9aaf61a4021fbeba20474447c3b43b272466785906c06e1"
       ],
-      "replacement_sha256": "28fcb065893cb593d99c9f4cf2d72617403aa2d9edbb16fe91358f18089d271f",
+      "replacement_sha256": "fda6d4d5c1e7758a135488a2a8de1ff0ba561e1b90d786a2ba37d89a3c5bd3cb",
       "bytes": 239309
     },
     {
@@ -308,10 +360,19 @@
       "action": "replace",
       "base_sha256": "ca3f2c7e36dd2eb76e294e8e84ba3db2f50bceccec7165b683420fe9b6ba2b32",
       "acceptable_prior_sha256": [
+        "a65922dc1a338f6212b572d9d023b033095b0fa0a9e927d4528cde0434ca9ba0",
         "ca3f2c7e36dd2eb76e294e8e84ba3db2f50bceccec7165b683420fe9b6ba2b32"
       ],
-      "replacement_sha256": "a65922dc1a338f6212b572d9d023b033095b0fa0a9e927d4528cde0434ca9ba0",
-      "bytes": 24508
+      "replacement_sha256": "f6032aac9afe276f4fc7a07d7199a82bbe4774d9d29f5f08f5a1052cb0942acf",
+      "bytes": 26077
+    },
+    {
+      "path": "tools/control/PCCBuildDoctor.py",
+      "action": "replace",
+      "base_sha256": "e57cf0add28f7676b2d1bdaf5ecbe844966ddec34f336a898008eca03ad4f2aa",
+      "acceptable_prior_sha256": [],
+      "replacement_sha256": "e5ad87038d1fad3c53c853e157899a589767513194483dfbacdf669f4f879104",
+      "bytes": 14766
     },
     {
       "path": "tools/control/PCCSurfaceCommon.py",
@@ -328,7 +389,9 @@
       "path": "tools/control/tests/test_cortex_bridge_runtime_w10.py",
       "action": "add",
       "base_sha256": null,
-      "acceptable_prior_sha256": [],
+      "acceptable_prior_sha256": [
+        "3c045bd154c2e673a0e131891d803d59704f01a3a790dc52bfef95fafab585f5"
+      ],
       "replacement_sha256": "3c045bd154c2e673a0e131891d803d59704f01a3a790dc52bfef95fafab585f5",
       "bytes": 5030
     },
@@ -344,9 +407,10 @@
         "8786901f668c6ba35c79bfd8036769b9bd849ad3c66263c9df9aa111cbfe8dd6",
         "b490011653fc572bdefffb1d041e77fe33aeb00a235007e48030dbbe260a58c9",
         "b7d25db1948d6fb51fbd28af8ed2328915d8433083c10dbdb02904dafcad4119",
+        "d63783751c79f24fd6d2279a0f4de4bf6b05927652f6653ec47ef2813b44c0a0",
         "e2d16c8520619ec3e058b0ad45d366d2fd00a7f02a48afdf1d17e20b2c716d2d"
       ],
-      "replacement_sha256": "d63783751c79f24fd6d2279a0f4de4bf6b05927652f6653ec47ef2813b44c0a0",
+      "replacement_sha256": "d841b42ff900f56da504399f4c1db998560146b0a70dcd125d70e81d235666cb",
       "bytes": 38180
     },
     {
@@ -359,6 +423,14 @@
       ],
       "replacement_sha256": "601f9dd41c6ecc9a6011162c7c2e2362673ab3d0265150e7f048b81d10552e43",
       "bytes": 6180
+    },
+    {
+      "path": "tools/control/tests/test_cortex_w11_repair_grounding.py",
+      "action": "add",
+      "base_sha256": null,
+      "acceptable_prior_sha256": [],
+      "replacement_sha256": "b6d53fc877a16bca47c98656cfd34e58afc47a981538e5505e55e6ba65241abe",
+      "bytes": 4489
     },
     {
       "path": "tools/control/tests/test_gui_version_contract.py",
@@ -420,6 +492,7 @@
       "action": "replace",
       "base_sha256": "b31e01cf9efefd0ca7865cb1602d78c34f4526aa940a8da70e7e73316693c001",
       "acceptable_prior_sha256": [
+        "275829439f718ee1a0da04db654a10321ddd54a8da70a86981f76e3824b4cca5",
         "b31e01cf9efefd0ca7865cb1602d78c34f4526aa940a8da70e7e73316693c001"
       ],
       "replacement_sha256": "275829439f718ee1a0da04db654a10321ddd54a8da70a86981f76e3824b4cca5",
@@ -440,14 +513,18 @@
       "bytes": 8241
     }
   ],
-  "failure_bundle": "Cortex_DebugBundle_20260926-184249_FULL_FAIL.zip",
+  "failure_bundle": "Havenwild Bevy external W10 repair evidence (source unchanged); source-controlled W11 acceptance is synthetic first.",
   "corrections": [
-    "close SQLite fixture handle before Windows tempfile teardown",
-    "source-compare fixture writes exact LF bytes on Windows",
-    "portable registry fixture distinguishes stale old drive from live independent root"
+    "Standalone Cargo / missing SOURCE_MANIFEST must not imply empty project.",
+    "Project-local PCC and ForgePY failed-stage evidence is ingested shallowly and bounded.",
+    "Repair cannot start source transaction without independent root-marker preflight.",
+    "Native project PCC checkpoint outranks generic Cargo verification, with explicit fallback.",
+    "Repair model excludes unavailable optional VSCode adapter tools.",
+    "Evidence and user-visible result reflect authoritative verification tool and actual transaction lifecycle.",
+    "Bridge context prioritizes project identity over long logs and caps historical conversation size."
   ],
-  "payload_count": 33,
-  "status": "LOCAL TESTED; WINDOWS FULL PENDING; no live source/state mutation",
-  "bridge_version": "CORTEX-PY-BRIDGE-0.8",
-  "new_risk": "Changes controlled Chat -> Repair routing only after explicit GUI approval; does not execute shell commands from chat, auto-run FULL, or compile worker on message submission."
+  "payload_count": 45,
+  "status": "PYTHON + STATIC LOCAL TESTING; RUST/CARGO AND WINDOWS FULL PENDING; NO LIVE PROJECT MODIFICATION",
+  "bridge_version": "CORTEX-PY-BRIDGE-0.9",
+  "new_risk": "Project-local native FULL gate may execute operations within its own governed PCC contract; certify with a disposable fixture before live repair. Fail closed without root marker; inspect transaction state; no generic forced cargo check for project-native PCC."
 }

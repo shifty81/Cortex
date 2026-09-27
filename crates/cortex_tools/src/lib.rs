@@ -680,6 +680,9 @@ impl ToolBroker {
                 })
             });
         let manifest_summary = source_manifest_summary(&source_manifest);
+        // This is an independent, shallow filesystem observation. An absent optional
+        // SOURCE_MANIFEST.json is not evidence that a registered workspace is empty.
+        let filesystem_evidence = workspace_filesystem_evidence(self.workspace.root())?;
         let checkpoint = checkpoint_summary(self.workspace.root());
         let authority_audit = authority_audit_summary(
             &self
@@ -703,6 +706,7 @@ impl ToolBroker {
             "cargo_workspace": cargo_layout,
             "non_workspace_app_manifests": non_workspace_apps,
             "source_manifest": manifest_summary,
+            "filesystem_evidence": filesystem_evidence,
             "checkpoint": checkpoint,
             "cortex_authority_audit": authority_audit,
             "authority_notes": {
@@ -1888,9 +1892,12 @@ impl ToolBroker {
                     .iter()
                     .map(String::as_str)
                     .collect::<Vec<_>>();
-                let result =
-                    self.processes
-                        .run_capture(self.workspace.root(), &program, &args, false)?;
+                let result = self.processes.run_capture_exact(
+                    self.workspace.root(),
+                    &program,
+                    &args,
+                    false,
+                )?;
                 self.record_development_command(
                     "quality.checkpoint",
                     "Project-native checkpoint",
@@ -3021,6 +3028,8 @@ fn cargo_workspace_summary(cargo_toml: &str) -> Value {
 
     json!({
         "member_count": members.len(),
+        "member_count_scope": "explicit [workspace].members only; zero does not mean a standalone Cargo package is empty",
+        "standalone_package": cargo_toml.lines().any(|line| line.trim() == "[package]"),
         "members": members,
         "apps": apps,
         "crates": crates,
@@ -3074,6 +3083,47 @@ fn collect_quoted_strings(line: &str, output: &mut Vec<String>) {
     }
 }
 
+fn workspace_filesystem_evidence(root: &Path) -> Result<Value, String> {
+    let entries = fs::read_dir(root).map_err(|error| {
+        format!(
+            "cannot enumerate the active workspace root {}: {error}",
+            root.display()
+        )
+    })?;
+    let mut sample = Vec::new();
+    let mut sampled_directories = 0usize;
+    let mut sampled_files = 0usize;
+    let mut truncated = false;
+    for item in entries {
+        let item = item.map_err(|error| format!("workspace root enumeration failed: {error}"))?;
+        if sample.len() >= 48 {
+            truncated = true;
+            break;
+        }
+        let kind = item.file_type().map_err(|error| error.to_string())?;
+        if kind.is_dir() {
+            sampled_directories += 1;
+        } else if kind.is_file() {
+            sampled_files += 1;
+        }
+        sample.push(item.file_name().to_string_lossy().to_string());
+    }
+    sample.sort();
+    Ok(json!({
+        "enumeration_succeeded": true,
+        "root_entries_sample": sample,
+        "sample_limit": 48,
+        "sample_truncated": truncated,
+        "sampled_directories": sampled_directories,
+        "sampled_files": sampled_files,
+        "cargo_manifest_exists": root.join("Cargo.toml").is_file(),
+        "cargo_lock_exists": root.join("Cargo.lock").is_file(),
+        "source_directory_exists": root.join("src").is_dir(),
+        "local_pcc_exists": root.join("PCC.cmd").is_file() || root.join("PCC.sh").is_file(),
+        "note": "This is an observed root sample, not a complete recursive file count. An absent SOURCE_MANIFEST.json never means an empty project."
+    }))
+}
+
 fn source_manifest_summary(manifest: &Value) -> Value {
     let files = manifest
         .get("files")
@@ -3112,6 +3162,8 @@ fn source_manifest_summary(manifest: &Value) -> Value {
         "purpose": manifest.get("purpose").cloned().unwrap_or(Value::Null),
         "build_status": manifest.get("build_status").cloned().unwrap_or(Value::Null),
         "file_count": files.len(),
+        "available": manifest.get("files").and_then(Value::as_array).is_some(),
+        "file_count_scope": "optional SOURCE_MANIFEST.json entries only; not filesystem content",
         "counts": {
             "rust": rust_files,
             "png": png_files,
@@ -6768,6 +6820,35 @@ exclude = [
                 .map(Vec::len),
             Some(1)
         );
+    }
+
+    #[test]
+    fn standalone_cargo_and_missing_source_manifest_are_not_an_empty_project() {
+        let summary =
+            cargo_workspace_summary("[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n");
+        assert_eq!(summary.get("standalone_package"), Some(&json!(true)));
+        assert_eq!(summary.get("member_count"), Some(&json!(0)));
+        let optional = source_manifest_summary(&Value::Null);
+        assert_eq!(optional.get("available"), Some(&json!(false)));
+        assert!(optional
+            .get("file_count_scope")
+            .and_then(Value::as_str)
+            .unwrap()
+            .contains("not filesystem"));
+    }
+
+    #[test]
+    fn workspace_filesystem_evidence_uses_actual_root_even_without_source_manifest() {
+        let root =
+            std::env::temp_dir().join(format!("cortex-w11-grounding-{}", std::process::id()));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("Cargo.toml"), "[package]\nname=\"fixture\"\n").unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let report = workspace_filesystem_evidence(&root).unwrap();
+        assert_eq!(report.get("cargo_manifest_exists"), Some(&json!(true)));
+        assert_eq!(report.get("source_directory_exists"), Some(&json!(true)));
+        assert_eq!(report.get("enumeration_succeeded"), Some(&json!(true)));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

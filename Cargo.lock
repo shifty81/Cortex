@@ -68,6 +68,7 @@ dependencies = [
  "cortex_conversation",
  "cortex_core",
  "cortex_desktop_core",
+ "cortex_development",
  "cortex_jobs",
  "cortex_model_host",
  "cortex_observability",

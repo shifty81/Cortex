@@ -26,17 +26,42 @@ def _tail_text(path: Path, limit: int = MAX_LOG_BYTES) -> str:
 
 
 def _latest_logs(root: Path, limit: int = 12) -> list[Path]:
-    log_root = root / "artifacts" / "logs"
-    if not log_root.is_dir():
-        return []
-    rows: list[Path] = []
-    for pattern in ("*.log", "*.txt", "*.jsonl"):
-        rows.extend(path for path in log_root.rglob(pattern) if path.is_file())
-    try:
-        rows.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    except OSError:
-        pass
-    return rows[:limit]
+    """Sample the active project's real PCC log authorities, never the whole disk.
+
+    A project-local PCC such as Havenwild writes under .pcc/logs, not artifacts/logs.
+    A missing artifacts/logs directory therefore cannot imply NO_EVIDENCE. These
+    are shallow, no-symlink enumerations capped per directory and globally.
+    """
+    rows: list[tuple[float, Path]] = []
+    for log_root in (
+        root / ".pcc" / "logs",
+        root / ".forgepy" / "logs",
+        root / "artifacts" / "logs",
+        root / "artifacts" / "logs" / "sessions",
+    ):
+        try:
+            if log_root.is_symlink() or not log_root.is_dir():
+                continue
+            with os.scandir(log_root) as entries:
+                for index, entry in enumerate(entries):
+                    if index >= 512:
+                        break
+                    if not entry.name.lower().endswith((".log", ".txt", ".jsonl")):
+                        continue
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    rows.append((entry.stat(follow_symlinks=False).st_mtime, Path(entry.path)))
+        except OSError:
+            continue
+    rows.sort(key=lambda row: row[0], reverse=True)
+    selected = rows[:limit]
+    # Keep the newest authoritative PCC session in the bounded window even if
+    # subsequent per-phase logs would otherwise crowd it out.
+    session = next((row for row in rows if "pcc-session" in row[1].name.lower()), None)
+    if session is not None and session not in selected and limit > 0:
+        selected[-1] = session
+    selected.sort(key=lambda row: row[0], reverse=True)
+    return [path for _, path in selected]
 
 
 def _find_failed_stage(text: str) -> str:
@@ -45,6 +70,7 @@ def _find_failed_stage(text: str) -> str:
         r"failedStage[\"'=:\s]+([A-Za-z0-9_.-]+)",
         r"\[FAIL\].*? at ([A-Za-z0-9_.-]+)",
         r"=== END ([A-Za-z0-9_.-]+): FAIL",
+        r"\bEND ([A-Za-z0-9_.-]+): FAIL\b",
     ]
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.I)
@@ -64,6 +90,8 @@ def _terminal_gate(text: str) -> dict[str, str] | None:
         candidates.append((match.start(), "quick", "PASS"))
     for match in re.finditer(r"QUICK PROJECT GATE FAILED", text, flags=re.I):
         candidates.append((match.start(), "quick", "FAIL"))
+    for match in re.finditer(r"FULL GATE:\s*(PASS|FAIL)", text, flags=re.I):
+        candidates.append((match.start(), "full", match.group(1).upper()))
     if not candidates:
         return None
     _, gate, status = max(candidates, key=lambda row: row[0])
@@ -180,7 +208,13 @@ def latest_failure(root: Path) -> dict[str, Any]:
             candidate = {**terminal, "path": str(path), "modifiedUnix": mtime}
             if latest_terminal is None or mtime > float(latest_terminal.get("modifiedUnix") or 0.0):
                 latest_terminal = candidate
-        if selected is None and ("[FAIL]" in text or "=== END" in text and "FAIL" in text or "Cancellation requested" in text):
+        if selected is None and (
+            "[FAIL]" in text
+            or ("=== END" in text and "FAIL" in text)
+            or "FULL GATE: FAIL" in text
+            or "Cancellation requested" in text
+            or re.search(r"error\[E\d{4}\]|could not compile", text, flags=re.I)
+        ):
             selected = path
             selected_text = text
         combined_parts.append(text)
@@ -237,7 +271,10 @@ def latest_failure(root: Path) -> dict[str, Any]:
     classification = classify_failure(primary_text, stage=stage)
     blockers = _blockers(combined)
     status = "FAILURE_CLASSIFIED" if classification["category"] != "UNKNOWN" else "FAILURE_UNCLASSIFIED"
-    excerpt_lines = [line for line in primary_text.splitlines() if "FAIL" in line.upper() or "BLOCK" in line.upper() or "CANCEL" in line.upper()]
+    excerpt_lines = [
+        line for line in primary_text.splitlines()
+        if re.search(r"FAIL|BLOCK|CANCEL|error\[E\d{4}\]|could not compile|multiple different versions of crate|wgpu-hal", line, flags=re.I)
+    ][:80]
     return {
         "schema": "pcc.failure_doctor.v1",
         "doctorVersion": DOCTOR_VERSION,
