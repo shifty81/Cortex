@@ -23,7 +23,7 @@ from typing import Any
 
 from PCCChatStore import load_messages, save_messages
 
-BRIDGE_VERSION = "CORTEX-PY-BRIDGE-0.7"
+BRIDGE_VERSION = "CORTEX-PY-BRIDGE-0.8"
 CHAT_HISTORY_LIMIT = 20
 CONTEXT_TEXT_LIMIT = 24000
 
@@ -328,14 +328,55 @@ def _run_bounded(argv: list[str], cwd: Path, timeout: float = 10.0) -> tuple[int
         return 124, f"ERROR: {exc}"
 
 
+def _bounded_recent_logs(log_dir: Path, *, limit: int = 3, budget: int = 256) -> list[Path]:
+    """Collect a bounded, shallow log sample; never recursively walk an artifact tree per message.
+
+    BuildDoctor supplies the authoritative failure evidence.  The optional log tail
+    is only supplemental, so discovery is bounded even if artifacts contain years
+    of accumulated sessions and nested debug bundles.
+    """
+    candidates: list[tuple[float, Path]] = []
+    visited = 0
+    # Normal layouts and a small number of known session subdirectories are enough.
+    # Avoid os.walk/rglob and avoid following symlink/junction directory trees.
+    for directory in (log_dir, *(log_dir / item for item in ("sessions", "pcc", "gates", "operations"))):
+        if visited >= budget:
+            break
+        try:
+            if directory.is_symlink() or not directory.is_dir():
+                continue
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    visited += 1
+                    if visited > budget:
+                        break
+                    if not entry.name.lower().endswith(".log"):
+                        continue
+                    try:
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        candidates.append((entry.stat(follow_symlinks=False).st_mtime, Path(entry.path)))
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    candidates.sort(key=lambda row: row[0], reverse=True)
+    return [path for _, path in candidates[:limit]]
+
+
 def _workspace_context(workspace: Path, *, include_logs: bool = True) -> str:
     rows: list[str] = [f"Workspace: {workspace}"]
-    try:
-        from PCCBuildDoctor import latest_failure
-        doctor = latest_failure(workspace)
-        rows.append("BuildDoctor: " + json.dumps(doctor, ensure_ascii=False)[:12000])
-    except Exception as exc:
-        rows.append(f"BuildDoctor unavailable: {exc}")
+    # A chat message is not a build-diagnostics request.  BuildDoctor enumerates
+    # historical log files and must only run for a deliberately diagnostic mode.
+    if include_logs:
+        try:
+            from PCCBuildDoctor import latest_failure
+            doctor = latest_failure(workspace)
+            rows.append("BuildDoctor: " + json.dumps(doctor, ensure_ascii=False)[:12000])
+        except Exception as exc:
+            rows.append(f"BuildDoctor unavailable: {exc}")
+    else:
+        rows.append("Diagnostic evidence is available in Inspect, Plan and Repair modes.")
 
     contract = workspace / "project.control.json"
     if contract.is_file():
@@ -352,18 +393,13 @@ def _workspace_context(workspace: Path, *, include_logs: bool = True) -> str:
             rows.append(f"Project contract unreadable: {exc}")
 
     git = shutil.which("git.exe") or shutil.which("git")
-    if git and (workspace / ".git").exists():
+    if include_logs and git and (workspace / ".git").exists():
         rc, output = _run_bounded([git, "-C", str(workspace), "status", "--short", "--branch"], workspace, 8.0)
         rows.append("Git status:\n" + (output if output else f"<no output; exit={rc}>"))
 
     log_dir = workspace / "artifacts" / "logs"
     if include_logs and log_dir.is_dir():
-        candidates = sorted(
-            (p for p in log_dir.rglob("*.log") if p.is_file()),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )[:3]
-        for path in candidates:
+        for path in _bounded_recent_logs(log_dir):
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
             except Exception:
@@ -426,7 +462,9 @@ def _worker_request_text(
         for row in history
         if isinstance(row, dict) and str(row.get("content") or "").strip()
     )
-    context = _workspace_context(workspace, include_logs=True)
+    # Ordinary chat does not need to enumerate the artifact log tree on every turn.
+    # Inspect/Plan/Apply/Repair still receive bounded supplemental log evidence.
+    context = _workspace_context(workspace, include_logs=(mode in {"inspect", "plan", "apply", "repair"}))
     return (
         f"Mode: {mode}\nConversation: {conversation_id}\n\n"
         f"Recent conversation:\n{history_text or '<none>'}\n\n"
@@ -436,7 +474,10 @@ def _worker_request_text(
 
 
 def _run_worker(runtime: Path, cortex_root: Path, workspace: Path, conversation_id: str, mode: str, prompt: str) -> int:
+    started = time.monotonic()
     worker_prompt = _worker_request_text(cortex_root, workspace, conversation_id, mode, prompt)
+    if os.environ.get("CORTEX_BRIDGE_TRACE") == "1":
+        print(f"[CortexTiming] context_ms={int((time.monotonic() - started) * 1000)}", flush=True)
 
     if mode in {"chat", "inspect", "plan"}:
         argv = [str(runtime), "--workspace", str(workspace), mode, worker_prompt]
@@ -452,6 +493,8 @@ def _run_worker(runtime: Path, cortex_root: Path, workspace: Path, conversation_
             errors="replace",
             check=False,
         )
+        if os.environ.get("CORTEX_BRIDGE_TRACE") == "1":
+            print(f"[CortexTiming] worker_response_ms={int((time.monotonic() - started) * 1000)}", flush=True)
         if result.stderr.strip():
             print(result.stderr.rstrip(), flush=True)
 
@@ -515,11 +558,15 @@ def main() -> int:
         print(f"[FAIL] Cortex workspace does not exist: {workspace}", flush=True)
         return 2
 
+    started = time.monotonic()
     base_url = _provider_url()
     if not _ensure_provider_ready(cortex_root, base_url, int(args.owner_pid or os.getppid())):
         return 2
+    provider_ms = int((time.monotonic() - started) * 1000)
 
     runtime = _resolve_runtime(cortex_root)
+    if os.environ.get("CORTEX_BRIDGE_TRACE") == "1":
+        print(f"[CortexTiming] provider_ready_ms={provider_ms} worker={'prebuilt' if runtime else 'unavailable'} mode={args.mode}", flush=True)
     if runtime is not None:
         print(f"[Cortex] {BRIDGE_VERSION} | worker={runtime}", flush=True)
         return _run_worker(runtime, cortex_root, workspace, args.conversation_id, args.mode, args.prompt)

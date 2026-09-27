@@ -53,7 +53,7 @@ class RuntimeRecoveryR8Tests(unittest.TestCase):
     def test_worker_receives_logs_and_can_fallback_for_non_mutating_modes(self) -> None:
         source = (CONTROL / "CortexPythonBridge.py").read_text(encoding="utf-8")
         self.assertIn("def _worker_request_text", source)
-        self.assertIn("include_logs=True", source)
+        self.assertIn('include_logs=(mode in {"inspect", "plan", "apply", "repair"})', source)
         self.assertIn("Falling back to the non-mutating Python provider path", source)
         self.assertIn('if mode in {"chat", "inspect", "plan"}:', source)
         self.assertIn("Mutating modes remain fail-closed", source)

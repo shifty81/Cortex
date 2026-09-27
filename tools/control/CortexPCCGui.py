@@ -78,7 +78,7 @@ from PCCVaultStorage import (
     verify_latest_mirror as vault_verify_latest_mirror,
 )
 
-GUI_VERSION = "PCC-GUI-0.15.6"
+GUI_VERSION = "PCC-GUI-0.15.6a"
 
 BG = "#090b0e"
 PANEL = "#11151a"
@@ -90,6 +90,28 @@ CYAN = "#00d9ff"
 GREEN = "#43f071"
 YELLOW = "#ffd44a"
 RED = "#ff5d68"
+
+
+def _chat_execution_intent(prompt: str, selected_mode: str) -> tuple[str, str]:
+    """Return the requested execution mode without silently running a shell command.
+
+    A deliberate /apply or /repair prefix works in the Chat composer. Imperative
+    edit requests in Chat trigger an explicit approval to enter transactional
+    Repair rather than being answered as if source changes were impossible.
+    """
+    value = prompt.strip()
+    for prefix, mode in (("/repair ", "repair"), ("/apply ", "apply"),
+                         ("/inspect ", "inspect"), ("/plan ", "plan"),
+                         ("/chat ", "chat")):
+        if value.casefold().startswith(prefix):
+            return mode, value[len(prefix):].strip()
+    mode = selected_mode if selected_mode in {"chat", "inspect", "plan", "apply", "repair"} else "chat"
+    if mode == "chat" and re.match(
+        r"^(?:please\s+)?(?:fix|repair|implement|refactor|modify|edit|create|write|remove|delete)\b(?:\s|[.:])",
+        value, flags=re.IGNORECASE,
+    ):
+        return "repair", value
+    return mode, value
 
 
 class CortexPCCGui:
@@ -560,7 +582,7 @@ class CortexPCCGui:
         self.chat_mode_box.pack(side="left", padx=(6, 8))
         tk.Label(
             composer_top,
-            text="Enter sends • Shift+Enter adds a line • Apply/Repair require the transactional worker",
+            text="Chat is read-only • /repair or Repair mode runs a governed source attempt • No automatic builds",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI", 8),
@@ -3909,10 +3931,24 @@ class CortexPCCGui:
         prompt = self.chat_input.get("1.0", "end-1c").strip()
         if not prompt:
             return "break"
-        mode = str(self.chat_mode_var.get() or "Chat").strip().casefold()
-        mode = mode if mode in {"chat", "inspect", "plan", "apply", "repair"} else "chat"
+        selected_mode = str(self.chat_mode_var.get() or "Chat").strip().casefold()
+        mode, prompt = _chat_execution_intent(prompt, selected_mode)
+        if not prompt:
+            return "break"
+        if mode in {"apply", "repair"}:
+            if not self._popup(
+                "Cortex transactional source operation",
+                f"Run {mode.upper()} against {self.root_path}?\n\n"
+                "The prebuilt Cortex worker may inspect or modify approved project files "
+                "under its governed transaction/permission rules. No Cargo build is "
+                "started by sending this message.\n\nProceed?",
+                kind="warning", confirm=True,
+            ):
+                return "break"
         self.chat_input.delete("1.0", "end")
         self._append_chat_message("user", prompt)
+        self._append_chat_message("system", f"Execution mode: {mode.upper()}" + (
+            " • transactional worker required" if mode in {"apply", "repair"} else " • non-mutating"))
         self._start_cortex_cli(mode, prompt, surface="chat")
         return "break"
 
@@ -3982,12 +4018,19 @@ class CortexPCCGui:
         lines = raw.splitlines()
         answer_lines: list[str] = []
         for line in lines:
+            if line.startswith("[CortexTiming]"):
+                self._append_log(line + "\n", "muted")
+                continue
             if line.startswith("[Cortex] CORTEX-PY-BRIDGE-"):
                 if hasattr(self, "chat_worker_label"):
                     if "worker=unavailable" in line:
                         self.chat_worker_label.configure(text="Python fallback active", fg=YELLOW)
                     else:
-                        self.chat_worker_label.configure(text="Transactional worker active", fg=GREEN)
+                        is_mutating = command.casefold() in {"cortex-apply", "cortex-repair"}
+                        self.chat_worker_label.configure(
+                            text="Transactional operation" if is_mutating else "Prebuilt worker • chat read-only",
+                            fg=GREEN,
+                        )
                 continue
             answer_lines.append(line)
         answer = "\n".join(answer_lines).strip()
@@ -4092,6 +4135,12 @@ class CortexPCCGui:
             ("/repair ", "repair"),
         ):
             if lower.startswith(prefix):
+                if mode in {"apply", "repair"} and not self._popup(
+                    "Cortex transactional source operation",
+                    f"Run {mode.upper()} against {self.root_path}? This may modify approved project files "
+                    "under governed source transactions. Proceed?", kind="warning", confirm=True,
+                ):
+                    return
                 self._start_cortex_cli(mode, text[len(prefix):])
                 return
         if lower in {"!", "!command"}:

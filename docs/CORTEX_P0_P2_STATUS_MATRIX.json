@@ -1,7 +1,7 @@
 {
   "schema": "cortex.p0_p2.testing_matrix.v1",
   "baseline": "82d41230673ef2a179dc6fb2f1918493ad68837e",
-  "gui_version": "PCC-GUI-0.15.6",
+  "gui_version": "PCC-GUI-0.15.6a",
   "source_recovery_full_certified": false,
   "windows_full_certified": false,
   "live_drive_acceptance": false,
@@ -18,10 +18,12 @@
     "P1 Rust consumer of versioned review feed plus approved organization journal",
     "P1 watcher/change journal and robust PID-start identity",
     "P2 cross-surface shared command/event transcript and native GUI convergence",
-    "P2 Rust Forge parity/takeover certification, CI, signing, installer/updater"
+    "P2 Rust Forge parity/takeover certification, CI, signing, installer/updater",
+    "W10 live Windows repair-transaction acceptance and bridge timing trace; worker is still launched as a new process per message"
   ],
   "source_move": false,
   "automatic_project_registration": false,
   "volume_index_rebuild": false,
-  "vault_catalog_mutation": false
+  "vault_catalog_mutation": false,
+  "w10_scope": "Guided approved Repair/Apply routing; bounded ordinary chat startup evidence; optional phase timings. Live agent/tool execution acceptance pending."
 }
