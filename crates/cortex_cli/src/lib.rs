@@ -1579,6 +1579,53 @@ fn project_validation_tool(root: &Path) -> &'static str {
     }
 }
 
+/// Fail closed *before* the expensive project-native FULL gate when a candidate
+/// was already rejected by post-mutation validation or the model left a tool call
+/// as unexecuted prose. Never mistake a successful tool invocation for a retained edit.
+fn repair_candidate_gate_decision(
+    transaction_id: Option<&str>,
+    status: &cortex_protocol::ToolResultInput,
+    files: &cortex_protocol::ToolResultInput,
+    agent: &AgentTurnResult,
+) -> Result<(), &'static str> {
+    if !has_successful_project_file_mutation(agent) {
+        return Err("no_successful_project_file_mutation");
+    }
+    if status.is_error || files.is_error {
+        return Err("transaction_precheck_failed");
+    }
+    let active_id = status
+        .output
+        .pointer("/transaction/id")
+        .and_then(Value::as_str);
+    if transaction_id.is_none() || active_id != transaction_id {
+        return Err("candidate_not_active_after_model");
+    }
+    if files.output.get("transaction_id").and_then(Value::as_str) != transaction_id {
+        return Err("candidate_file_ledger_mismatch");
+    }
+    let touched = files
+        .output
+        .get("touched")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let created = files
+        .output
+        .get("created")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    if touched + created == 0 {
+        return Err("candidate_has_no_recorded_files");
+    }
+    if agent.text.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with("<tool_call>") || line.starts_with("<function_call>")
+    }) {
+        return Err("unexecuted_tool_call_in_model_report");
+    }
+    Ok(())
+}
+
 fn project_agent_command(
     service: &mut CortexService,
     action: &str,
@@ -1704,7 +1751,7 @@ fn project_agent_command(
     service.engine.set_tool_profile(AgentToolProfile::General);
     let result = result?;
 
-    if mutating && !has_successful_project_file_mutation(&result) {
+    if mutating && action != "repair" && !has_successful_project_file_mutation(&result) {
         if !reuse_transaction {
             let _ = execute_named_tool(
                 service,
@@ -1719,11 +1766,54 @@ fn project_agent_command(
         ));
     }
 
+    // The mutation tool can validate and roll back a candidate *inside* the model
+    // turn. Check the actual durable ledger before invoking a project-owned FULL.
+    let candidate_precheck_status = if action == "repair" {
+        Some(execute_named_tool(
+            service,
+            "source.transaction_status",
+            json!({}),
+            "pre-gate-tx-status",
+        ))
+    } else {
+        None
+    };
+    let candidate_precheck_files = if action == "repair" {
+        Some(execute_named_tool(
+            service,
+            "source.transaction_files",
+            json!({}),
+            "pre-gate-tx-files",
+        ))
+    } else {
+        None
+    };
+    let checkpoint_skip_reason = if action == "repair" {
+        match (
+            candidate_precheck_status.as_ref(),
+            candidate_precheck_files.as_ref(),
+        ) {
+            (Some(status), Some(files)) => {
+                repair_candidate_gate_decision(tx_id.as_deref(), status, files, &result).err()
+            }
+            _ => Some("transaction_precheck_missing"),
+        }
+    } else {
+        None
+    };
     let validation_tool = mutating.then(|| {
         let root = service.engine.tools().workspace_root();
         project_validation_tool(root)
     });
-    let verification = if let Some(tool) = validation_tool {
+    let verification = if checkpoint_skip_reason.is_some() {
+        if output == OutputMode::Human {
+            eprintln!(
+                "[BLOCK] Skipping project checkpoint; candidate precheck: {}",
+                checkpoint_skip_reason.unwrap_or("unknown")
+            );
+        }
+        None
+    } else if let Some(tool) = validation_tool {
         if output == OutputMode::Human {
             eprintln!(
                 "[INFO] Controller verification: {tool} (project-owned checkpoint takes precedence)"
@@ -1769,6 +1859,9 @@ fn project_agent_command(
         transaction_id: tx_id.as_deref(),
         verification: verification.as_ref(),
         verification_tool: validation_tool,
+        candidate_precheck_status: candidate_precheck_status.as_ref(),
+        candidate_precheck_files: candidate_precheck_files.as_ref(),
+        checkpoint_skip_reason,
         transaction_status: tx_status.as_ref(),
         transaction_files: tx_files.as_ref(),
         project_grounding: repair_grounding.as_ref(),
@@ -1783,7 +1876,8 @@ fn project_agent_command(
     let verification_ok = verification
         .as_ref()
         .map(tool_result_success)
-        .unwrap_or(true)
+        .unwrap_or(!mutating)
+        && checkpoint_skip_reason.is_none()
         && (!mutating || transaction_active);
 
     match output {
@@ -1839,6 +1933,10 @@ fn project_agent_command(
                 "transaction_files":tx_files,
                 "project_grounding":repair_grounding,
                 "verification_tool":validation_tool,
+                "candidate_precheck_status":candidate_precheck_status,
+                "candidate_precheck_files":candidate_precheck_files,
+                "checkpoint_skip_reason":checkpoint_skip_reason,
+                "checkpoint_executed":verification.is_some(),
                 "transaction_active":transaction_active,
                 "evidence_file":evidence_path,
                 "success":verification_ok
@@ -1861,6 +1959,10 @@ fn project_agent_command(
                 "transaction_files":tx_files,
                 "project_grounding":repair_grounding,
                 "verification_tool":validation_tool,
+                "candidate_precheck_status":candidate_precheck_status,
+                "candidate_precheck_files":candidate_precheck_files,
+                "checkpoint_skip_reason":checkpoint_skip_reason,
+                "checkpoint_executed":verification.is_some(),
                 "transaction_active":transaction_active,
                 "evidence_file":evidence_path,
                 "success":verification_ok
@@ -1869,6 +1971,11 @@ fn project_agent_command(
     }
 
     if !verification_ok {
+        if let Some(reason) = checkpoint_skip_reason {
+            return Err(format!(
+                "{action} blocked before project checkpoint: {reason}; review the candidate evidence receipt (no project FULL was invoked)"
+            ));
+        }
         return Err(format!(
             "{action} did not pass project-authoritative verification ({}) ; transaction {}. Review the evidence receipt before another mutation",
             validation_tool.unwrap_or("not selected"),
@@ -2038,6 +2145,9 @@ struct AgentEvidenceWrite<'a> {
     transaction_status: Option<&'a cortex_protocol::ToolResultInput>,
     transaction_files: Option<&'a cortex_protocol::ToolResultInput>,
     project_grounding: Option<&'a Value>,
+    candidate_precheck_status: Option<&'a cortex_protocol::ToolResultInput>,
+    candidate_precheck_files: Option<&'a cortex_protocol::ToolResultInput>,
+    checkpoint_skip_reason: Option<&'a str>,
 }
 
 fn write_agent_evidence(input: &AgentEvidenceWrite<'_>) -> Result<PathBuf, String> {
@@ -2045,10 +2155,14 @@ fn write_agent_evidence(input: &AgentEvidenceWrite<'_>) -> Result<PathBuf, Strin
     fs::create_dir_all(&artifacts).map_err(|e| e.to_string())?;
     let path = artifacts.join(format!("cortex-{}-evidence-{}.json", input.mode, unix_ms()));
     let report = json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "mode": input.mode,
         "grounding": "controller_root_preflight_and_tool_evidence",
         "project_grounding": input.project_grounding,
+        "candidate_precheck_status": input.candidate_precheck_status,
+        "candidate_precheck_files": input.candidate_precheck_files,
+        "checkpoint_skip_reason": input.checkpoint_skip_reason,
+        "checkpoint_executed": input.verification.is_some(),
         "verification_tool": input.verification_tool,
         "transaction_files": input.transaction_files,
         "prompt": input.prompt,
@@ -3941,6 +4055,7 @@ mod mutation_guard_tests {
                 call_id: "call-1".into(),
                 mutating,
                 is_error,
+                ..AgentToolEvidence::default()
             }],
             last_response_id: None,
         }
@@ -3966,6 +4081,51 @@ mod mutation_guard_tests {
             true,
             true,
         )));
+    }
+
+    #[test]
+    fn w12_rejected_candidate_never_enters_expensive_checkpoint() {
+        use cortex_protocol::ToolResultInput;
+        let agent = result_with("source.write_text", true, false);
+        let status = ToolResultInput {
+            call_id: "status".into(),
+            output: json!({"transaction": null}),
+            is_error: false,
+        };
+        let files = ToolResultInput {
+            call_id: "files".into(),
+            output: json!({"transaction_id": null, "touched": [], "created": []}),
+            is_error: false,
+        };
+        assert_eq!(
+            repair_candidate_gate_decision(Some("candidate-1"), &status, &files, &agent),
+            Err("candidate_not_active_after_model")
+        );
+    }
+
+    #[test]
+    fn w12_retained_candidate_requires_real_file_ledger_and_no_pseudo_call() {
+        use cortex_protocol::ToolResultInput;
+        let mut agent = result_with("source.write_text", true, false);
+        let status = ToolResultInput {
+            call_id: "status".into(),
+            output: json!({"transaction": {"id":"candidate-1"}}),
+            is_error: false,
+        };
+        let files = ToolResultInput {
+            call_id: "files".into(),
+            output: json!({"transaction_id":"candidate-1", "touched":["Cargo.toml"], "created":[]}),
+            is_error: false,
+        };
+        assert_eq!(
+            repair_candidate_gate_decision(Some("candidate-1"), &status, &files, &agent),
+            Ok(())
+        );
+        agent.text = "<tool_call>source.read {\"path\":\"Cargo.toml\"}".into();
+        assert_eq!(
+            repair_candidate_gate_decision(Some("candidate-1"), &status, &files, &agent),
+            Err("unexecuted_tool_call_in_model_report")
+        );
     }
 
     #[test]

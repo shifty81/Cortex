@@ -55,12 +55,109 @@ impl Default for AgentSettings {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AgentToolEvidence {
     pub tool: String,
     pub call_id: String,
     pub mutating: bool,
     pub is_error: bool,
+    /// Project-relative only; no source content, absolute paths, or command arguments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_path: Option<String>,
+    /// Controller-owned fixed vocabulary; never serialize unrestricted error text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_class: Option<String>,
+    /// Records automatic candidate disposition even when the mutation itself succeeded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_decision: Option<String>,
+}
+
+impl AgentToolEvidence {
+    fn from_result(call: &ToolCall, mutating: bool, result: &ToolResultInput) -> Self {
+        let target_path = if call.name.starts_with("source.") {
+            call.arguments
+                .get("path")
+                .and_then(Value::as_str)
+                .and_then(safe_evidence_relative_path)
+        } else {
+            None
+        };
+        let failure_class = result.is_error.then(|| {
+            let error = result
+                .output
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let class = if error.contains("occurrence") || error.contains("exact replacement") {
+                "exact_replace_mismatch"
+            } else if error.contains("ground") || error.contains("dependency") {
+                "dependency_grounding_required"
+            } else if error.contains("transaction") || error.contains("candidate") {
+                "transaction_not_active"
+            } else if error.contains("path") || error.contains("outside") {
+                "path_rejected"
+            } else if error.contains("timeout") || error.contains("timed out") {
+                "timeout"
+            } else if error.contains("toml") || error.contains("manifest") {
+                "manifest_rejected"
+            } else {
+                "tool_rejected"
+            };
+            class.to_string()
+        });
+        let candidate_decision = result
+            .output
+            .pointer("/controller_verification/candidate/decision")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                result
+                    .output
+                    .pointer("/candidate/decision")
+                    .and_then(Value::as_str)
+            })
+            .filter(|decision| {
+                matches!(
+                    *decision,
+                    "keep_verified"
+                        | "keep_improved"
+                        | "rollback_unchanged"
+                        | "rollback_regressed"
+                        | "observe_without_baseline"
+                        | "no_active_candidate"
+                )
+            })
+            .map(str::to_string);
+        Self {
+            tool: call.name.clone(),
+            call_id: call.call_id.clone(),
+            mutating,
+            is_error: result.is_error,
+            target_path,
+            failure_class,
+            candidate_decision,
+        }
+    }
+}
+
+fn safe_evidence_relative_path(candidate: &str) -> Option<String> {
+    if candidate.is_empty()
+        || candidate.len() > 240
+        || candidate.contains(':')
+        || candidate.starts_with('/')
+        || candidate.starts_with('\\')
+        || candidate.chars().any(|ch| ch.is_control())
+    {
+        return None;
+    }
+    let normalized = candidate.replace('\\', "/");
+    if normalized
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return None;
+    }
+    Some(normalized)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -422,12 +519,7 @@ Your previous project-agent response completed without any user-visible final te
                     }
                 };
                 let result = bound_tool_result(result, self.settings.max_tool_result_bytes);
-                collected_evidence.push(AgentToolEvidence {
-                    tool: call.name.clone(),
-                    call_id: call.call_id.clone(),
-                    mutating,
-                    is_error: result.is_error,
-                });
+                collected_evidence.push(AgentToolEvidence::from_result(call, mutating, &result));
                 if is_project_file_mutation_tool(&call.name) && !result.is_error {
                     successful_project_file_mutation = true;
                 }
@@ -456,12 +548,11 @@ Your previous project-agent response completed without any user-visible final te
                             .get("grounding_recorded")
                             .and_then(Value::as_bool)
                             == Some(true);
-                    collected_evidence.push(AgentToolEvidence {
-                        tool: grounding_call.name.clone(),
-                        call_id: grounding_call.call_id.clone(),
-                        mutating: false,
-                        is_error: grounding_result.is_error,
-                    });
+                    collected_evidence.push(AgentToolEvidence::from_result(
+                        &grounding_call,
+                        false,
+                        &grounding_result,
+                    ));
                     collected_results.push(grounding_result.clone());
                     results.push(grounding_result);
                 }
@@ -686,12 +777,7 @@ Your previous project-agent response completed without any user-visible final te
                 .min(AUTHORITATIVE_PREFLIGHT_MAX_BYTES),
         );
 
-        collected_evidence.push(AgentToolEvidence {
-            tool: call.name.clone(),
-            call_id: call.call_id.clone(),
-            mutating: false,
-            is_error: result.is_error,
-        });
+        collected_evidence.push(AgentToolEvidence::from_result(&call, false, &result));
         collected_results.push(result.clone());
 
         if result.is_error {
@@ -2286,5 +2372,54 @@ mod tests {
             .iter()
             .any(|message| message.content.contains("REQUIRED-TOOL TRANSPORT RECOVERY")));
         assert_eq!(captured[3].tool_choice, ToolChoicePolicy::Auto);
+    }
+}
+
+#[cfg(test)]
+mod w12_evidence_tests {
+    use super::*;
+
+    #[test]
+    fn receipt_exposes_only_bounded_path_and_fixed_error_class() {
+        let call = ToolCall {
+            call_id: "redacted-call".into(),
+            name: "source.replace_text".into(),
+            arguments: json!({"path":"Cargo.toml","new":"secret-value-in-source"}),
+        };
+        let result = ToolResultInput {
+            call_id: call.call_id.clone(),
+            output: json!({"error":"expected 1 occurrence of secret-value-in-source; found 0"}),
+            is_error: true,
+        };
+        let evidence = AgentToolEvidence::from_result(&call, true, &result);
+        assert_eq!(evidence.target_path.as_deref(), Some("Cargo.toml"));
+        assert_eq!(
+            evidence.failure_class.as_deref(),
+            Some("exact_replace_mismatch")
+        );
+        assert!(!serde_json::to_string(&evidence)
+            .unwrap()
+            .contains("secret-value"));
+        assert!(safe_evidence_relative_path("C:\\private\\secret.txt").is_none());
+        assert!(safe_evidence_relative_path("../token.txt").is_none());
+    }
+
+    #[test]
+    fn successful_mutation_receipt_records_controller_rollback() {
+        let call = ToolCall {
+            call_id: "candidate-edit".into(),
+            name: "source.write_text".into(),
+            arguments: json!({"path":"Cargo.toml"}),
+        };
+        let result = ToolResultInput {
+            call_id: call.call_id.clone(),
+            output: json!({"controller_verification":{"candidate":{"decision":"rollback_unchanged"}}}),
+            is_error: false,
+        };
+        let evidence = AgentToolEvidence::from_result(&call, true, &result);
+        assert_eq!(
+            evidence.candidate_decision.as_deref(),
+            Some("rollback_unchanged")
+        );
     }
 }
