@@ -90,22 +90,25 @@ class ControllerA02Tests(unittest.TestCase):
             self.assertEqual(code,2)
             self.assertIn('Missing mandatory Python PCC tests',out.getvalue())
 
-    def test_desktop_does_not_spawn_with_bad_typed_contract(self):
+    def test_launch_gui_compatibility_alias_launches_pcc_not_desktop(self):
         pcc=load_pcc()
         with tempfile.TemporaryDirectory() as t:
             root=Path(t)
-            (root/'project.control.json').write_text(json.dumps(contract(rollback='git_or_snapshot')),encoding='utf-8')
-            binary=root/'cortex_desktop.exe';binary.write_bytes(b'test fixture, never run')
+            gui=root/'tools'/'control'/'CortexPCCGui.py'
+            gui.parent.mkdir(parents=True)
+            gui.write_text('print("fixture")\n',encoding='utf-8')
             controller=object.__new__(pcc.CortexPCC)
             controller.ctx=types.SimpleNamespace(root=root)
-            controller.cargo_target_dir=Mock(return_value=root)
-            controller.binary_path=Mock(return_value=binary)
             controller.log=Mock()
-            with patch.object(pcc.subprocess,'Popen',side_effect=AssertionError('must not launch')) as spawn:
+            proc=types.SimpleNamespace(pid=4321)
+            with patch.object(pcc.subprocess,'Popen',return_value=proc) as spawn:
                 code=controller.launch_gui()
-            self.assertEqual(code,2)
-            spawn.assert_not_called()
-            self.assertIn('typed project contract',str(controller.log.emit.call_args_list[-1]))
+            self.assertEqual(code,0)
+            spawn.assert_called_once()
+            argv=spawn.call_args.args[0]
+            self.assertIn(str(gui),argv)
+            self.assertNotIn('cortex_desktop.exe',' '.join(argv))
+            self.assertIn('legacy Desktop launch path retired',str(controller.log.emit.call_args_list[-1]))
 
 
 if __name__ == '__main__':unittest.main()

@@ -1094,45 +1094,32 @@ class CortexPCC:
         return 0
 
     def launch_gui(self) -> int:
-        # Fail before any build or process launch when the typed Rust consumer
-        # cannot deserialize the manifest. Never rewrite rollback metadata.
-        from UniversalPCCAudit import inspect_project
-        inspection = inspect_project(self.ctx.root, rust_consumer=True)
-        if inspection["status"] == "INVALID":
-            problems = "; ".join(inspection.get("errors", [])[:6])
-            self.log.emit("FAIL", f"Cortex Desktop launch blocked by typed project contract: {problems}. "
-                          "Inspect: python tools/control/CortexPCC.py contract-migrate --root . ; "
-                          "explicitly repair only if approved: contract-migrate --root . --yes")
+        """Compatibility alias for launching the single Cortex PCC application.
+
+        Legacy builds used this command to launch cortex_desktop.exe. Cortex is
+        now PCC/CLI-first; no PCC operation should select or certify the legacy
+        native Desktop executable.
+        """
+        gui = self.ctx.root / "tools" / "control" / "CortexPCCGui.py"
+        if not gui.is_file():
+            self.log.emit("FAIL", f"Cortex PCC GUI surface not found: {gui}")
             return 2
-        target = self.cargo_target_dir()
-        gui = self.binary_path("cortex_desktop", target)
-        if not gui or not gui.is_file():
-            self.log.emit("INFO", "Cortex Desktop is not built; building cortex_desktop.")
-            if self.build(package="cortex_desktop") != 0:
-                return 1
-            target = self.cargo_target_dir()
-            gui = self.binary_path("cortex_desktop", target)
-        if not gui or not gui.is_file():
-            self.log.emit("FAIL", "Cortex Desktop executable not found after build.")
-            return 1
-        # Process survival is a preliminary startup observation, not UI-ready.
-        runtime_logs = self.ctx.root / "artifacts" / "logs" / "runtime"
-        runtime_logs.mkdir(parents=True, exist_ok=True)
-        runtime_log = runtime_logs / f"cortex-desktop-{local_stamp()}-{uuid.uuid4().hex[:8]}.log"
+        python = os.environ.get("CORTEX_PYTHON_EXE") or sys.executable
+        argv = [str(python), str(gui), "--root", str(self.ctx.root)]
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if is_windows() else 0
         try:
-            with runtime_log.open("wb") as output:
-                proc = subprocess.Popen([str(gui), str(self.ctx.root)], cwd=str(self.ctx.root),
-                                        stdout=output, stderr=subprocess.STDOUT,
-                                        stdin=subprocess.DEVNULL)
-            time.sleep(1.0)
-            returncode = proc.poll()
-            if returncode is not None:
-                self.log.emit("FAIL", f"Cortex Desktop exited during startup (exit={returncode}); runtime log: {runtime_log}; UI not certified")
-                return 2
+            proc = subprocess.Popen(
+                argv,
+                cwd=str(self.ctx.root),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
         except OSError as exc:
-            self.log.emit("FAIL", f"Cortex Desktop process could not be started: {exc}; runtime log: {runtime_log}")
+            self.log.emit("FAIL", f"Cortex PCC GUI process could not be started: {exc}")
             return 2
-        self.log.emit("INFO", f"Cortex Desktop process running (PID={proc.pid}); UI handshake not certified; log: {runtime_log}")
+        self.log.emit("PASS", f"Cortex PCC GUI process started (PID={proc.pid}); legacy Desktop launch path retired")
         return 0
 
     def startup(self) -> None:

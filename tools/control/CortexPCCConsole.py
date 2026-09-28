@@ -143,7 +143,7 @@ class OperatorConsole:
         self._kv("Updates", updates, updates_color)
         self._kv("Hygiene", "Clean" if hygiene.get("clean", True) else "Needs attention", GREEN if hygiene.get("clean", True) else YELLOW)
         self._kv("Toolchain", "Ready" if tools.get("cargo") and tools.get("rustc") else "Incomplete", GREEN if tools.get("cargo") and tools.get("rustc") else RED)
-        self._kv("Desktop", "Ready" if binaries.get("gui") else "Not built", GREEN if binaries.get("gui") else YELLOW)
+        self._kv("Cortex", "PCC / CLI-first", GREEN)
         self._kv("Last", f"{self.last_action} [{self.last_state}] in {self.last_elapsed:.1f}s", GREEN if self.last_state == "PASS" else (RED if self.last_state == "FAIL" else GRAY))
         print(c("-" * width, CYAN))
 
@@ -271,11 +271,10 @@ class OperatorConsole:
             print(" 2. Build release workspace")
             print(" 3. Quick gate")
             print(" 4. Fast gate")
-            print(" 5. Launch Cortex Desktop")
             print(" 0. Back")
             choice = input("Select: ").strip()
             if choice == "0": return
-            mapping = {"1": ("build", "Build debug"), "2": ("build-release", "Build release"), "3": ("quick", "Quick gate"), "4": ("fast", "Fast gate"), "5": ("launch-gui", "Launch Cortex Desktop")}
+            mapping = {"1": ("build", "Build debug"), "2": ("build-release", "Build release"), "3": ("quick", "Quick gate"), "4": ("fast", "Fast gate")}
             if choice in mapping:
                 cmd, label = mapping[choice]
                 self._run(cmd, label=label)

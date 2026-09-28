@@ -3001,7 +3001,7 @@ fn storage_volume_identity_for(path: &Path) -> Result<CortexStorageVolumeIdentit
          $serial=$null; \
          if ($null -ne $v.DriveLetter) {{ \
            $device=([string]$v.DriveLetter)+':'; \
-           $logical=Get-CimInstance Win32_LogicalDisk -Filter (\\\"DeviceID='\\\"+$device+\\\"'\\\") -ErrorAction SilentlyContinue; \
+           $logical=Get-CimInstance Win32_LogicalDisk -ErrorAction SilentlyContinue | Where-Object {{ $_.DeviceID -eq $device }}; \
            if ($null -ne $logical) {{ $serial=[string]$logical.VolumeSerialNumber }} \
          }}; \
          $mount=if ($null -ne $v.DriveLetter) {{ ([string]$v.DriveLetter)+':\\\\' }} else {{ [string]$v.Path }}; \
@@ -3055,7 +3055,7 @@ fn available_storage_volumes(
            $serial=$null; \
            if ($null -ne $v.DriveLetter) {{ \
              $device=([string]$v.DriveLetter)+':'; \
-             $logical=Get-CimInstance Win32_LogicalDisk -Filter (\\\"DeviceID='\\\"+$device+\\\"'\\\") -ErrorAction SilentlyContinue; \
+             $logical=Get-CimInstance Win32_LogicalDisk -ErrorAction SilentlyContinue | Where-Object {{ $_.DeviceID -eq $device }}; \
              if ($null -ne $logical) {{ $serial=[string]$logical.VolumeSerialNumber }} \
            }}; \
            $mount=if ($null -ne $v.DriveLetter) {{ ([string]$v.DriveLetter)+':\\\\' }} else {{ [string]$v.Path }}; \

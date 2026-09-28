@@ -93,11 +93,12 @@ RED = "#ff5d68"
 
 
 def _chat_execution_intent(prompt: str, selected_mode: str) -> tuple[str, str]:
-    """Return the requested execution mode without silently running a shell command.
+    """Resolve only explicit execution overrides.
 
-    A deliberate /apply or /repair prefix works in the Chat composer. Imperative
-    edit requests in Chat trigger an explicit approval to enter transactional
-    Repair rather than being answered as if source changes were impossible.
+    Normal Chat is routed through the common Cortex developer controller, which
+    already understands conversational project creation, coding requests,
+    approval, continuation and read-only questions. Do not pre-route natural
+    language into Repair; doing so bypasses standalone-project creation.
     """
     value = prompt.strip()
     for prefix, mode in (("/repair ", "repair"), ("/apply ", "apply"),
@@ -106,11 +107,6 @@ def _chat_execution_intent(prompt: str, selected_mode: str) -> tuple[str, str]:
         if value.casefold().startswith(prefix):
             return mode, value[len(prefix):].strip()
     mode = selected_mode if selected_mode in {"chat", "inspect", "plan", "apply", "repair"} else "chat"
-    if mode == "chat" and re.match(
-        r"^(?:please\s+)?(?:fix|repair|implement|refactor|modify|edit|create|write|remove|delete)\b(?:\s|[.:])",
-        value, flags=re.IGNORECASE,
-    ):
-        return "repair", value
     return mode, value
 
 
@@ -168,6 +164,8 @@ class CortexPCCGui:
         self._chat_rendered_conversation: str | None = None
         self._chat_active_buffer: list[str] = []
         self._chat_conversation_rows: dict[str, str] = {}
+        self._chat_pending_workspace: Path | None = None
+        self._chat_pending_conversation: str | None = None
         self._project_probe_generation = 0
         self._project_probe_after: str | None = None
         # Status reads are asynchronous and may overlap startup/operation completion.
@@ -3948,7 +3946,9 @@ class CortexPCCGui:
         self.chat_input.delete("1.0", "end")
         self._append_chat_message("user", prompt)
         self._append_chat_message("system", f"Execution mode: {mode.upper()}" + (
-            " • transactional worker required" if mode in {"apply", "repair"} else " • non-mutating"))
+            " • explicit transactional worker operation" if mode in {"apply", "repair"}
+            else " • common governed developer controller" if mode == "chat"
+            else " • read-only inspection/planning"))
         self._start_cortex_cli(mode, prompt, surface="chat")
         return "break"
 
@@ -4021,6 +4021,14 @@ class CortexPCCGui:
             if line.startswith("[CortexTiming]"):
                 self._append_log(line + "\n", "muted")
                 continue
+            if line.startswith("[CortexWorkspace] "):
+                target = line[len("[CortexWorkspace] "):].strip()
+                if target:
+                    self._chat_pending_workspace = Path(target)
+                    self._chat_pending_conversation = self._cortex_conversation_id()
+                continue
+            if line.startswith("[CortexConversation] "):
+                continue
             if line.startswith("[Cortex] CORTEX-PY-BRIDGE-"):
                 if hasattr(self, "chat_worker_label"):
                     if "worker=unavailable" in line:
@@ -4028,7 +4036,7 @@ class CortexPCCGui:
                     else:
                         is_mutating = command.casefold() in {"cortex-apply", "cortex-repair"}
                         self.chat_worker_label.configure(
-                            text="Transactional operation" if is_mutating else "Prebuilt worker • chat read-only",
+                            text="Transactional operation" if is_mutating else "Common Cortex worker • governed chat",
                             fg=GREEN,
                         )
                 continue
@@ -4241,10 +4249,24 @@ class CortexPCCGui:
                         self.chat_stop_btn.configure(state="disabled")
                     if hasattr(self, "chat_send_btn"):
                         self.chat_send_btn.configure(state="normal")
+                    pending_workspace = self._chat_pending_workspace if rc == 0 else None
+                    pending_conversation = self._chat_pending_conversation if rc == 0 else None
+                    self._chat_pending_workspace = None
+                    self._chat_pending_conversation = None
                     color = GREEN if rc == 0 else RED
                     state = "PASS" if rc == 0 else f"FAIL ({rc})"
                     self.operation_label.configure(text=f"Last: {command} {state}", fg=color)
                     self.console_job_label.configure(text=f"Last: {command} {state}", fg=color)
+                    if pending_workspace is not None and pending_workspace.is_dir():
+                        try:
+                            if pending_workspace.resolve() != self.root_path.resolve():
+                                self._activate_project(pending_workspace)
+                                if pending_conversation:
+                                    self._cortex_conversations[self._chat_project_key()] = pending_conversation
+                                    self._refresh_chat_history()
+                                    self._render_current_chat()
+                        except Exception as exc:
+                            self._append_log(f"[WARN] Cortex created/switched project but PCC could not rebind automatically: {exc}\n", "warn")
                     if command == "cortex-worker-build" and hasattr(self, "chat_worker_label"):
                         self.chat_worker_label.configure(
                             text="Transactional worker ready" if rc == 0 else "Worker build blocked/failed",

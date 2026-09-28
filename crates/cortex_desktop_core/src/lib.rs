@@ -1,4 +1,4 @@
-//! Toolkit-neutral controller/state for the standalone Cortex desktop.
+//! Toolkit-neutral Cortex controller/state shared by PCC and compatibility surfaces.
 
 use cortex_adapter_git::{GitAdapter, ShadowGitStore};
 use cortex_artifacts::{discover as discover_artifacts, ArtifactEntry};
@@ -274,6 +274,13 @@ impl DesktopController {
         Self::open_internal(workspace_root.as_ref(), true)
     }
 
+    /// Open Cortex for an embedded PCC/CLI request without claiming ownership of
+    /// shared runtime/model-host lifetime. PCC is the application shell; the
+    /// controller remains the common project/developer engine.
+    pub fn open_embedded(workspace_root: impl AsRef<Path>) -> Result<Self, String> {
+        Self::open_internal(workspace_root.as_ref(), false)
+    }
+
     fn open_internal(workspace_root: &Path, owns_runtime_lifetime: bool) -> Result<Self, String> {
         let bootstrap = Workspace::open(workspace_root).map_err(|error| error.to_string())?;
         let registry = WorkspaceRegistry::open_default()?;
@@ -380,6 +387,28 @@ impl DesktopController {
 
     pub fn active_conversation_id(&self) -> Option<String> {
         self.active_conversation.clone()
+    }
+
+    /// Lightweight response access for non-native application shells such as PCC.
+    /// This intentionally avoids constructing the full DesktopView/library panes.
+    pub fn latest_assistant_text(&self) -> Result<Option<String>, String> {
+        let Some(id) = self.active_conversation.as_deref() else {
+            return Ok(None);
+        };
+        let conversation = self.conversations.load(id)?;
+        Ok(conversation
+            .messages
+            .iter()
+            .rev()
+            .find(|message| {
+                matches!(message.role, ConversationRole::Assistant)
+                    && !message.content.trim().is_empty()
+            })
+            .map(|message| message.content.trim().to_string()))
+    }
+
+    pub fn runtime_status(&self) -> &str {
+        &self.runtime_status
     }
 
     pub fn fork_for_background(&mut self) -> Result<Self, String> {

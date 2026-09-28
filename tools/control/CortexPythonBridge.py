@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -23,7 +24,7 @@ from typing import Any
 
 from PCCChatStore import load_messages, save_messages
 
-BRIDGE_VERSION = "CORTEX-PY-BRIDGE-0.9"
+BRIDGE_VERSION = "CORTEX-PY-BRIDGE-1.1"
 CHAT_HISTORY_LIMIT = 20
 CONTEXT_TEXT_LIMIT = 24000
 
@@ -498,6 +499,22 @@ def _worker_request_text(
     )
 
 
+def _chat_requires_worker(prompt: str) -> bool:
+    """Prevent actionable PCC requests from becoming text-only provider replies.
+
+    The common Rust controller is the authority for new projects, source changes,
+    actual execution and approval continuations. This intentionally conservative
+    classifier is only used when the worker is unavailable; a present worker
+    always receives the unmodified ordinary Chat prompt.
+    """
+    value = " ".join(prompt.strip().casefold().split())
+    if value in {"yes", "y", "approve", "approved", "go ahead", "go ahead and do it", "continue", "continue.", "proceed", "retry"}:
+        return True
+    if re.match(r"^(?:please\s+|can you\s+|could you\s+|i want you to\s+|i need you to\s+|/)?(?:create|make|start|generate|build|write|edit|modify|fix|repair|implement|refactor|delete|remove|run|launch|compile|test|verify|register|apply)\b", value):
+        return True
+    return bool(re.search(r"\b(?:create|make|build|generate|implement|run|launch|compile|register)\s+(?:a\s+|an\s+|the\s+|new\s+|another\s+|standalone\s+)*(?:project|application|program|app|executable)\b", value))
+
+
 def _run_worker(runtime: Path, cortex_root: Path, workspace: Path, conversation_id: str, mode: str, prompt: str) -> int:
     started = time.monotonic()
     worker_prompt = _worker_request_text(cortex_root, workspace, conversation_id, mode, prompt)
@@ -505,9 +522,15 @@ def _run_worker(runtime: Path, cortex_root: Path, workspace: Path, conversation_
         print(f"[CortexTiming] context_ms={int((time.monotonic() - started) * 1000)}", flush=True)
 
     if mode in {"chat", "inspect", "plan"}:
-        argv = [str(runtime), "--workspace", str(workspace), mode, worker_prompt]
-        if mode == "chat":
-            argv.append("--json")
+        # Chat is the PCC application path: let the common controller decide
+        # whether the prompt is conversation, project creation, coding, approval
+        # continuation, or another developer workflow. Explicit Inspect/Plan keep
+        # their bounded project-agent commands.
+        argv = (
+            [str(runtime), "--workspace", str(workspace), "pcc-chat", prompt, "--json"]
+            if mode == "chat"
+            else [str(runtime), "--workspace", str(workspace), mode, worker_prompt]
+        )
         result = subprocess.run(
             argv,
             cwd=str(workspace),
@@ -524,29 +547,53 @@ def _run_worker(runtime: Path, cortex_root: Path, workspace: Path, conversation_
             print(result.stderr.rstrip(), flush=True)
 
         text = ""
+        effective_workspace = workspace
         if result.returncode == 0:
             if mode == "chat":
                 try:
                     payload = json.loads(result.stdout)
                     text = str(payload.get("text") or "").strip()
-                except Exception:
-                    text = result.stdout.strip()
+                    target = str(payload.get("workspace_root") or "").strip()
+                    if target:
+                        candidate = Path(target).expanduser()
+                        if candidate.is_dir():
+                            effective_workspace = _norm(candidate)
+                except (json.JSONDecodeError, TypeError, AttributeError, ValueError):
+                    print("[FAIL] Common Cortex pcc-chat returned invalid JSON; refusing to present unverified worker output as a successful chat result.", flush=True)
+                    print(f"[INFO] Worker output excerpt: {result.stdout.strip()[-1200:]}", flush=True)
+                    return 2
             else:
                 text = result.stdout.strip()
 
         if result.returncode == 0 and text:
+            if mode == "chat":
+                print(f"[CortexWorkspace] {effective_workspace}", flush=True)
+                # This control token is the PCC presentation-cache identity. The
+                # Rust ConversationStore keeps its own authoritative durable ID.
+                # Keeping the PCC ID stable across a project switch means the same
+                # visible conversation immediately rebinds to the new project.
+                print(f"[CortexConversation] {conversation_id}", flush=True)
             print(text, flush=True)
+            # Compatibility presentation cache for the Python PCC surface. The
+            # authoritative developer conversation is the Rust ConversationStore.
             history = load_messages(cortex_root, workspace, conversation_id)
             history.extend([{"role": "user", "content": prompt}, {"role": "assistant", "content": text}])
             save_messages(
-                cortex_root, workspace, conversation_id, history,
+                cortex_root, effective_workspace, conversation_id, history,
                 updated_unix_ms=int(time.time() * 1000),
             )
             return 0
 
         detail = result.stdout.strip() or result.stderr.strip() or f"exit {result.returncode} with no text"
-        print(f"[WARN] Transactional Cortex {mode} worker did not produce a usable response: {detail[-1200:]}", flush=True)
-        print("[INFO] Falling back to the non-mutating Python provider path for this request.", flush=True)
+        if mode == "chat":
+            # Never turn a failed code/create/approval request into plausible prose.
+            # The controller's nonzero result must stay visible in PCC and logs.
+            print(f"[FAIL] Common Cortex pcc-chat failed (exit {result.returncode}): {detail[-1200:]}", flush=True)
+            print("[INFO] No text-only provider fallback was run. Project changes, build and runtime verification are NOT certified.", flush=True)
+            print("[NEXT] Check the Cortex worker selected by PCC, rebuild it explicitly if stale, and retry the same conversation.", flush=True)
+            return int(result.returncode) if result.returncode > 0 else 2
+        print(f"[WARN] Common Cortex {mode} worker did not produce a usable response: {detail[-1200:]}", flush=True)
+        print("[INFO] Falling back to the non-mutating Python provider path for this read-only request.", flush=True)
         return _python_model(cortex_root, workspace, conversation_id, mode, prompt)
 
     # Mutating modes remain fail-closed on the transactional worker.  They receive
@@ -596,8 +643,13 @@ def main() -> int:
         print(f"[Cortex] {BRIDGE_VERSION} | worker={runtime}", flush=True)
         return _run_worker(runtime, cortex_root, workspace, args.conversation_id, args.mode, args.prompt)
 
+    if args.mode == "chat" and _chat_requires_worker(args.prompt):
+        print(f"[BLOCKED] Common Cortex worker is unavailable; {args.mode} request may require project, source, execution or approval authority.", flush=True)
+        print("[INFO] No provider-only completion was generated. No project was created, changed, built or launched.", flush=True)
+        print("[NEXT] Use PCC's Build Cortex Worker action, verify the selected cortex.exe, then retry in the same conversation.", flush=True)
+        return 3
     if args.mode in {"chat", "inspect", "plan"}:
-        print(f"[Cortex] {BRIDGE_VERSION} | worker=unavailable | using non-mutating Python provider fallback", flush=True)
+        print(f"[Cortex] {BRIDGE_VERSION} | worker=unavailable | using explicitly non-mutating Python provider fallback", flush=True)
         return _python_model(cortex_root, workspace, args.conversation_id, args.mode, args.prompt)
 
     print(f"[BLOCKED] Cortex {args.mode} requires the transactional Cortex worker.", flush=True)

@@ -1,43 +1,46 @@
 {
   "schema": "cortex.root_patch.v1",
   "project": "Cortex",
-  "patchId": "CORTEX-W13B1B-REMAINING-WINDOWS-FIXTURE-ISOLATION-20260928",
-  "title": "W13B1B isolate three remaining Windows synthetic Vault fixtures",
+  "patchId": "CORTEX-W13B2B-PCC-CHAT-FAIL-CLOSED-20260928",
+  "title": "W13B2B require real common-controller responses for PCC coding and approval workflows",
   "series": "W13",
-  "sequence": 4,
+  "sequence": 6,
   "applyMode": "transactional",
   "dependsOn": [
-    "CORTEX-W13B1-MARKED-VAULT-AUTHORITY-20260928"
+    "CORTEX-W13B2A-PCC-ONLY-APPLICATION-CONSOLIDATION-20260928"
   ],
   "files": [
     {
-      "path": "tools/control/tests/test_pcc_console_chat_runtime.py",
-      "sha256": "cccfc5a6a80ceddbe843450f89ab1293339306816c9260b577de8a529b80a603",
-      "bytes": 2882,
+      "path": "tools/control/CortexPythonBridge.py",
+      "sha256": "424e866ddacfcf31cc9c4cefaf655b6a37e6500eddcbcc0c6b672a6db8f936f4",
+      "bytes": 29871,
       "mustExist": true,
-      "beforeSha256": "478b61c08fb83eeb74f9c89cc36c2fce905c8523fc9166cccbf6167c5cecb832",
-      "beforeBytes": 2569
+      "beforeSha256": "a95cec75b96947954ce63f0114a545197d9c1c550773770bb7c2ad2129b22255"
     },
     {
-      "path": "tools/control/tests/test_pcc_portable_volume.py",
-      "sha256": "4e2853655aa123bf611842c9a563a86527bd6afd63028aefaf1c3b247055fae9",
-      "bytes": 11234,
+      "path": "tools/control/CortexPCCGui.py",
+      "sha256": "7133a57b6361ab3eb4e215c252b555f87b8e8195c5f124a298a8a7a72a6cc412",
+      "bytes": 240829,
       "mustExist": true,
-      "beforeSha256": "b3c723bb7e0f529a21a133bbc3eece422cbcc6a3aa1f6fe3470fb932fe2c3811",
-      "beforeBytes": 10973
+      "beforeSha256": "96bb98b9eeef8dc7ed5e15c657111c56b29f78b3ea4333ea1ac195325a7035c2"
     },
     {
-      "path": "tools/control/tests/test_pcc_vault_intake_audit.py",
-      "sha256": "4ca09061f98c9c8631c57cb8a5c404ca74642be8d04b8320e41ceb3b99370a1c",
-      "bytes": 4552,
+      "path": "tools/control/tests/test_cortex_pcc.py",
+      "sha256": "72700a2c1a7a238736f8619d1064c323f394105f1df1500207caed7cbf2268a0",
+      "bytes": 38180,
       "mustExist": true,
-      "beforeSha256": "18e76cb2363920f297126ccbc3f1d89ca5e6e528a88ec9a95fe7f7bb214c6f7f",
-      "beforeBytes": 4342
+      "beforeSha256": "b481b0132d76befd8aa62e535d89143e0a4b2b3e4b2a5a03f1b47dd89ed31604"
     },
     {
-      "path": "docs/patch/CORTEX_W13B1B_REMAINING_WINDOWS_FIXTURES.md",
-      "sha256": "0dd376f797906bcf188aeaa44070e05511050ea1acab52a6906eb503ce1e24c7",
-      "bytes": 2187,
+      "path": "tools/control/tests/test_w13b2b_pcc_chat_fail_closed.py",
+      "sha256": "54c4af53e6bba6a40e0f445ccd191b6ef4ad206c756eee1f80966acab0b4044e",
+      "bytes": 5433,
+      "mustExist": false
+    },
+    {
+      "path": "docs/patch/CORTEX_W13B2B_PCC_CHAT_FAIL_CLOSED.md",
+      "sha256": "36a1c4f6959d7e1a4b90e6bc1ae1434b261738c79f9e40c771e15d33de8ea1cb",
+      "bytes": 1915,
       "mustExist": false
     }
   ],

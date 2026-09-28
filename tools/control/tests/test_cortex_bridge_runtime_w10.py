@@ -52,21 +52,23 @@ class RuntimeBridgeW10Tests(unittest.TestCase):
             bridge._worker_request_text(Path('cortex'), Path('workspace'), 'cid', 'repair', 'fix source')
             context.assert_called_with(Path('workspace'), include_logs=True)
 
-    def test_ordinary_questions_stay_chat_and_mutation_imperatives_require_confirmation(self) -> None:
+    def test_ordinary_questions_and_natural_mutations_enter_common_chat_controller(self) -> None:
         self.assertEqual(gui._chat_execution_intent('What can Cortex repair?', 'chat'), ('chat', 'What can Cortex repair?'))
-        self.assertEqual(gui._chat_execution_intent('Fix the failing Rust test', 'chat'), ('repair', 'Fix the failing Rust test'))
+        self.assertEqual(gui._chat_execution_intent('Fix the failing Rust test', 'chat'), ('chat', 'Fix the failing Rust test'))
+        self.assertEqual(gui._chat_execution_intent('Create a new project', 'chat'), ('chat', 'Create a new project'))
         self.assertEqual(gui._chat_execution_intent('/repair fix the build', 'chat'), ('repair', 'fix the build'))
         self.assertEqual(gui._chat_execution_intent('/plan inspect this', 'chat'), ('plan', 'inspect this'))
 
-    def test_cancelled_mutation_keeps_composer_text_and_does_not_launch(self) -> None:
+    def test_natural_mutation_launches_common_chat_without_python_preapproval(self) -> None:
         calls = []
         input_box = SimpleNamespace(get=lambda *_: 'Fix the compiler error', delete=lambda *_: calls.append('deleted'))
         fake = SimpleNamespace(chat_input=input_box, chat_mode_var=SimpleNamespace(get=lambda: 'Chat'),
-            root_path=Path('project'), _popup=lambda *a, **k: False,
-            _append_chat_message=lambda *a: calls.append('append'),
-            _start_cortex_cli=lambda *a, **k: calls.append('launch'))
+            root_path=Path('project'), _popup=lambda *a, **k: calls.append('popup') or False,
+            _append_chat_message=lambda *a: calls.append(('message', a)),
+            _start_cortex_cli=lambda *a, **k: calls.append(('launch', a, k)))
         self.assertEqual(gui.CortexPCCGui._submit_chat_input(fake), 'break')
-        self.assertEqual(calls, [])
+        self.assertNotIn('popup', calls)
+        self.assertEqual(calls[-1], ('launch', ('chat', 'Fix the compiler error'), {'surface': 'chat'}))
 
     def test_approved_repair_runs_explicit_transactional_mode(self) -> None:
         calls = []

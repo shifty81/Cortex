@@ -58,7 +58,8 @@ fn run() -> Result<(), String> {
     let command = args.first().map(String::as_str).unwrap_or("status");
     if matches!(
         command,
-        "conversation"
+        "pcc-chat"
+            | "conversation"
             | "conversations"
             | "git"
             | "plugin"
@@ -2242,6 +2243,7 @@ fn build_command(service: &mut CortexService, args: &[String]) -> Result<(), Str
 
 fn run_local_command(workspace: &Workspace, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str).unwrap_or("status") {
+        "pcc-chat" => pcc_chat_command(workspace, &args[1..]),
         "conversation" | "conversations" => conversation_command(workspace, &args[1..]),
         "git" => git_command(workspace, &args[1..]),
         "plugin" | "plugins" => plugin_command(workspace, &args[1..]),
@@ -2915,6 +2917,55 @@ fn observability_command(workspace: &Workspace, args: &[String]) -> Result<(), S
     Ok(())
 }
 
+fn pcc_chat_command(workspace: &Workspace, args: &[String]) -> Result<(), String> {
+    let prompt = prompt_from_args(args);
+    if prompt.trim().is_empty() {
+        return Err("usage: cortex pcc-chat <prompt> [--json|--jsonl]".into());
+    }
+
+    // PCC is the primary Cortex application shell. Reuse the existing common
+    // developer controller, but do not claim Desktop-style runtime ownership.
+    // This path preserves natural-language project creation, approval, coding,
+    // verification, project switching and durable conversation state.
+    let mut controller = DesktopController::open_embedded(workspace.root())?;
+    controller.send_chat(&prompt)?;
+    let conversation_id = controller.active_conversation_id();
+    let workspace_root = controller.workspace().root().to_path_buf();
+    let text = controller
+        .latest_assistant_text()?
+        .ok_or_else(|| "Cortex PCC chat completed without an assistant response".to_string())?;
+
+    let payload = json!({
+        "schema_version": 1,
+        "surface": "pcc",
+        "workspace_root": workspace_root,
+        "conversation_id": conversation_id,
+        "text": text,
+        "status": controller.runtime_status(),
+    });
+    match output_mode(args) {
+        OutputMode::Human => {
+            println!(
+                "{}",
+                payload
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+            );
+            eprintln!(
+                "Cortex PCC workspace: {}",
+                controller.workspace().root().display()
+            );
+        }
+        OutputMode::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?
+        ),
+        OutputMode::Jsonl => emit_event(OutputMode::Jsonl, "pcc_chat_finished", payload),
+    }
+    Ok(())
+}
+
 fn desktop_command(workspace: &Workspace, args: &[String]) -> Result<(), String> {
     if args.first().map(String::as_str) == Some("certify-chat") {
         println!("[certify-chat] opening Cortex Desktop controller");
@@ -3394,8 +3445,9 @@ fn print_cli_help() {
     println!();
     println!("Sessions / logs:");
     println!("  service status|start|stop|restart [--port 7337]");
+    println!("  pcc-chat <prompt> [--json|--jsonl]    (PCC/common developer workflow)");
     println!("  conversation new|list|show|rename|archive");
-    println!("  desktop [certify]");
+    println!("  desktop [certify]                     (legacy compatibility only)");
     println!("  workspace status|scan [max_files]|context-status");
     println!("  workspace index [max_files] [max_hash_bytes]|index-status");
     println!("  workspace home|list|attach [path]|activate <id>|detach <id>");
