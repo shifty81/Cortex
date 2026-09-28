@@ -564,49 +564,53 @@ impl WorkspaceRegistry {
     }
 
     pub fn ensure_default_library_root(&self) -> Result<Option<CortexLibraryRoot>, String> {
+        // An existing portable home belongs to its marked physical volume even if
+        // its historical library.json incorrectly names an unrelated live disk.
+        if let Some(portable) = portable_root_for_home(&self.home)? {
+            require_vault_volume_label(&portable)?;
+            self.provision_library_root(&portable)?;
+            return self.library_root();
+        }
         if let Some(configured) = configured_vault_root_from_environment() {
             self.provision_library_root(&configured)?;
             return self.library_root();
         }
-
         if let Some(existing) = self.library_root()? {
-            let layout = CortexLibraryLayout::from_root(existing.root.clone());
+            let layout = CortexLibraryLayout::from_root(existing.root);
             layout.ensure_directories()?;
-            return Ok(Some(existing));
+            return self.library_root();
         }
-
-        #[cfg(windows)]
-        {
-            let drive = PathBuf::from(r"D:\");
-            if drive.is_dir() {
-                let preferred = drive.join("Cortex");
-                self.provision_library_root(&preferred)?;
-                return self.library_root();
-            }
-        }
-
+        // Never manufacture a new Cortex installation on a coincidentally
+        // connected D: drive. A nonportable installation requires configuration.
         Ok(None)
     }
 
-    /// Resolve the storage authority for a concrete workspace before desktop
-    /// services, model hosts, or project tools are opened. Explicit machine
-    /// configuration wins; portable source distributions can then opt into the
-    /// repository drive root. Existing managed state is still protected by
-    /// `set_library_root` and will not be silently migrated.
+    /// The marker on the actual Cortex installation takes precedence over an
+    /// inherited Windows user/machine environment pointing at another disk.
     pub fn ensure_library_root_for_workspace(
         &self,
         workspace_root: impl AsRef<Path>,
     ) -> Result<Option<CortexLibraryRoot>, String> {
-        if let Some(configured) = configured_vault_root_from_environment() {
-            self.provision_library_root(&configured)?;
-            return self.library_root();
-        }
-
         if let Some(portable) = portable_drive_root_for_workspace(workspace_root.as_ref())? {
+            if let Some(override_root) = configured_vault_root_from_environment() {
+                let override_root = fs::canonicalize(&override_root).map_err(|error| {
+                    format!(
+                        "invalid Cortex portable Vault override {}: {error}",
+                        override_root.display()
+                    )
+                })?;
+                if override_root
+                    != fs::canonicalize(&portable).map_err(|error| error.to_string())?
+                {
+                    return Err(format!(
+                        "portable Cortex is bound to the marked Vault volume at {}; conflicting inherited Vault override {} must be cleared, not used as a storage migration",
+                        portable.display(), override_root.display()
+                    ));
+                }
+            }
             self.provision_library_root(&portable)?;
             return self.library_root();
         }
-
         self.ensure_default_library_root()
     }
 
@@ -614,18 +618,27 @@ impl WorkspaceRegistry {
         &self,
         root: impl AsRef<Path>,
     ) -> Result<CortexLibraryLayout, String> {
-        fs::create_dir_all(root.as_ref()).map_err(|error| {
+        // Validate transitions before creating any layout directories. A failed
+        // switch must not leave an accidental second managed Vault behind.
+        let requested = root.as_ref();
+        if !requested.is_dir() {
+            if let Some(existing) = self.library_root()? {
+                if storage_authority_has_live_state(&existing.root) {
+                    return Err(format!(
+                        "refusing to provision {} while existing storage at {} contains managed data",
+                        requested.display(), existing.root.display()
+                    ));
+                }
+            }
+        }
+        fs::create_dir_all(requested).map_err(|error| {
             format!(
                 "failed to create Cortex library root {}: {error}",
-                root.as_ref().display()
+                requested.display()
             )
         })?;
-        let canonical = fs::canonicalize(root.as_ref()).map_err(|error| {
-            format!(
-                "failed to resolve Cortex library root {}: {error}",
-                root.as_ref().display()
-            )
-        })?;
+        let canonical = fs::canonicalize(requested).map_err(|error| error.to_string())?;
+        self.validate_library_root_transition(&canonical)?;
         let layout = CortexLibraryLayout::from_root(canonical.clone());
         layout.ensure_directories()?;
         self.set_library_root(&canonical)?;
@@ -680,6 +693,66 @@ impl WorkspaceRegistry {
         Ok(Some(record))
     }
 
+    fn validate_library_root_transition(&self, candidate: &Path) -> Result<(), String> {
+        let Some(existing) = self.library_root()? else {
+            return Ok(());
+        };
+        if existing.root == candidate || !storage_authority_has_live_state(&existing.root) {
+            return Ok(());
+        }
+        let current = storage_volume_identity_for(candidate)?;
+        if existing
+            .volume
+            .as_ref()
+            .is_some_and(|prior| same_physical_volume(prior, &current))
+        {
+            return Ok(());
+        }
+        if self.approved_legacy_portable_adoption(candidate, &existing, &current)? {
+            return Ok(());
+        }
+        Err(format!(
+            "Cortex portable authority conflict: registry at {} points to {} but the requested root is {}. Different physical volumes cannot be silently rebound. On the marked Vault installation only, inspect both records and explicitly run one launch with CORTEX_PORTABLE_ADOPT_LEGACY_ROOT=1 to adopt the marked disk without touching the previous disk.",
+            self.home.display(), existing.root.display(), candidate.display()
+        ))
+    }
+
+    fn approved_legacy_portable_adoption(
+        &self,
+        candidate: &Path,
+        previous: &CortexLibraryRoot,
+        current: &CortexStorageVolumeIdentity,
+    ) -> Result<bool, String> {
+        if std::env::var("CORTEX_PORTABLE_ADOPT_LEGACY_ROOT")
+            .ok()
+            .as_deref()
+            != Some("1")
+            || previous.volume.as_ref().is_some_and(|identity| {
+                identity
+                    .volume_guid
+                    .as_ref()
+                    .is_some_and(|value| !value.is_empty())
+                    || identity
+                        .serial_number
+                        .as_ref()
+                        .is_some_and(|value| !value.is_empty())
+            })
+            || current
+                .label
+                .as_deref()
+                .is_none_or(|label| !label.eq_ignore_ascii_case("Vault"))
+        {
+            return Ok(false);
+        }
+        let expected_home = candidate.join(".cortex").join("home");
+        if fs::canonicalize(&self.home).ok() != fs::canonicalize(expected_home).ok()
+            || !self.home.is_dir()
+        {
+            return Ok(false);
+        }
+        Ok(portable_marker_id(candidate)?.is_some())
+    }
+
     pub fn set_library_root(&self, root: impl AsRef<Path>) -> Result<CortexLibraryRoot, String> {
         let canonical = fs::canonicalize(root.as_ref()).map_err(|error| {
             format!(
@@ -693,25 +766,32 @@ impl WorkspaceRegistry {
                 canonical.display()
             ));
         }
-
-        if let Some(existing) = self.library_root()? {
-            if existing.root != canonical && storage_authority_has_live_state(&existing.root) {
-                return Err(format!(
-                    "Cortex storage authority already contains live managed state at {}. Changing the configured root is not a storage migration; use the dedicated authority-migration workflow instead.",
-                    existing.root.display()
-                ));
-            }
+        self.validate_library_root_transition(&canonical)?;
+        let previous = self.library_root()?;
+        let changed = previous
+            .as_ref()
+            .is_some_and(|record| record.root != canonical);
+        if changed {
+            let path = self.home.join("registry").join("library.json");
+            let snapshot = self
+                .home
+                .join("registry")
+                .join(format!("library.before-rebind-{}.json", unix_millis()));
+            // Preserve the original record before modifying authority. Never move
+            // or copy contents from the old drive as part of this operation.
+            fs::copy(&path, &snapshot).map_err(|error| {
+                format!(
+                    "unable to preserve previous library authority at {}: {error}",
+                    snapshot.display()
+                )
+            })?;
         }
-
-        let previous_offsite = self
-            .library_root()?
-            .and_then(|record| record.offsite_backup_root);
         let record = CortexLibraryRoot {
             schema_version: 2,
             volume: storage_volume_identity_for(&canonical).ok(),
             root: canonical,
             configured_unix_ms: unix_millis(),
-            offsite_backup_root: previous_offsite,
+            offsite_backup_root: previous.and_then(|record| record.offsite_backup_root),
         };
         self.save_library_root_record(&record)?;
         Ok(record)
@@ -3043,6 +3123,101 @@ fn volume_root_for(path: &Path) -> PathBuf {
     path.parent().unwrap_or(path).to_path_buf()
 }
 
+/// A changed mount letter is safe to rebind only when stable physical identity
+/// agrees. A label alone or a matching path string is never sufficient.
+fn same_physical_volume(a: &CortexStorageVolumeIdentity, b: &CortexStorageVolumeIdentity) -> bool {
+    if let (Some(left), Some(right)) = (&a.volume_guid, &b.volume_guid) {
+        if !left.is_empty() && left.eq_ignore_ascii_case(right) {
+            return true;
+        }
+    }
+    // Windows volume GUID paths can change across hosts. A different GUID is
+    // not proof that the physical drive changed; compare filesystem serial and
+    // stable capacity/filesystem metadata before refusing a portable remount.
+    match (
+        &a.serial_number,
+        &b.serial_number,
+        a.size_bytes,
+        b.size_bytes,
+    ) {
+        (Some(left), Some(right), Some(left_size), Some(right_size)) => {
+            !left.is_empty()
+                && left.eq_ignore_ascii_case(right)
+                && left_size == right_size
+                && a.filesystem
+                    .as_ref()
+                    .zip(b.filesystem.as_ref())
+                    .is_some_and(|(x, y)| x.eq_ignore_ascii_case(y))
+        }
+        _ => false,
+    }
+}
+
+fn portable_marker_id(root: &Path) -> Result<Option<String>, String> {
+    let marker = root.join(".cortex-volume.json");
+    if !marker.is_file() {
+        return Ok(None);
+    }
+    let value: serde_json::Value = serde_json::from_slice(
+        &fs::read(&marker).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("invalid Cortex volume marker {}: {error}", marker.display()))?;
+    if value.get("schema").and_then(serde_json::Value::as_str) != Some("cortex.volume.v1") {
+        return Err(format!(
+            "invalid Cortex volume marker schema: {}",
+            marker.display()
+        ));
+    }
+    let id = value
+        .get("volumeId")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| format!("missing Cortex volumeId: {}", marker.display()))?;
+    Ok(Some(id.to_string()))
+}
+
+/// The marker identifies an installation; a renamed/unrelated mounted volume
+/// is rejected instead of being silently accepted as the designated Vault.
+fn require_vault_volume_label(root: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let identity = storage_volume_identity_for(root)?;
+        if identity
+            .label
+            .as_deref()
+            .is_none_or(|label| !label.eq_ignore_ascii_case("Vault"))
+        {
+            return Err(format!(
+                "portable Cortex requires the physical volume named Vault at {}; observed {:?}",
+                root.display(),
+                identity.label
+            ));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = root;
+    }
+    Ok(())
+}
+
+fn portable_root_for_home(home: &Path) -> Result<Option<PathBuf>, String> {
+    let Some(state_root) = home.parent() else {
+        return Ok(None);
+    };
+    if state_root.file_name().is_none_or(|name| name != ".cortex") {
+        return Ok(None);
+    }
+    let Some(volume) = state_root.parent() else {
+        return Ok(None);
+    };
+    if portable_marker_id(volume)?.is_some() {
+        return Ok(Some(volume.to_path_buf()));
+    }
+    Ok(None)
+}
+
 fn storage_authority_has_live_state(root: &Path) -> bool {
     let layout = CortexLibraryLayout::from_root(root.to_path_buf());
     [
@@ -3460,14 +3635,20 @@ fn portable_drive_root_for_workspace(workspace_root: &Path) -> Result<Option<Pat
 
     #[cfg(windows)]
     {
-        windows_drive_root(workspace_root)
-            .map(Some)
-            .ok_or_else(|| {
-                format!(
-                    "portable drive-root Vault policy is enabled but no Windows drive root could be derived from {}",
-                    workspace_root.display()
-                )
-            })
+        let volume = windows_drive_root(workspace_root).ok_or_else(|| {
+            format!(
+            "portable Cortex policy is enabled but no Windows drive root could be derived from {}",
+            workspace_root.display()
+        )
+        })?;
+        if portable_marker_id(&volume)?.is_none() {
+            return Err(format!(
+                "portable Cortex requires .cortex-volume.json on its installation volume {}",
+                volume.display()
+            ));
+        }
+        require_vault_volume_label(&volume)?;
+        Ok(Some(volume))
     }
 
     #[cfg(not(windows))]
@@ -3502,6 +3683,62 @@ fn unix_millis() -> u128 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn matching_volume_guids_rebind_even_if_mount_changes() {
+        use super::*;
+        let a = CortexStorageVolumeIdentity {
+            volume_guid: Some("\\?\\Volume{EXAMPLE}".into()),
+            mount_root: Some(PathBuf::from("E:/")),
+            ..Default::default()
+        };
+        let b = CortexStorageVolumeIdentity {
+            volume_guid: Some("\\?\\volume{example}".into()),
+            mount_root: Some(PathBuf::from("G:/")),
+            ..Default::default()
+        };
+        assert!(same_physical_volume(&a, &b));
+    }
+
+    #[test]
+    fn remount_with_new_windows_guid_uses_stable_serial_evidence() {
+        use super::*;
+        let a = CortexStorageVolumeIdentity {
+            volume_guid: Some("old-host-guid".into()),
+            serial_number: Some("F473866C".into()),
+            size_bytes: Some(2_000_363_188_224),
+            filesystem: Some("NTFS".into()),
+            ..Default::default()
+        };
+        let b = CortexStorageVolumeIdentity {
+            volume_guid: Some("new-host-guid".into()),
+            serial_number: Some("f473866c".into()),
+            size_bytes: Some(2_000_363_188_224),
+            filesystem: Some("ntfs".into()),
+            ..Default::default()
+        };
+        assert!(same_physical_volume(&a, &b));
+    }
+
+    #[test]
+    fn different_physical_volumes_do_not_rebind_by_label() {
+        use super::*;
+        let a = CortexStorageVolumeIdentity {
+            volume_guid: Some("volume-A".into()),
+            label: Some("Vault".into()),
+            ..Default::default()
+        };
+        let b = CortexStorageVolumeIdentity {
+            volume_guid: Some("volume-B".into()),
+            label: Some("Vault".into()),
+            ..Default::default()
+        };
+        assert!(!same_physical_volume(&a, &b));
+        assert!(!same_physical_volume(
+            &CortexStorageVolumeIdentity::default(),
+            &b
+        ));
+    }
+
     use super::*;
 
     fn temporary_root(label: &str) -> PathBuf {

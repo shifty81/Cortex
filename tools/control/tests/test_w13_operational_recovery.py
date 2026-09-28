@@ -35,6 +35,12 @@ class W13OperationalRecovery(unittest.TestCase):
         })
         self.env_patch.start()
         self.addCleanup(self.env_patch.stop)
+        # These tests intentionally exercise isolated, non-portable temporary
+        # Vaults.  The actual Cortex checkout may be on a marked Windows Vault;
+        # never let that live installation policy hijack the fixture's root.
+        policy_patch = mock.patch.object(paths, "_portable_drive_root_policy_enabled", return_value=False)
+        policy_patch.start()
+        self.addCleanup(policy_patch.stop)
 
     def test_all_storage_parser_choices_have_callable_providers(self):
         pcc.validate_storage_command_contract()
@@ -145,6 +151,9 @@ class W13OperationalRecovery(unittest.TestCase):
 
     def test_cli_smoke_does_not_fail_in_function_dispatch(self):
         env = os.environ.copy()
+        # The subprocess must discover the synthetic unmarked runtime root,
+        # not re-import the installed G:/Cortex portable policy from the host.
+        env["CORTEX_RUNTIME_ROOT"] = str(self.root)
         for name in ("storage-status", "storage-health", "vault-retention-plan", "vault-gc-plan", "storage-reclaim-plan-all"):
             with self.subTest(command=name):
                 run = subprocess.run(

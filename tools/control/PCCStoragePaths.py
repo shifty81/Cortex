@@ -127,38 +127,65 @@ def _bootstrap_vault_root() -> Path | None:
     return None
 
 
-def resolve_vault_root(project_root: Path | None = None) -> Path:
-    """Resolve the single Vault authority used by PCC and managed projects.
+def _require_portable_vault_volume_label(volume: Path) -> None:
+    """Validate the physical Windows label; injectable in fixture-only tests."""
+    if os.name != "nt":
+        return
+    import ctypes
+    from ctypes import wintypes
+    label_buffer = ctypes.create_unicode_buffer(261)
+    serial_number = wintypes.DWORD()
+    result = ctypes.windll.kernel32.GetVolumeInformationW(
+        ctypes.c_wchar_p(str(volume)), label_buffer, len(label_buffer),
+        ctypes.byref(serial_number), None, None, None, 0
+    )
+    if not result or label_buffer.value.casefold() != "vault":
+        raise RuntimeError(
+            f"portable Cortex requires the physical volume labeled Vault at {volume}; "
+            f"detected {label_buffer.value or 'unavailable'}"
+        )
 
-    A process-level override remains the highest authority.  Otherwise, when the
-    repository enables ``repository_drive_root`` portability, the physical volume
-    containing Cortex wins over any persisted bootstrap drive letter.  This is
-    what allows one external disk to mount as E:, G:, etc. without creating a
-    second Vault or pointing at a missing old drive.
+
+def resolve_vault_root(project_root: Path | None = None) -> Path:
+    """Resolve portable installation authority before consulting stale overrides.
+
+    This resolves the physical *volume root*, not the content Vault directory.
+    Source and state remain in Cortex/ and .cortex/ respectively.
     """
     override = os.environ.get("CORTEX_VAULT_ROOT") or os.environ.get("PCC_VAULT_ROOT")
+    if _portable_drive_root_policy_enabled():
+        volume = runtime_volume_root().resolve()
+        marker_path = volume / ".cortex-volume.json"
+        marker = _safe_json(marker_path)
+        if (not marker or marker.get("schema") != "cortex.volume.v1"
+                or not str(marker.get("volumeId") or "").strip()):
+            raise RuntimeError(
+                f"marked Cortex portable installation requires a valid volume identity at {marker_path}"
+            )
+        _require_portable_vault_volume_label(volume)
+        if override and Path(override).expanduser().resolve() != volume:
+            raise RuntimeError(
+                f"Cortex installation is bound to marked Vault volume {volume}; "
+                f"conflicting override {override} must be cleared, not used as a migration"
+            )
+        return volume
+
     if override:
         return Path(override).expanduser().resolve()
-
-    if _portable_drive_root_policy_enabled():
-        return runtime_volume_root().resolve()
-
     bootstrapped = _bootstrap_vault_root()
     if bootstrapped is not None:
         return bootstrapped
-
     policy = storage_policy(project_root)
     if os.name == "nt":
-        configured = str(policy.get("default_library_root_windows") or "D:\\CortexLibrary")
-        candidate = Path(configured).expanduser()
-        if _windows_drive_available(candidate):
-            return candidate.resolve()
+        configured = str(policy.get("default_library_root_windows") or "").strip()
+        if configured:
+            candidate = Path(configured).expanduser()
+            if _windows_drive_available(candidate):
+                return candidate.resolve()
         base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
         return (base / "Cortex" / "Vault").resolve()
-
     base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
     return (base / "cortex" / "vault").resolve()
-
 
 
 _DEPENDENCY_LOCKFILES = (

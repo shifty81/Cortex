@@ -23,21 +23,31 @@ class PortableVolumeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             volume = Path(td) / "portable-volume"
             volume.mkdir()
+            (volume / ".cortex-volume.json").write_text(
+                json.dumps({"schema": "cortex.volume.v1", "volumeId": "test-01"}), encoding="utf-8"
+            )
             stale = Path(td) / "missing-old-volume"
             with mock.patch.dict(os.environ, {"CORTEX_VAULT_ROOT": "", "PCC_VAULT_ROOT": ""}, clear=False), \
                  mock.patch.object(storage, "_portable_drive_root_policy_enabled", return_value=True), \
                  mock.patch.object(storage, "runtime_volume_root", return_value=volume), \
+                 mock.patch.object(storage, "_require_portable_vault_volume_label"), \
                  mock.patch.object(storage, "_bootstrap_vault_root", return_value=stale):
                 self.assertEqual(storage.resolve_vault_root(ROOT), volume.resolve())
 
-    def test_explicit_vault_override_remains_authoritative(self) -> None:
+    def test_marked_vault_override_cannot_select_other_drive(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             explicit = Path(td) / "explicit"
             portable = Path(td) / "portable"
+            portable.mkdir()
+            (portable / ".cortex-volume.json").write_text(
+                json.dumps({"schema": "cortex.volume.v1", "volumeId": "test-02"}), encoding="utf-8"
+            )
             with mock.patch.dict(os.environ, {"CORTEX_VAULT_ROOT": str(explicit), "PCC_VAULT_ROOT": ""}, clear=False), \
                  mock.patch.object(storage, "_portable_drive_root_policy_enabled", return_value=True), \
-                 mock.patch.object(storage, "runtime_volume_root", return_value=portable):
-                self.assertEqual(storage.resolve_vault_root(ROOT), explicit.resolve())
+                 mock.patch.object(storage, "runtime_volume_root", return_value=portable), \
+                 mock.patch.object(storage, "_require_portable_vault_volume_label"):
+                with self.assertRaisesRegex(RuntimeError, "conflicting override"):
+                    storage.resolve_vault_root(ROOT)
 
     def test_registry_id_is_stable_for_same_volume_relative_project(self) -> None:
         with mock.patch.object(surface, "portable_relative_to_runtime_volume", return_value="Source/Havenwild_Bevy"):
@@ -77,7 +87,10 @@ class PortableVolumeTests(unittest.TestCase):
             vault = Path(td) / "vault"
             root = Path(td) / "project"
             root.mkdir()
-            with mock.patch.dict(os.environ, {"CORTEX_VAULT_ROOT": str(vault)}, clear=False):
+            # This synthetic root exercises non-portable dependency forwarding;
+            # it must not impersonate the real marked Cortex installation.
+            with mock.patch.dict(os.environ, {"CORTEX_VAULT_ROOT": str(vault)}, clear=False), \
+                 mock.patch.object(storage, "_portable_drive_root_policy_enabled", return_value=False):
                 env = vault_storage.dependency_environment(root)
             self.assertEqual(Path(env["CORTEX_LIBRARY_ROOT"]), vault.resolve())
             self.assertEqual(Path(env["CORTEX_MODELS_ROOT"]), vault.resolve() / "Models")

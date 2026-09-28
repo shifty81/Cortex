@@ -156,17 +156,10 @@ def _resolve_model_host(cortex_root: Path) -> Path | None:
 
 
 def _portable_library_root(cortex_root: Path) -> Path:
-    for key in ("CORTEX_VAULT_ROOT", "CORTEX_LIBRARY_ROOT", "PCC_VAULT_ROOT", "CORTEX_PORTABLE_VOLUME_ROOT"):
-        value = str(os.environ.get(key) or "").strip()
-        if value:
-            path = Path(value)
-            if path.exists():
-                return _norm(path)
-    if os.name == "nt" and cortex_root.drive:
-        drive_root = Path(cortex_root.drive + "\\")
-        if drive_root.exists():
-            return _norm(drive_root)
-    return cortex_root.parent
+    # The GUI, Python bridge and PCC must not each invent a storage root.
+    # A stale machine override is an explicit error on a marked volume.
+    from PCCStoragePaths import resolve_vault_root
+    return resolve_vault_root(cortex_root)
 
 
 def _native_provider_port(base_url: str) -> int:

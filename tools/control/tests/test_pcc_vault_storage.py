@@ -25,10 +25,22 @@ class VaultStorageTests(unittest.TestCase):
         self.root = self.base / "project"
         self.vault = self.base / "vault"
         self.root.mkdir()
-        self.env = mock.patch.dict(os.environ, {"CORTEX_VAULT_ROOT": str(self.vault)}, clear=False)
+        # Isolate these synthetic non-portable Vault fixtures from the live
+        # marked installation and its process-level shared-toolchain settings.
+        self.env = mock.patch.dict(os.environ, {
+            "CORTEX_VAULT_ROOT": str(self.vault),
+            "PCC_VAULT_ROOT": str(self.vault),
+            "CORTEX_PYTHON_EXE": "",
+            "CARGO_TARGET_DIR": "",
+            "CORTEX_SHARED_ROOT": str(self.vault / "shared"),
+            "PCC_SHARED_ROOT": str(self.vault / "shared"),
+        }, clear=False)
         self.env.start()
+        self.policy = mock.patch.object(paths, "_portable_drive_root_policy_enabled", return_value=False)
+        self.policy.start()
 
     def tearDown(self) -> None:
+        self.policy.stop()
         self.env.stop()
         self.tmp.cleanup()
 

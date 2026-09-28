@@ -1,0 +1,45 @@
+{
+  "schema": "cortex.root_patch.v1",
+  "project": "Cortex",
+  "patchId": "CORTEX-W13B1B-REMAINING-WINDOWS-FIXTURE-ISOLATION-20260928",
+  "title": "W13B1B isolate three remaining Windows synthetic Vault fixtures",
+  "series": "W13",
+  "sequence": 4,
+  "applyMode": "transactional",
+  "dependsOn": [
+    "CORTEX-W13B1-MARKED-VAULT-AUTHORITY-20260928"
+  ],
+  "files": [
+    {
+      "path": "tools/control/tests/test_pcc_console_chat_runtime.py",
+      "sha256": "cccfc5a6a80ceddbe843450f89ab1293339306816c9260b577de8a529b80a603",
+      "bytes": 2882,
+      "mustExist": true,
+      "beforeSha256": "478b61c08fb83eeb74f9c89cc36c2fce905c8523fc9166cccbf6167c5cecb832",
+      "beforeBytes": 2569
+    },
+    {
+      "path": "tools/control/tests/test_pcc_portable_volume.py",
+      "sha256": "4e2853655aa123bf611842c9a563a86527bd6afd63028aefaf1c3b247055fae9",
+      "bytes": 11234,
+      "mustExist": true,
+      "beforeSha256": "b3c723bb7e0f529a21a133bbc3eece422cbcc6a3aa1f6fe3470fb932fe2c3811",
+      "beforeBytes": 10973
+    },
+    {
+      "path": "tools/control/tests/test_pcc_vault_intake_audit.py",
+      "sha256": "4ca09061f98c9c8631c57cb8a5c404ca74642be8d04b8320e41ceb3b99370a1c",
+      "bytes": 4552,
+      "mustExist": true,
+      "beforeSha256": "18e76cb2363920f297126ccbc3f1d89ca5e6e528a88ec9a95fe7f7bb214c6f7f",
+      "beforeBytes": 4342
+    },
+    {
+      "path": "docs/patch/CORTEX_W13B1B_REMAINING_WINDOWS_FIXTURES.md",
+      "sha256": "0dd376f797906bcf188aeaa44070e05511050ea1acab52a6906eb503ce1e24c7",
+      "bytes": 2187,
+      "mustExist": false
+    }
+  ],
+  "remove": []
+}

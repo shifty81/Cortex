@@ -58,6 +58,26 @@ function Test-PortableDriveRootPolicy {
 
 function Resolve-CortexVaultRoot {
     param([string]$ExplicitRoot)
+    # Portable Cortex has one marked physical authority. Previous D:/E: user
+    # settings may exist, but must never silently hijack this installation.
+    if ((Test-PortableDriveRootPolicy) -and (Test-Path -LiteralPath $VolumeMarker -PathType Leaf)) {
+        $marker = Get-Content -LiteralPath $VolumeMarker -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([string]$marker.schema -ne 'cortex.volume.v1' -or [string]::IsNullOrWhiteSpace([string]$marker.volumeId)) {
+            throw 'Invalid Cortex portable volume marker'
+        }
+        $identity = Get-Volume -FilePath $RepoRoot -ErrorAction Stop
+        if ([string]$identity.FileSystemLabel -ne 'Vault') {
+            throw ('Portable Cortex requires the marked Vault volume; detected label: ' + [string]$identity.FileSystemLabel)
+        }
+        foreach ($candidate in @($ExplicitRoot, $env:CORTEX_VAULT_ROOT, $env:PCC_VAULT_ROOT)) {
+            if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                if ([System.IO.Path]::GetFullPath($candidate).TrimEnd('\') -ine $RepoVolume.TrimEnd('\')) {
+                    throw ('Portable Cortex override conflicts with marked Vault volume: ' + $candidate)
+                }
+            }
+        }
+        return [System.IO.Path]::GetFullPath($RepoVolume)
+    }
     if (-not [string]::IsNullOrWhiteSpace($ExplicitRoot)) {
         return [System.IO.Path]::GetFullPath($ExplicitRoot)
     }

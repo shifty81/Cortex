@@ -13,6 +13,7 @@ if str(CONTROL) not in sys.path:
     sys.path.insert(0, str(CONTROL))
 
 import CortexPythonBridge as bridge  # noqa: E402
+import PCCStoragePaths as storage  # noqa: E402
 
 
 class PCCConsoleChatRuntimeTests(unittest.TestCase):
@@ -37,7 +38,10 @@ class PCCConsoleChatRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             vault = Path(td) / "vault"
             vault.mkdir()
-            with mock.patch.dict(os.environ, {"CORTEX_VAULT_ROOT": str(vault)}, clear=False):
+            # An isolated fixture uses the legacy non-portable override contract,
+            # never the marked physical Vault associated with this checkout.
+            with mock.patch.dict(os.environ, {"CORTEX_VAULT_ROOT": str(vault)}, clear=False), \
+                 mock.patch.object(storage, "_portable_drive_root_policy_enabled", return_value=False):
                 self.assertEqual(bridge._portable_library_root(ROOT), vault.resolve())
 
     def test_gui_passes_stable_owner_pid_to_bridge(self) -> None:

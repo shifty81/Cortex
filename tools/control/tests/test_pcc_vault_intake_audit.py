@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 TOOLS = Path(__file__).resolve().parents[1]
 import sys
@@ -16,7 +17,9 @@ from PCCVaultIntakeAudit import create_handoff, latest_summary, scan_intake, sta
 
 
 class VaultIntakeAuditTests(unittest.TestCase):
-    def test_scan_classifies_projects_assets_duplicates_and_needs_sorted(self) -> None:
+    @mock.patch("PCCStoragePaths._portable_drive_root_policy_enabled", return_value=False)
+    def test_scan_classifies_projects_assets_duplicates_and_needs_sorted(self, _policy: object) -> None:
+        # The synthetic C:/Temp fixture is not this machine's marked Vault.
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             vault = root / "Vault"
