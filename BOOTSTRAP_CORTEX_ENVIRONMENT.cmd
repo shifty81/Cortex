@@ -9,7 +9,11 @@ echo  Source : %ROOT%
 echo.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\Bootstrap-CortexEnvironment.ps1" -Mode Hydrate
 set "RC=%ERRORLEVEL%"
-if exist "%ROOT%.cortex\bootstrap-env.cmd" call "%ROOT%.cortex\bootstrap-env.cmd"
+if exist "%ROOT%..\.cortex-volume.json" (
+  if exist "%ROOT%..\.cortex\bootstrap-env.cmd" call "%ROOT%..\.cortex\bootstrap-env.cmd"
+) else (
+  if exist "%ROOT%.cortex\bootstrap-env.cmd" call "%ROOT%.cortex\bootstrap-env.cmd"
+)
 echo.
 if not "%RC%"=="0" (
   echo Cortex environment hydration FAILED with exit code %RC%.

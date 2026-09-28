@@ -480,7 +480,7 @@
       "program": "python",
       "args": [
         "tools/control/CortexPCC.py",
-        "storage-health",
+        "storage-status",
         "--root",
         "."
       ],

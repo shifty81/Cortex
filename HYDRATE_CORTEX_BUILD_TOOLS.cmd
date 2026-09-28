@@ -11,7 +11,11 @@ echo download and may request Windows elevation.
 echo.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\Bootstrap-CortexEnvironment.ps1" -Mode Full -IncludeBuildTools
 set "RC=%ERRORLEVEL%"
-if exist "%ROOT%.cortex\bootstrap-env.cmd" call "%ROOT%.cortex\bootstrap-env.cmd"
+if exist "%ROOT%..\.cortex-volume.json" (
+  if exist "%ROOT%..\.cortex\bootstrap-env.cmd" call "%ROOT%..\.cortex\bootstrap-env.cmd"
+) else (
+  if exist "%ROOT%.cortex\bootstrap-env.cmd" call "%ROOT%.cortex\bootstrap-env.cmd"
+)
 echo.
 if not "%RC%"=="0" (
   echo Build-tools hydration FAILED with exit code %RC%.

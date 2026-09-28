@@ -1436,7 +1436,7 @@ def build_parser() -> argparse.ArgumentParser:
         "launch-gui", "self-test", "doctor", "doctor-json",
         "root-hygiene", "root-hygiene-fix", "artifact-status",
         "artifact-prune", "artifact-prune-apply", "verify-latest-debug", "source-rollup", "universal-audit", "universal-plan", "forgepy-parity", "contract-migrate", "volume-status", "volume-init",
-        "format", "storage-status", "storage-prepare", "storage-reclaim-plan", "vault-mirror", "vault-mirror-all", "vault-verify", "vault-retention-plan", "vault-gc-plan", "git-identity", "git-identity-status",
+        "format", "storage-status", "storage-health", "storage-prepare", "storage-reclaim-plan", "storage-reclaim-plan-all", "vault-mirror", "vault-mirror-all", "vault-verify", "vault-retention-plan", "vault-gc-plan", "git-identity", "git-identity-status",
     ])
     parser.add_argument("--root")
     parser.add_argument("--scan-root", action="append", default=[], help="Additional roots for read-only PCC inventory")
@@ -1460,6 +1460,42 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--git-email", default="")
     parser.add_argument("--git-scope", default="local", choices=["local", "global"])
     return parser
+
+
+# Single command-provider contract. Resolve the selected symbol lazily so one
+# stale entry cannot crash every other storage operation. Full Gate validates all.
+STORAGE_COMMAND_TARGETS = {
+    "storage-status": "storage_health",
+    "storage-health": "storage_health",  # legacy PCC contract alias
+    "storage-prepare": "ensure_layout",
+    "storage-reclaim-plan": "reclaim_plan",
+    "storage-reclaim-plan-all": "reclaim_all_registered_plan",
+    "vault-mirror": "mirror_project",
+    "vault-mirror-all": "mirror_all_registered",
+    "vault-verify": "verify_latest_mirror",
+    "vault-retention-plan": "snapshot_retention_plan",
+    "vault-gc-plan": "cas_gc_plan",
+}
+
+
+def validate_storage_command_contract() -> None:
+    import PCCVaultStorage as storage
+    choices = set(build_parser()._actions[1].choices)
+    missing = sorted(set(STORAGE_COMMAND_TARGETS) - choices)
+    if missing:
+        raise PCCError(f"Storage commands absent from parser: {missing}")
+    for command, symbol in STORAGE_COMMAND_TARGETS.items():
+        if not callable(getattr(storage, symbol, None)):
+            raise PCCError(f"Storage command {command} has no callable provider {symbol}")
+
+
+def dispatch_storage_command(command: str, root: Path) -> dict[str, Any] | None:
+    import PCCVaultStorage as storage
+    symbol = STORAGE_COMMAND_TARGETS[command]
+    target = getattr(storage, symbol, None)
+    if not callable(target):
+        raise PCCError(f"Storage command {command} has no callable provider {symbol}")
+    return target(root)
 
 
 def _dispatch_main(argv: Sequence[str] | None = None) -> int:
@@ -1518,21 +1554,10 @@ def _dispatch_main(argv: Sequence[str] | None = None) -> int:
         if not args.git_name or not args.git_email:
             raise PCCError("git-identity requires --git-name and --git-email")
         return git_authority.set_git_identity(root, args.git_name, args.git_email, args.git_scope)
-    if cmd in {"storage-status", "storage-prepare", "storage-reclaim-plan", "vault-mirror", "vault-mirror-all", "vault-verify", "vault-retention-plan", "vault-gc-plan"}:
-        import PCCVaultStorage as storage
-        fn = {
-            "storage-status": storage.storage_health,
-            "storage-prepare": storage.ensure_layout,
-            "storage-reclaim-plan": storage.reclaim_plan,
-            "vault-mirror": storage.mirror_project,
-            "vault-mirror-all": storage.mirror_project,
-            "vault-verify": storage.verify_latest_mirror,
-            "vault-retention-plan": storage.retention_plan,
-            "vault-gc-plan": storage.cas_gc_plan,
-        }[cmd]
-        result = fn(root)
-        print(json.dumps(result if result is not None else {"status":"PASS"}, indent=2, default=str))
-        return 0
+    if cmd in STORAGE_COMMAND_TARGETS:
+        result = dispatch_storage_command(cmd, root)
+        print(json.dumps(result if result is not None else {"status": "PASS"}, indent=2, default=str))
+        return 2 if isinstance(result, dict) and result.get("status") == "FAIL" else 0
     pcc = CortexPCC(root, remote=args.remote, quiet=(args.quiet or cmd == "status-json"))
     if cmd == "interactive": return pcc.interactive()
     if cmd == "status": return pcc.status()

@@ -4068,10 +4068,6 @@ fn local_git_host_root(arguments: &Value, workspace_root: &Path) -> PathBuf {
         }
     }
     if cfg!(windows) {
-        let d_drive = PathBuf::from(r"D:\");
-        if d_drive.is_dir() {
-            return d_drive.join("Cortex").join("Git");
-        }
         if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
             return PathBuf::from(local_app_data).join("Cortex").join("Git");
         }
@@ -4087,12 +4083,6 @@ fn local_git_host_root(arguments: &Value, workspace_root: &Path) -> PathBuf {
 }
 
 fn configured_local_git_root(storage_root: &Path) -> PathBuf {
-    #[cfg(windows)]
-    {
-        if storage_root.components().count() <= 2 {
-            return storage_root.join("Cortex").join("Git");
-        }
-    }
     storage_root.join("Git")
 }
 

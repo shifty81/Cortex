@@ -22,6 +22,7 @@ fn run() -> Result<(), String> {
         .any(|argument| argument.to_string_lossy() == "--certify");
     let workspace = resolve_startup_workspace(&args)?;
 
+    bind_portable_desktop_environment(&workspace)?;
     let controller = DesktopController::open(&workspace)?;
 
     if certify {
@@ -90,6 +91,113 @@ fn resolve_startup_workspace(args: &[OsString]) -> Result<PathBuf, String> {
     }
 
     canonical_directory(std::env::current_dir().map_err(|error| error.to_string())?)
+}
+
+/// Direct exe launching must inherit the same marked-volume authority as PCC.
+/// Only Cortex's own checkout on that volume may bind portable storage here;
+/// user-supplied environment overrides are never overwritten.
+fn portable_desktop_environment(
+    workspace: &Path,
+) -> Result<Option<Vec<(&'static str, PathBuf)>>, String> {
+    let Some(volume) = workspace.parent() else {
+        return Ok(None);
+    };
+    let marker_path = volume.join(".cortex-volume.json");
+    if !marker_path.is_file() {
+        return Ok(None);
+    }
+    let marker: serde_json::Value =
+        serde_json::from_slice(&fs::read(&marker_path).map_err(|error| error.to_string())?)
+            .map_err(|error| {
+                format!(
+                    "invalid portable volume marker {}: {error}",
+                    marker_path.display()
+                )
+            })?;
+    if marker.get("schema").and_then(serde_json::Value::as_str) != Some("cortex.volume.v1")
+        || marker
+            .get("volumeId")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|value| value.trim().is_empty())
+    {
+        return Err(format!(
+            "invalid Cortex portable volume marker: {}",
+            marker_path.display()
+        ));
+    }
+    let layout_path = workspace
+        .join("config")
+        .join("cortex")
+        .join("volume_layout.v2.json");
+    if !layout_path.is_file() {
+        return Ok(None);
+    }
+    let layout: serde_json::Value =
+        serde_json::from_slice(&fs::read(&layout_path).map_err(|error| error.to_string())?)
+            .map_err(|error| {
+                format!(
+                    "invalid portable volume layout {}: {error}",
+                    layout_path.display()
+                )
+            })?;
+    if layout.get("schema").and_then(serde_json::Value::as_str) != Some("cortex.volume_layout.v2") {
+        return Err(format!(
+            "invalid portable volume layout schema: {}",
+            layout_path.display()
+        ));
+    }
+    let authorities = layout
+        .get("authorities")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            format!(
+                "missing portable layout authorities: {}",
+                layout_path.display()
+            )
+        })?;
+    let authority = |key: &str| -> Result<PathBuf, String> {
+        use std::path::Component;
+        let value = authorities
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("missing portable layout authority: {key}"))?;
+        let relative = Path::new(value);
+        if relative.as_os_str().is_empty()
+            || !relative
+                .components()
+                .all(|part| matches!(part, Component::Normal(_)))
+        {
+            return Err(format!("unsafe portable layout authority: {key}"));
+        }
+        Ok(volume.join(relative))
+    };
+    if fs::canonicalize(authority("cortex")?).map_err(|error| error.to_string())? != workspace {
+        return Ok(None); // Another registered project on this volume is not Cortex's checkout.
+    }
+    Ok(Some(vec![
+        ("CORTEX_VAULT_ROOT", volume.to_path_buf()),
+        ("PCC_VAULT_ROOT", volume.to_path_buf()),
+        ("CORTEX_HOME", authority("state")?.join("home")),
+        ("CORTEX_RUNTIME_ROOT", workspace.to_path_buf()),
+        ("CORTEX_PORTABLE_VOLUME_ROOT", volume.to_path_buf()),
+        ("CORTEX_PROJECTS_ROOT", authority("projects")?),
+        ("CORTEX_MODELS_ROOT", authority("models")?),
+        ("CORTEX_LOCAL_GIT_ROOT", authority("git")?),
+    ]))
+}
+
+fn bind_portable_desktop_environment(workspace: &Path) -> Result<(), String> {
+    if let Some(values) = portable_desktop_environment(workspace)? {
+        for (name, value) in values {
+            if std::env::var_os(name).is_none_or(|existing| existing.is_empty()) {
+                std::env::set_var(name, value);
+            }
+        }
+        if std::env::var_os("CORTEX_STATE_MODE").is_none() {
+            std::env::set_var("CORTEX_STATE_MODE", "portable");
+        }
+    }
+    Ok(())
 }
 
 fn canonical_directory(path: PathBuf) -> Result<PathBuf, String> {

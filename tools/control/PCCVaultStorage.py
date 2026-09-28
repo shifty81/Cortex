@@ -116,7 +116,7 @@ def _migrate_legacy_project_namespaces(root: Path) -> None:
 
 def ensure_layout(root: Path) -> dict[str, str]:
     root = root.expanduser().resolve()
-    _migrate_legacy_project_namespaces(root)
+    # Provisioning cannot silently rename existing mirror/build namespaces.
     paths = dependency_paths(root)
     required = [
         resolve_vault_root(root),
@@ -151,9 +151,9 @@ def dependency_environment(root: Path) -> dict[str, str]:
         "CORTEX_PORTABLE_VOLUME_ROOT": str(vault),
         "CORTEX_HOME": str(vault / ".cortex" / "home"),
         "CORTEX_RUNTIME_ROOT": str(_runtime_root()),
-        "CORTEX_PROJECTS_ROOT": str(vault / "Source"),
+        "CORTEX_PROJECTS_ROOT": str(vault / "projects"),
         "CORTEX_MODELS_ROOT": str(vault / "Models"),
-        "CORTEX_LOCAL_GIT_ROOT": str(vault / "Cortex" / "Git"),
+        "CORTEX_LOCAL_GIT_ROOT": str(vault / "Git"),
         "CORTEX_STATE_MODE": "portable",
         "CARGO_HOME": str(paths["cargo_home"]),
         "RUSTUP_HOME": str(rustup_home),
@@ -827,17 +827,29 @@ def _extract_object_digests(value: Any, out: set[str]) -> None:
             _extract_object_digests(item, out)
 
 
+def _mirror_project_directories(vault: Path) -> list[Path]:
+    """Inspect real mirror metadata, never arbitrary managed project contents."""
+    directories: list[Path] = []
+    for base in (vault / "projects", vault / "Vault" / "ProjectMirrors"):
+        if not base.is_dir():
+            continue
+        for directory in base.iterdir():
+            if directory.is_dir() and not directory.is_symlink():
+                meta = _json_read(directory / "project.json")
+                snapshot = _json_read(directory / "snapshots" / "latest.json")
+                if (meta or {}).get("schema") == "pcc.vault_project.v1" or (snapshot or {}).get("schema") == MIRROR_SCHEMA:
+                    directories.append(directory)
+    return directories
+
+
 def _referenced_object_digests(vault: Path) -> set[str]:
     refs: set[str] = set()
-    projects = vault / "projects"
-    if not projects.is_dir():
-        return refs
-    # Read every retained project metadata JSON, not only known snapshot names.
-    # This makes GC conservative as new metadata surfaces are added later.
-    for path in projects.rglob("*.json"):
-        payload = _json_read(path)
-        if payload is not None:
-            _extract_object_digests(payload, refs)
+    # CAS sweep must preserve objects referenced by either generation of mirror.
+    for project_dir in _mirror_project_directories(vault):
+        for path in project_dir.rglob("*.json"):
+            payload = _json_read(path)
+            if payload is not None:
+                _extract_object_digests(payload, refs)
     return refs
 
 
@@ -1048,29 +1060,25 @@ def storage_health(root: Path) -> dict[str, Any]:
         if key in {"vault_root", "project_vault"}:
             continue
         shared[key] = {"path": str(path), **_dir_stats(path)}
-    projects = vault / "projects"
     project_count = 0
     snapshot_count = 0
     logical_latest_bytes = 0
     latest_object_digests: set[str] = set()
     stale_projects: list[dict[str, str]] = []
-    if projects.is_dir():
-        for project_dir in projects.iterdir():
-            if not project_dir.is_dir():
-                continue
-            project_meta = _json_read(project_dir / "project.json") if (project_dir / "project.json").is_file() else None
-            if project_meta:
-                project_count += 1
-                source_root = Path(str(project_meta.get("root") or ""))
-                if str(source_root) and not source_root.exists():
-                    stale_projects.append({"projectKey": project_dir.name, "root": str(source_root), "name": str(project_meta.get("name") or project_dir.name)})
-            snapshots = project_dir / "snapshots"
-            if snapshots.is_dir():
-                snapshot_count += len(list(snapshots.glob("snapshot-*.json")))
-            latest = _json_read(snapshots / "latest.json") if snapshots.is_dir() else None
-            if latest:
-                logical_latest_bytes += int(((latest.get("stats") or {}).get("mirroredBytes") or 0))
-                _extract_object_digests(latest, latest_object_digests)
+    for project_dir in _mirror_project_directories(vault):
+        project_meta = _json_read(project_dir / "project.json") if (project_dir / "project.json").is_file() else None
+        if project_meta:
+            project_count += 1
+            source_root = Path(str(project_meta.get("root") or ""))
+            if str(source_root) and not source_root.exists():
+                stale_projects.append({"projectKey": project_dir.name, "root": str(source_root), "name": str(project_meta.get("name") or project_dir.name)})
+        snapshots = project_dir / "snapshots"
+        if snapshots.is_dir():
+            snapshot_count += len(list(snapshots.glob("snapshot-*.json")))
+        latest = _json_read(snapshots / "latest.json") if snapshots.is_dir() else None
+        if latest:
+            logical_latest_bytes += int(((latest.get("stats") or {}).get("mirroredBytes") or 0))
+            _extract_object_digests(latest, latest_object_digests)
     latest_unique_bytes = 0
     objects = _cas_objects(vault)
     for digest in latest_object_digests:
@@ -1116,3 +1124,94 @@ def storage_health(root: Path) -> dict[str, Any]:
         "latestMirrorVerify": latest_verify,
         "warnings": warnings,
     }
+
+
+def _registered_project_roots(root: Path, *, registry_path: Path | None = None) -> tuple[list[Path], list[dict[str, str]]]:
+    """Read authoritative portable PCC registrations without creating a registry.
+
+    A portable relative record may be rebound only through the marked volume;
+    unrelated same-named folders or a stale previous drive letter are not used.
+    """
+    from PCCVolumeAuthority import resolve_volume_context
+    vault = resolve_vault_root(root)
+    mount: Path | None = None
+    try:
+        ctx = resolve_volume_context(root, create=False)
+        mount = ctx.mount_root
+        default_path = ctx.registry_root / "project_registry.json"
+    except (OSError, ValueError, RuntimeError):
+        default_path = vault / ".cortex" / "registry" / "project_registry.json"
+    source = registry_path or default_path
+    if not source.is_file():
+        return [], [{"reason": "registry_missing", "path": str(source)}]
+    data = json.loads(source.read_text(encoding="utf-8-sig"))
+    if not isinstance(data, dict) or not isinstance(data.get("projects"), list):
+        raise ValueError(f"Invalid registered project manifest: {source}")
+    accepted: list[Path] = []
+    skipped: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for entry in data["projects"]:
+        if not isinstance(entry, dict):
+            skipped.append({"reason": "invalid_entry", "path": ""})
+            continue
+        relative = str(entry.get("portableRelativeRoot") or "").replace("\\", "/").strip("/")
+        raw = str(entry.get("root") or "").strip()
+        if relative:
+            parts = relative.split("/")
+            if (mount is None or not parts or ":" in relative or
+                    any(part in ("", ".", "..") for part in parts)):
+                skipped.append({"reason": "invalid_or_unavailable_portable_root", "path": raw})
+                continue
+            candidate = mount.joinpath(*parts).resolve()
+            try:
+                candidate.relative_to(mount.resolve())
+            except ValueError:
+                skipped.append({"reason": "portable_path_escape", "path": relative})
+                continue
+        elif raw:
+            candidate = Path(raw).expanduser().resolve()
+        else:
+            skipped.append({"reason": "missing_path", "path": ""})
+            continue
+        if not candidate.is_dir() or candidate == vault.resolve() or candidate == (vault / ".cortex").resolve():
+            skipped.append({"reason": "missing_or_unsafe_project_root", "path": str(candidate)})
+            continue
+        identity = str(candidate).casefold()
+        if identity in seen:
+            skipped.append({"reason": "duplicate_root", "path": str(candidate)})
+            continue
+        seen.add(identity)
+        accepted.append(candidate)
+    return accepted, skipped
+
+
+def mirror_all_registered(root: Path) -> dict[str, Any]:
+    projects, skipped = _registered_project_roots(root)
+    results: list[dict[str, Any]] = []
+    failed = 0
+    for project in projects:
+        try:
+            snapshot = mirror_project(project, label="registered-project")
+            results.append({"projectRoot": str(project), "status": "PASS", "snapshotId": snapshot.get("snapshotId")})
+        except (OSError, ValueError, RuntimeError) as exc:
+            failed += 1
+            results.append({"projectRoot": str(project), "status": "FAIL", "error": str(exc)})
+    unavailable = any(item.get("reason") == "registry_missing" for item in skipped)
+    return {"schema": "pcc.vault_mirror_all.v1", "status": "FAIL" if (failed or unavailable) else "PASS",
+            "registered": len(projects), "mirrored": len(projects) - failed, "failed": failed,
+            "results": results, "skipped": skipped}
+
+
+def reclaim_all_registered_plan(root: Path) -> dict[str, Any]:
+    projects, skipped = _registered_project_roots(root)
+    results: list[dict[str, Any]] = []
+    failed = 0
+    for project in projects:
+        try:
+            results.append({"projectRoot": str(project), "plan": reclaim_plan(project), "status": "PASS"})
+        except (OSError, ValueError, RuntimeError) as exc:
+            failed += 1
+            results.append({"projectRoot": str(project), "error": str(exc), "status": "FAIL"})
+    unavailable = any(item.get("reason") == "registry_missing" for item in skipped)
+    return {"schema": "pcc.vault_registered_reclaim_plan.v1", "status": "FAIL" if (failed or unavailable) else "PASS",
+            "registered": len(projects), "results": results, "skipped": skipped, "applied": False}

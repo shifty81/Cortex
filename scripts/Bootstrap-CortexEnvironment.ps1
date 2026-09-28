@@ -12,7 +12,22 @@ $ErrorActionPreference = 'Stop'
 
 $RepoRoot = (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot)).Path
 $Artifacts = Join-Path $RepoRoot 'artifacts\bootstrap'
-$StateDir = Join-Path $RepoRoot '.cortex'
+# On marked portable volumes persistent environment state is owned by the
+# volume, never by the Cortex source checkout. Legacy source handoff is read
+# only by unmarked installations; this does not move or delete existing state.
+$RepoVolume = [System.IO.Path]::GetPathRoot($RepoRoot)
+$VolumeMarker = Join-Path $RepoVolume '.cortex-volume.json'
+$StateDir = if (Test-Path -LiteralPath $VolumeMarker -PathType Leaf) {
+    try {
+        $marker = Get-Content -LiteralPath $VolumeMarker -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([string]$marker.schema -ne 'cortex.volume.v1' -or [string]::IsNullOrWhiteSpace([string]$marker.volumeId)) {
+            throw 'Invalid Cortex volume marker'
+        }
+        Join-Path $RepoVolume '.cortex'
+    } catch {
+        throw ('Invalid marked Cortex volume; will not re-home bootstrap state: ' + $_.Exception.Message)
+    }
+} else { Join-Path $RepoRoot '.cortex' }
 New-Item -ItemType Directory -Path $Artifacts -Force | Out-Null
 New-Item -ItemType Directory -Path $StateDir -Force | Out-Null
 $HealthPath = Join-Path $Artifacts 'environment-health.json'
@@ -628,24 +643,20 @@ if ($SccacheOk) { $pathParts.Add((Split-Path -Parent $SccacheExe)) }
 $envLines = New-Object System.Collections.Generic.List[string]
 $envLines.Add('@echo off')
 $PortableHome = Join-Path $Vault '.cortex\home'
-$PortableProjects = Join-Path $Vault 'Source'
+$PortableProjects = Join-Path $Vault 'projects'
 $PortableModels = Join-Path $Vault 'Models'
 foreach ($portableDir in @($PortableHome, $PortableProjects, $PortableModels)) {
     New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
 }
 
-# One-time migration of legacy per-machine Cortex state into the portable drive.
-$LegacyHome = $null
+# Do not copy a machine-local library.json into portable state as a bootstrap
+# side effect: it may contain a different live D-drive authority. Preserve both.
 if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-    $LegacyHome = Join-Path $env:LOCALAPPDATA 'Cortex'
-}
-$PortableHomeHasState = Test-Path -LiteralPath (Join-Path $PortableHome 'registry') -PathType Container
-if (-not $PortableHomeHasState -and $LegacyHome -and (Test-Path -LiteralPath $LegacyHome -PathType Container)) {
-    try {
-        Write-BootstrapLog 'INFO' ('Migrating legacy Cortex state into portable home: ' + $PortableHome)
-        Copy-Item -Path (Join-Path $LegacyHome '*') -Destination $PortableHome -Recurse -Force -ErrorAction Stop
-    } catch {
-        Write-BootstrapLog 'WARN' ('Portable Cortex-home migration skipped/partial: ' + $_.Exception.Message)
+    $LegacyRegistry = Join-Path $env:LOCALAPPDATA 'Cortex\registry\library.json'
+    $PortableRegistry = Join-Path $PortableHome 'registry\library.json'
+    if (-not (Test-Path -LiteralPath $PortableRegistry -PathType Leaf) -and
+        (Test-Path -LiteralPath $LegacyRegistry -PathType Leaf)) {
+        Write-BootstrapLog 'WARN' ('Legacy local Cortex library record requires separate review/migration: ' + $LegacyRegistry)
     }
 }
 
@@ -655,6 +666,7 @@ $envLines.Add(('set "CORTEX_HOME={0}"' -f $PortableHome))
 $envLines.Add(('set "CORTEX_RUNTIME_ROOT={0}"' -f $RepoRoot))
 $envLines.Add(('set "CORTEX_PROJECTS_ROOT={0}"' -f $PortableProjects))
 $envLines.Add(('set "CORTEX_MODELS_ROOT={0}"' -f $PortableModels))
+$envLines.Add(('set "CORTEX_LOCAL_GIT_ROOT={0}"' -f (Join-Path $Vault 'Git')))
 $envLines.Add('set "CORTEX_STATE_MODE=portable"')
 $envLines.Add(('set "CARGO_HOME={0}"' -f $CargoHome))
 $envLines.Add(('set "RUSTUP_HOME={0}"' -f $RustupHome))

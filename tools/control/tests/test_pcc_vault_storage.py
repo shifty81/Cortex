@@ -399,11 +399,11 @@ class VaultStorageTests(unittest.TestCase):
     def test_dependency_environment_keeps_portable_state_models_and_projects_on_vault(self) -> None:
         env = storage.dependency_environment(self.root)
         self.assertEqual(env["CORTEX_HOME"], str(self.vault / ".cortex" / "home"))
-        self.assertEqual(env["CORTEX_PROJECTS_ROOT"], str(self.vault / "Source"))
+        self.assertEqual(env["CORTEX_PROJECTS_ROOT"], str(self.vault / "projects"))
         self.assertEqual(env["CORTEX_MODELS_ROOT"], str(self.vault / "Models"))
         self.assertEqual(env["CORTEX_STATE_MODE"], "portable")
 
-    def test_legacy_absolute_project_namespaces_migrate_without_duplication(self) -> None:
+    def test_legacy_absolute_project_namespaces_preserved_until_review(self) -> None:
         inside = self.vault / "Source" / "PortableProject"
         inside.mkdir(parents=True)
         old_key = paths.legacy_project_key(inside)
@@ -416,10 +416,9 @@ class VaultStorageTests(unittest.TestCase):
         (old_project / "sentinel.txt").write_text("project", encoding="utf-8")
         (old_target / "sentinel.txt").write_text("target", encoding="utf-8")
         storage.ensure_layout(inside)
-        self.assertFalse(old_project.exists())
-        self.assertFalse(old_target.exists())
-        self.assertEqual((self.vault / "projects" / new_key / "sentinel.txt").read_text(), "project")
-        self.assertEqual((self.vault / "shared" / "build" / "rust" / "targets" / new_key / "sentinel.txt").read_text(), "target")
+        self.assertTrue((old_project / "sentinel.txt").is_file())
+        self.assertTrue((old_target / "sentinel.txt").is_file())
+        self.assertEqual(paths.project_vault_dir(inside), self.vault / "Vault" / "ProjectMirrors" / new_key)
 
 
 if __name__ == "__main__":

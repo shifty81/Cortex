@@ -138,7 +138,7 @@ impl CortexLibraryLayout {
         let cortex_data = root.join(".cortex").join("data");
         Self {
             schema_version: 2,
-            projects: root.join("Source"),
+            projects: root.join("projects"),
             vault_assets: vault.join("Assets"),
             vault_logic: vault.join("Logic"),
             vault_templates: vault.join("Templates"),
@@ -4036,7 +4036,7 @@ mod tests {
     fn drive_root_layout_keeps_source_and_state_separate() {
         let base = temporary_root("portable-layout");
         let layout = CortexLibraryLayout::from_root(base.clone());
-        assert_eq!(layout.projects, base.join("Source"));
+        assert_eq!(layout.projects, base.join("projects"));
         assert_eq!(layout.models, base.join("Models"));
         assert_eq!(layout.cortex_data, base.join(".cortex").join("data"));
         assert_ne!(layout.cortex_data, base.join("Cortex"));

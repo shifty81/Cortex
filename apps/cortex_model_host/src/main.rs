@@ -85,13 +85,6 @@ fn configured_models_root() -> PathBuf {
         }
     }
 
-    #[cfg(windows)]
-    {
-        if Path::new(r"D:\").exists() {
-            return PathBuf::from(r"D:\Cortex\Models");
-        }
-    }
-
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
@@ -100,10 +93,6 @@ fn configured_models_root() -> PathBuf {
 }
 
 fn models_root_for(storage_root: &Path) -> PathBuf {
-    #[cfg(windows)]
-    if storage_root.components().count() <= 2 {
-        return storage_root.join("Cortex").join("Models");
-    }
-
+    // Models belongs to the portable volume layout, not the Cortex checkout.
     storage_root.join("Models")
 }
