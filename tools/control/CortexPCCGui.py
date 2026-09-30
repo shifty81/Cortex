@@ -3926,6 +3926,14 @@ class CortexPCCGui:
     def _submit_chat_input(self, _event: Any = None) -> str:
         if not hasattr(self, "chat_input"):
             return "break"
+        # Reject concurrent submissions BEFORE consuming the composer or adding
+        # a misleading YOU message. This also guards keyboard shortcuts while
+        # the Send button is disabled.
+        active_proc = getattr(self, "_active_proc", None)
+        if getattr(self, "_busy", False) or (active_proc is not None and active_proc.poll() is None):
+            if hasattr(self, "chat_worker_label"):
+                self.chat_worker_label.configure(text="Request still running • wait or Stop", fg=YELLOW)
+            return "break"
         prompt = self.chat_input.get("1.0", "end-1c").strip()
         if not prompt:
             return "break"
@@ -4018,6 +4026,8 @@ class CortexPCCGui:
         lines = raw.splitlines()
         answer_lines: list[str] = []
         for line in lines:
+            if line.startswith("[CortexRuntime]"):
+                continue
             if line.startswith("[CortexTiming]"):
                 self._append_log(line + "\n", "muted")
                 continue
@@ -4231,6 +4241,15 @@ class CortexPCCGui:
                 kind, payload = self._event_q.get_nowait()
                 if kind == "log":
                     line = str(payload)
+                    if line.startswith("[CortexRuntime]") and hasattr(self, "chat_worker_label"):
+                        # Expose safe live operational state next to PCC Chat as
+                        # well as in the existing independently scrolling console.
+                        if " FAIL " in line or " exit=" in line and " exit=0 " not in line:
+                            self.chat_worker_label.configure(text="Cortex worker failed • see Project Console", fg=RED)
+                        elif " END exit=0 " in line:
+                            self.chat_worker_label.configure(text="Cortex worker completed", fg=GREEN)
+                        elif "running;" in line or "awaiting controller response" in line:
+                            self.chat_worker_label.configure(text="Cortex worker running • see Project Console", fg=CYAN)
                     up = line.upper()
                     tag = "fail" if ("FAIL" in up or "ERROR" in up) else ("warn" if "WARN" in up else ("pass" if "PASS" in up or "GREEN" in up else ""))
                     self._append_stream_log(line, tag)

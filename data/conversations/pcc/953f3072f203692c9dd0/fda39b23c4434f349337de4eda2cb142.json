@@ -1,0 +1,24 @@
+{
+  "schema": "cortex.python_bridge.conversation.v2",
+  "workspace": "\\\\?\\G:\\Cortex",
+  "conversationId": "fda39b23c4434f349337de4eda2cb142",
+  "updatedUnixMs": 1790639850243,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Create a NEW standalone Rust console application named CortexHelloWorld.\n\nYou are Cortex, acting as the software developer. Perform this task using your actual project-creation, source-editing, build, and execution tools. Do not simply explain how to do it or provide code snippets in chat.\n\nRequirements:\n1. Create the project as a separate managed project, outside the Cortex source repository. Do not modify Cortex itself.\n2. Present the proposed project name and location and request approval before creating it.\n3. Once approved, create Cargo.toml and src/main.rs.\n4. Implement a program that prints exactly:\nHello, world!\n5. Register the new project in Cortex and establish its own independent workspace context.\n6. Run cargo fmt, cargo check, cargo test, and cargo build.\n7. Execute the actual compiled application.\n8. Capture and verify its stdout, stderr, and exit code.\n9. Save the project and execution evidence so the project can be reopened later.\n\nDo not claim success unless actual files exist, the build passes, and the executable produces the required output.\n\nWhen finished, report the project location, created files, verification results, executable path, actual captured output, and any failures or blockers."
+    },
+    {
+      "role": "assistant",
+      "content": "I can create this as a completely separate project without modifying `Cortex`.\n\nProject: `cortexhelloworld`\nLocation: `\\\\?\\G:\\projects\\cortexhelloworld`\nDetected language: rust\nDetected build system: cargo\nTarget platform: unspecified\nApplication type: console\nScaffold: Rust / Cargo\nRuntime proof required: no\n\nIf you reply **Yes**, Cortex will create and register that project, switch this conversation to it, hand the original request to the generic development workflow, require actual source changes, run the detected project quality gate, enforce the saved project-intent contract, and only report success when both technical verification and requested-intent acceptance are green.\n\nReply **No** to leave the filesystem unchanged."
+    },
+    {
+      "role": "user",
+      "content": "no"
+    },
+    {
+      "role": "assistant",
+      "content": "Okay — the separate project was not created."
+    }
+  ]
+}

@@ -724,6 +724,19 @@ class EvidenceBuilder:
                 dst = work / "patch-receipts" / src.name
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
+            # Bounded operational traces: enough to diagnose chat-worker dispatch
+            # without embedding the user's prompt or assistant response in a bundle.
+            agent_trace_dir = self.ctx.root / "artifacts" / "logs" / "cortex-agent"
+            if agent_trace_dir.is_dir() and not agent_trace_dir.is_symlink():
+                recent_agent_traces = sorted(
+                    (item for item in agent_trace_dir.glob("*.jsonl") if item.is_file() and not item.is_symlink()),
+                    key=lambda item: item.stat().st_mtime, reverse=True,
+                )[:8]
+                for src in recent_agent_traces:
+                    if src.stat().st_size <= 512 * 1024:
+                        dst = work / "cortex-agent-traces" / src.name
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src, dst)
             versions: dict[str, str | None] = {}
             for name, argv in {
                 "python": [sys.executable, "--version"],

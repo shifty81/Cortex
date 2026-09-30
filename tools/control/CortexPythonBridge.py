@@ -23,8 +23,9 @@ from pathlib import Path
 from typing import Any
 
 from PCCChatStore import load_messages, save_messages
+from CortexAgentRuntime import run_controller
 
-BRIDGE_VERSION = "CORTEX-PY-BRIDGE-1.1"
+BRIDGE_VERSION = "CORTEX-PY-BRIDGE-1.2"
 CHAT_HISTORY_LIMIT = 20
 CONTEXT_TEXT_LIMIT = 24000
 
@@ -44,6 +45,17 @@ def _candidate_runtime_paths(cortex_root: Path) -> list[Path]:
     if target_env:
         target = Path(target_env)
         candidates.extend([target / "debug" / "cortex.exe", target / "release" / "cortex.exe"])
+
+    # The PCC build authority writes to the portable, project-keyed shared
+    # Cargo target. Direct terminal sessions do not necessarily inherit
+    # CARGO_TARGET_DIR, so resolve that authoritative target explicitly before
+    # considering a potentially stale repository-local target directory.
+    try:
+        from PCCStoragePaths import dependency_paths
+        shared_target = dependency_paths(cortex_root)["cargo_target_dir"]
+        candidates.extend([shared_target / "debug" / "cortex.exe", shared_target / "release" / "cortex.exe"])
+    except Exception:
+        pass
 
     candidates.extend([
         cortex_root / "target" / "debug" / "cortex.exe",
@@ -531,21 +543,9 @@ def _run_worker(runtime: Path, cortex_root: Path, workspace: Path, conversation_
             if mode == "chat"
             else [str(runtime), "--workspace", str(workspace), mode, worker_prompt]
         )
-        result = subprocess.run(
-            argv,
-            cwd=str(workspace),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
+        result = run_controller(argv, cortex_root=cortex_root, workspace=workspace, prompt=prompt)
         if os.environ.get("CORTEX_BRIDGE_TRACE") == "1":
             print(f"[CortexTiming] worker_response_ms={int((time.monotonic() - started) * 1000)}", flush=True)
-        if result.stderr.strip():
-            print(result.stderr.rstrip(), flush=True)
-
         text = ""
         effective_workspace = workspace
         if result.returncode == 0:

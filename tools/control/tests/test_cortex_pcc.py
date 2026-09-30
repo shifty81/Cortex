@@ -695,7 +695,7 @@ class PCC60PassTests(TempRoot):
         self.assertIn('CortexPythonBridge.py', source)
         self.assertIn('environment_root=cortex_root', source)
         self.assertNotIn('"cargo", "run"', source)
-        self.assertIn('BRIDGE_VERSION = "CORTEX-PY-BRIDGE-1.1"', bridge)
+        self.assertIn('BRIDGE_VERSION = "CORTEX-PY-BRIDGE-1.2"', bridge)
         self.assertNotIn('cargo", "metadata', bridge)
         self.assertIn('Project operation is not available for', source)
         self.assertIn('/newchat', source)

@@ -34,7 +34,7 @@ class W13B2BPCCFailClosed(unittest.TestCase):
     def test_common_chat_worker_failure_never_uses_python_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as folder, \
              mock.patch.object(bridge, "_worker_request_text", return_value="request"), \
-             mock.patch.object(bridge.subprocess, "run", return_value=SimpleNamespace(returncode=7, stdout="controller error", stderr="")) as run, \
+             mock.patch.object(bridge, "run_controller", return_value=SimpleNamespace(returncode=7, stdout="controller error", stderr="")) as run, \
              mock.patch.object(bridge, "_python_model", side_effect=AssertionError("must not fall back")), \
              mock.patch.object(bridge, "save_messages", side_effect=AssertionError("must not save fake response")):
             root = Path(folder)
@@ -49,7 +49,7 @@ class W13B2BPCCFailClosed(unittest.TestCase):
     def test_invalid_pcc_chat_payload_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as folder, \
              mock.patch.object(bridge, "_worker_request_text", return_value="request"), \
-             mock.patch.object(bridge.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="not-json", stderr="")), \
+             mock.patch.object(bridge, "run_controller", return_value=SimpleNamespace(returncode=0, stdout="not-json", stderr="")), \
              mock.patch.object(bridge, "_python_model", side_effect=AssertionError("must not fall back")), \
              mock.patch.object(bridge, "save_messages", side_effect=AssertionError("must not save invalid result")):
             root = Path(folder)
@@ -61,7 +61,7 @@ class W13B2BPCCFailClosed(unittest.TestCase):
     def test_read_only_inspect_may_retain_nonmutating_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as folder, \
              mock.patch.object(bridge, "_worker_request_text", return_value="request"), \
-             mock.patch.object(bridge.subprocess, "run", return_value=SimpleNamespace(returncode=6, stdout="", stderr="worker missing")), \
+             mock.patch.object(bridge, "run_controller", return_value=SimpleNamespace(returncode=6, stdout="", stderr="worker missing")), \
              mock.patch.object(bridge, "_python_model", return_value=0) as fallback:
             root = Path(folder)
             with contextlib.redirect_stdout(io.StringIO()):
