@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 import CortexPythonBridge as bridge
+import CortexAgentEvidence as evidence
 
 
 def dispatch(bridge_script: Path, *, cortex_root: Path, workspace: Path,
@@ -73,7 +74,9 @@ def main(argv: list[str] | None = None, *, input_fn: Callable[[str], str] = inpu
         reporter(f"Worker    : {worker or 'NOT FOUND (coding blocked)'}")
         reporter(f"Provider  : {'HTTP healthy' if ready else 'offline / not confirmed'} ({bridge._provider_url()})")
         reporter(f"Trace     : {cortex_root / 'artifacts' / 'logs' / 'cortex-agent'}")
+        reporter(f"PCC cache conversation: {conversation_id}")
         reporter("Note: provider HTTP health does not prove model loading or tool execution.")
+        reporter("Note: PCC presentation IDs are not yet certified as Rust ConversationStore IDs.")
 
     def submit(prompt: str) -> int:
         nonlocal workspace
@@ -106,6 +109,10 @@ def main(argv: list[str] | None = None, *, input_fn: Callable[[str], str] = inpu
         if command in {"/help", "/?"}:
             reporter("/status   Show active workspace, worker and endpoint health")
             reporter("/logs     Show recent per-request operation trace filenames")
+            reporter("/operations       Show recorded worker-operation metadata")
+            reporter("/operation ID     Inspect one exact operation ID (metadata only)")
+            reporter("/conversations    List PCC presentation-cache conversation titles and IDs")
+            reporter("/history [ID]     Read an existing PCC presentation-cache conversation")
             reporter("/use PATH Switch to another existing workspace (read-only selection)")
             reporter("/exit     Close this terminal frontend")
             reporter("All other text, including Yes/No, goes to the Rust common controller.")
@@ -117,6 +124,41 @@ def main(argv: list[str] | None = None, *, input_fn: Callable[[str], str] = inpu
             directory = cortex_root / "artifacts" / "logs" / "cortex-agent"
             for log in sorted(directory.glob("*.jsonl"), key=lambda x: x.stat().st_mtime, reverse=True)[:5] if directory.is_dir() else []:
                 reporter(str(log))
+            continue
+        if command == "/operations":
+            rows = evidence.recent_operations(cortex_root)
+            if not rows:
+                reporter("[INFO] No valid bounded Cortex worker traces found.")
+            for row in rows:
+                reporter(evidence.summarize_operation(row))
+            continue
+        if command.startswith("/operation "):
+            operation_id = prompt[len("/operation "):].strip()
+            row = evidence.find_operation(cortex_root, operation_id)
+            if not row:
+                reporter("[BLOCKED] Operation ID not found or invalid; expected exact 32-character hex ID.")
+            else:
+                for key, value in row.items():
+                    reporter(f"{key}: {value}")
+            continue
+        if command == "/conversations":
+            rows = evidence.conversations(cortex_root, workspace)
+            if not rows:
+                reporter("[INFO] No PCC presentation-cache conversations found for this workspace.")
+            for row in rows:
+                reporter(f"{row['conversationId']} | {row['title']} | messages={row['messageCount']}")
+            reporter("[INFO] Read-only cache listing; backend conversation identity convergence remains pending.")
+            continue
+        if command == "/history" or command.startswith("/history "):
+            requested = prompt[len("/history"):].strip() or conversation_id
+            record = evidence.history(cortex_root, workspace, requested)
+            if record is None:
+                reporter("[BLOCKED] No existing PCC presentation conversation with that exact ID.")
+            else:
+                reporter(f"PCC presentation history: {record['conversationId']} (read-only)")
+                for message in record.get("messages", []):
+                    reporter(f"[{str(message['role']).upper()}] {message['content']}")
+                reporter("[INFO] This does not claim a Rust operation or approval was resumed.")
             continue
         if command.startswith("/use "):
             proposed = Path(prompt[5:].strip().strip('"')).expanduser().resolve()

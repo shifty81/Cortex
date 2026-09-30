@@ -1,0 +1,48 @@
+{
+  "schema": "cortex.capability_preservation.v1",
+  "purpose": "Guard existing CLI and PCC entry points during additive, shared-controller consolidation",
+  "scope": "source-level API/entry-point retention; not functional parity certification",
+  "checks": [
+    {
+      "path": "crates/cortex_cli/src/lib.rs",
+      "contains": ["fn pcc_chat_command(", "\"pcc-chat\"", "\"chat\"", "\"inspect\"", "\"plan\"", "\"apply\"", "\"repair\""]
+    },
+    {
+      "path": "crates/cortex_desktop_core/src/lib.rs",
+      "contains": ["infer_project_intent", "open_embedded", "send_chat"]
+    },
+    {
+      "path": "tools/control/CortexPCC.py",
+      "definitions": ["full", "patch_apply", "create_source_rollup", "run_universal_python_regressions", "main"]
+    },
+    {
+      "path": "tools/control/CortexPCCGui.py",
+      "definitions": ["_submit_chat_input", "_start_cortex_cli", "_stop_active", "_drain_events", "_activate_project"]
+    },
+    {
+      "path": "tools/control/CortexPCCConsole.py",
+      "definitions": ["main", "main_menu", "build_menu", "git_menu"]
+    },
+    {
+      "path": "tools/control/CortexPythonBridge.py",
+      "definitions": ["_run_worker", "_resolve_runtime", "main"]
+    },
+    {
+      "path": "tools/control/CortexAgentCLI.py",
+      "definitions": ["dispatch", "main"],
+      "contains": ["/operations", "/conversations", "/history"]
+    },
+    {
+      "path": "tools/control/CortexAgentRuntime.py",
+      "definitions": ["run_controller", "WorkerResult"]
+    },
+    {
+      "path": "tools/control/CortexAgentEvidence.py",
+      "definitions": ["recent_operations", "find_operation", "conversations", "history"]
+    },
+    {
+      "path": "tools/control/CortexCapabilityGuard.py",
+      "definitions": ["audit", "main"]
+    }
+  ]
+}
