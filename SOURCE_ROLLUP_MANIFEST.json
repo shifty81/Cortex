@@ -1,8 +1,49 @@
 {
-  "createdUtc": "2026-09-30T18:12:20.235211+00:00",
+  "createdUtc": "2026-09-30T19:20:15.457420+00:00",
   "disclaimer": "Source snapshot excludes generated/operational/binary and sensitive paths listed above. Review ZIP before sharing; embedded source content may contain secrets.",
-  "exclusions": [],
-  "fileCount": 603,
+  "exclusions": [
+    {
+      "path": ".cortex",
+      "reason": "sensitive-or-reserved-name"
+    },
+    {
+      "path": ".git",
+      "reason": "sensitive-or-reserved-name"
+    },
+    {
+      "path": ".project_control",
+      "reason": "sensitive-or-reserved-name"
+    },
+    {
+      "path": "artifacts",
+      "reason": "generated-or-operational-directory"
+    },
+    {
+      "path": "logs",
+      "reason": "generated-or-operational-directory"
+    },
+    {
+      "path": "SOURCE_ROLLUP_MANIFEST.json",
+      "reason": "sensitive-or-reserved-name"
+    },
+    {
+      "path": "target",
+      "reason": "generated-or-operational-directory"
+    },
+    {
+      "path": "tools/control/__pycache__",
+      "reason": "generated-or-operational-directory"
+    },
+    {
+      "path": "tools/control/tests/__pycache__",
+      "reason": "generated-or-operational-directory"
+    },
+    {
+      "path": "tools/pcc/src/pcc/__pycache__",
+      "reason": "generated-or-operational-directory"
+    }
+  ],
+  "fileCount": 608,
   "files": [
     {
       "bytes": 163,
@@ -35,9 +76,9 @@
       "sha256": "dc6f194ca71ad4c952b65daaf79ec63fd856c002b72aa00fa9f77fb4bc2179bf"
     },
     {
-      "bytes": 22165,
+      "bytes": 22702,
       "path": "apps/cortex_desktop/src/main.rs",
-      "sha256": "44d4477d87a2cdfb18f6587e505ce89b63e601c2f4abcfee9d0561dd1f7bc6cf"
+      "sha256": "d9bce55015c24f90bd39bdf37f340450a8d6c0edd536104f8cc6510dc97ac469"
     },
     {
       "bytes": 281,
@@ -655,9 +696,9 @@
       "sha256": "88eba889be018b95c6c4af777cfb390d031b8f3ab2fb61af6abe9d2463d9cbf4"
     },
     {
-      "bytes": 157797,
+      "bytes": 157951,
       "path": "crates/cortex_cli/src/lib.rs",
-      "sha256": "78af948a27730441e4e4781a13c6a75e0dda16143373ead8543f319992eadf57"
+      "sha256": "2dbd2c410b7f24b7c88debac11a096713e8d01cce9c098fddba6f4fefb246a37"
     },
     {
       "bytes": 392,
@@ -955,9 +996,9 @@
       "sha256": "d8cc91c0d5ad4eff0ae74d7e6147a30372987b1fc06cc7e35eb12b7f7843fd82"
     },
     {
-      "bytes": 154036,
+      "bytes": 154973,
       "path": "crates/cortex_registry/src/lib.rs",
-      "sha256": "57bc172f92ace6f63efa50f045385b62c0f09c847d2782110e26df90cb45eba4"
+      "sha256": "eb1d7774cf3929d5fb1ff6e15f1d6324d81f71801b7439d32eee53d1be8c3950"
     },
     {
       "bytes": 329,
@@ -1098,6 +1139,31 @@
       "bytes": 36944,
       "path": "crates/cortex_workspace/src/lib.rs",
       "sha256": "cebd418f0291a670a28552a9e66633450961396936ac024fd9928800438056ff"
+    },
+    {
+      "bytes": 849,
+      "path": "data/conversations/pcc/5de33819b9afba81426e/8758dad0442f4bdab17d385662e04bd5.json",
+      "sha256": "f2e341cac28c941e7123f75352c890592e2023937f852f1e4ed70e63528b2cf1"
+    },
+    {
+      "bytes": 2504,
+      "path": "data/conversations/pcc/953f3072f203692c9dd0/fda39b23c4434f349337de4eda2cb142.json",
+      "sha256": "fb80693333cc9bee12f77d13baaf38aba61d567d503646da3a24abc340cc7f8c"
+    },
+    {
+      "bytes": 840,
+      "path": "data/conversations/pcc/a7478d06815f63b3ad78/fcaef8a2bb664a3fb670f077d84c755e.json",
+      "sha256": "d4628eed669ba3851a92d028dd096133a85da5c8db7f99c8cd9d4f3b95dc67c5"
+    },
+    {
+      "bytes": 2190,
+      "path": "data/conversations/pcc/b135b86d62bf7e89ce13/3e5b4ac635384c79b404890b86052b00.json",
+      "sha256": "a66ad63a155586ccb724939ac58a4d93f11bf1ef208a1e8ff171b5ab7c54d2fc"
+    },
+    {
+      "bytes": 2712,
+      "path": "data/conversations/pcc/b135b86d62bf7e89ce13/afcaf00e67884a79a354891663947234.json",
+      "sha256": "6f51a9dbd23540dade77e3e62ec5985ed644f3a9e4f265b0585cb76d8a04d429"
     },
     {
       "bytes": 4872,
@@ -3021,16 +3087,77 @@
     }
   ],
   "git": {
-    "branch": null,
-    "changedPathCount": null,
-    "head": null,
-    "repository": false
+    "branch": "main",
+    "changedPathCount": 0,
+    "head": "3655dbb41df4afa40c24be5d71366a69a3dee8e3",
+    "repository": true
   },
   "patchLineage": {
-    "appliedReceipts": [],
+    "appliedReceipts": [
+      {
+        "patchId": "CORTEX-TODAY-R10-DESKTOP-VAULT-DASHBOARD-LAYOUT-AFTER-R9-20260924",
+        "receiptSha256": "6e6136ccac9c8b0d3524cee6c4468e7b05f1ee59b89fc0d4f7a73de13eb9ecf8",
+        "status": "applied"
+      },
+      {
+        "patchId": "CORTEX-TODAY-R12-NATIVE-PCC-SHARED-DEPS-SCROLL-AFTER-R10-20260924",
+        "receiptSha256": "e685c9f0808dc35f0faa3b41e2fa86236e5dc51090431df18d883a64c4d3ff86",
+        "status": "applied"
+      },
+      {
+        "patchId": "CORTEX-TODAY-R13-PROCESS-ENV-RUNTIME-ROUTING-AFTER-R12-20260924",
+        "receiptSha256": "8e5bd9ca18542b40a6df41666b49c9ca962e4cbe0a910ef1994ff0d2ead19e64",
+        "status": "applied"
+      },
+      {
+        "patchId": "CORTEX-TODAY-R14-OPERATION-HOST-VAULT-PYTHON-AFTER-R13-20260924",
+        "receiptSha256": "0a0cded663aca78529771552ebeba603d4ca699a1e406b91168e65e41637bd98",
+        "status": "applied"
+      },
+      {
+        "patchId": "CORTEX-TODAY-R15-MACHINE-VAULT-CLIPPY-REPAIR-AFTER-R14-20260924",
+        "receiptSha256": "fbd865a0d2d9db68e350510a3686f55e0033c1ff711495f46f7ce7d961989d9f",
+        "status": "applied"
+      },
+      {
+        "patchId": "CORTEX-TODAY-R16-GIT-IDENTITY-ONBOARDING-AFTER-R15-20260924",
+        "receiptSha256": "5186ed663e766816169f03fdebfbc0e317dcfeb9169bda969f1cfbbe77d1519b",
+        "status": "applied"
+      },
+      {
+        "patchId": "CORTEX-TODAY-R17D-EXACT-SNAPSHOT-PORTABLE-GITHUB-MODEL-PREFLIGHT-20260924",
+        "receiptSha256": "88e42273b4391b3d82323bcef53e1ec16a9aff3cf41ae7c7ee41ab2d8bbdc4bf",
+        "status": "applied"
+      },
+      {
+        "patchId": "CORTEX-W13B1-MARKED-VAULT-AUTHORITY-20260928",
+        "receiptSha256": "88277de5ae7cc23a92d1bb033a0d97d9bea8f7f189082448d84f902f6f1e5a2c",
+        "status": "applied"
+      },
+      {
+        "patchId": "CORTEX-W13B2A-PCC-ONLY-APPLICATION-CONSOLIDATION-20260928",
+        "receiptSha256": "4cfbe5d7c21f4a9dad6ab4720f498862d44463214e390583015f095447b69bdf",
+        "status": "applied"
+      },
+      {
+        "patchId": "CORTEX-W13B2B-PCC-CHAT-FAIL-CLOSED-20260928",
+        "receiptSha256": "e99c547b723cacd6a6057702c791e98a85955bf7f3c68d8ec295313d84617ec5",
+        "status": "applied"
+      },
+      {
+        "patchId": "CORTEX-W13B2C1-TERMINAL-AGENT-OBSERVABILITY-20260929",
+        "receiptSha256": "df3287f43a394a86e06d40b13e1798221d2faedf4e7a1c2ad1fb47ed805aeb60",
+        "status": "applied"
+      },
+      {
+        "patchId": "CORTEX-W13B2C1W-WINDOWS-TEST-FIXTURE-CORRECTION-20260929",
+        "receiptSha256": "670f12e582e8db982323b118b5eba3e37e8b5d72ffba4c8a377777e6983c223f",
+        "status": "applied"
+      }
+    ],
     "pendingTransports": []
   },
-  "rootBasename": "Cortex_Current_Full_Source_Stage",
+  "rootBasename": "Cortex",
   "schema": "cortex.source_rollup.v1",
-  "sourceBytes": 4891500
+  "sourceBytes": 4902223
 }
