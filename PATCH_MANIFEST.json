@@ -1,48 +1,69 @@
 {
   "schema": "cortex.root_patch.v1",
   "project": "Cortex",
-  "patchId": "CORTEX-W13B2B-PCC-CHAT-FAIL-CLOSED-20260928",
-  "title": "W13B2B require real common-controller responses for PCC coding and approval workflows",
+  "patchId": "CORTEX-W13B2C1P-INTERFACE-PRESERVATION-EVIDENCE-20260929",
+  "title": "W13B2C1P verified source-state reconciliation: identical bytes, genuine PCC transaction receipt",
   "series": "W13",
-  "sequence": 6,
+  "sequence": 8,
   "applyMode": "transactional",
   "dependsOn": [
-    "CORTEX-W13B2A-PCC-ONLY-APPLICATION-CONSOLIDATION-20260928"
+    "CORTEX-W13B2C1-TERMINAL-AGENT-OBSERVABILITY-20260929"
   ],
   "files": [
     {
-      "path": "tools/control/CortexPythonBridge.py",
-      "sha256": "424e866ddacfcf31cc9c4cefaf655b6a37e6500eddcbcc0c6b672a6db8f936f4",
-      "bytes": 29871,
+      "path": "tools/control/CortexAgentCLI.py",
+      "sha256": "8a23282c591c846c9e7f941933a5e597a11171b6cf98e6bc47b50c57ae728978",
+      "bytes": 8815,
       "mustExist": true,
-      "beforeSha256": "a95cec75b96947954ce63f0114a545197d9c1c550773770bb7c2ad2129b22255"
+      "beforeSha256": "8a23282c591c846c9e7f941933a5e597a11171b6cf98e6bc47b50c57ae728978",
+      "beforeBytes": 8815
     },
     {
-      "path": "tools/control/CortexPCCGui.py",
-      "sha256": "7133a57b6361ab3eb4e215c252b555f87b8e8195c5f124a298a8a7a72a6cc412",
-      "bytes": 240829,
+      "path": "tools/control/CortexAgentEvidence.py",
+      "sha256": "bb7ef38b9203f0fe41d71f662f6d51d28685341ab1454c215c977183ad03cbdf",
+      "bytes": 4876,
       "mustExist": true,
-      "beforeSha256": "96bb98b9eeef8dc7ed5e15c657111c56b29f78b3ea4333ea1ac195325a7035c2"
+      "beforeSha256": "bb7ef38b9203f0fe41d71f662f6d51d28685341ab1454c215c977183ad03cbdf",
+      "beforeBytes": 4876
     },
     {
-      "path": "tools/control/tests/test_cortex_pcc.py",
-      "sha256": "72700a2c1a7a238736f8619d1064c323f394105f1df1500207caed7cbf2268a0",
-      "bytes": 38180,
+      "path": "tools/control/CortexCapabilityGuard.py",
+      "sha256": "883fd6740182fc86bedb0848b7fa5ceb8b978b64b0da770a75731eb77440b3d1",
+      "bytes": 3256,
       "mustExist": true,
-      "beforeSha256": "b481b0132d76befd8aa62e535d89143e0a4b2b3e4b2a5a03f1b47dd89ed31604"
+      "beforeSha256": "883fd6740182fc86bedb0848b7fa5ceb8b978b64b0da770a75731eb77440b3d1",
+      "beforeBytes": 3256
     },
     {
-      "path": "tools/control/tests/test_w13b2b_pcc_chat_fail_closed.py",
-      "sha256": "54c4af53e6bba6a40e0f445ccd191b6ef4ad206c756eee1f80966acab0b4044e",
-      "bytes": 5433,
-      "mustExist": false
+      "path": "tools/control/tests/test_w13b2c1p_preservation_evidence.py",
+      "sha256": "faad1ff64a63a834802d2ce399ccbd985171a0c692330009edbbaf7719ce1391",
+      "bytes": 6101,
+      "mustExist": true,
+      "beforeSha256": "faad1ff64a63a834802d2ce399ccbd985171a0c692330009edbbaf7719ce1391",
+      "beforeBytes": 6101
     },
     {
-      "path": "docs/patch/CORTEX_W13B2B_PCC_CHAT_FAIL_CLOSED.md",
-      "sha256": "36a1c4f6959d7e1a4b90e6bc1ae1434b261738c79f9e40c771e15d33de8ea1cb",
-      "bytes": 1915,
-      "mustExist": false
+      "path": "config/cortex/capability-preservation.v1.json",
+      "sha256": "7c86f9ac3349a1dda35628262cf89a22ec05f3fa56c59ca61ac978f385625ac7",
+      "bytes": 1758,
+      "mustExist": true,
+      "beforeSha256": "7c86f9ac3349a1dda35628262cf89a22ec05f3fa56c59ca61ac978f385625ac7",
+      "beforeBytes": 1758
+    },
+    {
+      "path": "docs/patch/CORTEX_W13B2C1P_INTERFACE_PRESERVATION.md",
+      "sha256": "4d873dc4d215214c1bdbe5da5fc177d0a75744c5a07b88d573a649749fe7e527",
+      "bytes": 2049,
+      "mustExist": true,
+      "beforeSha256": "4d873dc4d215214c1bdbe5da5fc177d0a75744c5a07b88d573a649749fe7e527",
+      "beforeBytes": 2049
     }
   ],
-  "remove": []
+  "remove": [],
+  "sourceReconciliation": {
+    "originalPatchId": "CORTEX-W13B2C1P-INTERFACE-PRESERVATION-EVIDENCE-20260929",
+    "originalTransportSha256": "42da87d8dd0575949262d6259ff9559ae3886295cd4badfa4f4f9f3e4a569dcc",
+    "intent": "Record the already-certified W13B2C1P source state through the normal transactional Cortex patch authority without changing functional bytes.",
+    "historicalClaim": "This transport does not claim the original W13B2C1P ZIP was previously applied. It only certifies that the current source already equals the original C1P payload and creates the missing applied receipt through a real PCC transaction."
+  }
 }
