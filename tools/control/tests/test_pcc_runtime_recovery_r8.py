@@ -62,7 +62,7 @@ class RuntimeRecoveryR8Tests(unittest.TestCase):
         shared = (CONTROL / "PCCSharedEnvironment.py").read_text(encoding="utf-8")
         host = (CONTROL / "PCCOperationHost.py").read_text(encoding="utf-8")
         self.assertIn("tempfile.mkstemp", shared)
-        self.assertIn('BROKER_VERSION = "PCC-TOOLCHAIN-BROKER-0.4"', shared)
+        self.assertIn('BROKER_VERSION = "PCC-TOOLCHAIN-BROKER-0.5"', shared)
         self.assertIn('VERSION = "PCC-OPERATION-HOST-0.4"', host)
         self.assertIn("MSVC activation error", host)
 

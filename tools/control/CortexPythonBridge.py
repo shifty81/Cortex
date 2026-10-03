@@ -631,31 +631,107 @@ def main() -> int:
         return 2
 
     started = time.monotonic()
+    runtime = _resolve_runtime(cortex_root)
+
+    # Natural PCC chat is routed by the common Rust controller. Do not start a
+    # model host before the controller has classified the request.
+    if runtime is not None and args.mode == "chat":
+        if os.environ.get("CORTEX_BRIDGE_TRACE") == "1":
+            print(
+                "[CortexTiming] worker=prebuilt mode=chat provider=lazy-until-required",
+                flush=True,
+            )
+        print(
+            f"[Cortex] {BRIDGE_VERSION} | worker={runtime} | provider=lazy-until-required",
+            flush=True,
+        )
+        return _run_worker(
+            runtime,
+            cortex_root,
+            workspace,
+            args.conversation_id,
+            args.mode,
+            args.prompt,
+        )
+
+    # Actionable chat without the Rust authority must fail before provider startup.
+    if runtime is None and args.mode == "chat" and _chat_requires_worker(args.prompt):
+        print(
+            f"[BLOCKED] Common Cortex worker is unavailable; {args.mode} request may require "
+            "project, source, execution or approval authority.",
+            flush=True,
+        )
+        print(
+            "[INFO] No provider-only completion was generated. No project was created, "
+            "changed, built or launched.",
+            flush=True,
+        )
+        print(
+            "[NEXT] Use PCC's Build Cortex Worker action, verify the selected cortex.exe, "
+            "then retry in the same conversation.",
+            flush=True,
+        )
+        return 3
+
+    if runtime is None and args.mode in {"apply", "repair"}:
+        print(f"[BLOCKED] Cortex {args.mode} requires the transactional Cortex worker.", flush=True)
+        print(
+            "[INFO] No prebuilt cortex.exe was found. No mutating fallback was attempted.",
+            flush=True,
+        )
+        print("[NEXT] Run PCC command: cortex-worker-build", flush=True)
+        return 3
+
+    # Explicit Inspect/Plan/Apply/Repair retain their current provider preflight
+    # during convergence pass 1.
     base_url = _provider_url()
     if not _ensure_provider_ready(cortex_root, base_url, int(args.owner_pid or os.getppid())):
         return 2
     provider_ms = int((time.monotonic() - started) * 1000)
 
-    runtime = _resolve_runtime(cortex_root)
     if os.environ.get("CORTEX_BRIDGE_TRACE") == "1":
-        print(f"[CortexTiming] provider_ready_ms={provider_ms} worker={'prebuilt' if runtime else 'unavailable'} mode={args.mode}", flush=True)
+        print(
+            f"[CortexTiming] provider_ready_ms={provider_ms} "
+            f"worker={'prebuilt' if runtime else 'unavailable'} mode={args.mode}",
+            flush=True,
+        )
     if runtime is not None:
         print(f"[Cortex] {BRIDGE_VERSION} | worker={runtime}", flush=True)
-        return _run_worker(runtime, cortex_root, workspace, args.conversation_id, args.mode, args.prompt)
+        return _run_worker(
+            runtime,
+            cortex_root,
+            workspace,
+            args.conversation_id,
+            args.mode,
+            args.prompt,
+        )
 
-    if args.mode == "chat" and _chat_requires_worker(args.prompt):
-        print(f"[BLOCKED] Common Cortex worker is unavailable; {args.mode} request may require project, source, execution or approval authority.", flush=True)
-        print("[INFO] No provider-only completion was generated. No project was created, changed, built or launched.", flush=True)
-        print("[NEXT] Use PCC's Build Cortex Worker action, verify the selected cortex.exe, then retry in the same conversation.", flush=True)
-        return 3
     if args.mode in {"chat", "inspect", "plan"}:
-        print(f"[Cortex] {BRIDGE_VERSION} | worker=unavailable | using explicitly non-mutating Python provider fallback", flush=True)
-        return _python_model(cortex_root, workspace, args.conversation_id, args.mode, args.prompt)
+        print(
+            f"[Cortex] {BRIDGE_VERSION} | worker=unavailable | "
+            "using explicitly non-mutating Python provider fallback",
+            flush=True,
+        )
+        return _python_model(
+            cortex_root,
+            workspace,
+            args.conversation_id,
+            args.mode,
+            args.prompt,
+        )
 
     print(f"[BLOCKED] Cortex {args.mode} requires the transactional Cortex worker.", flush=True)
-    print("[INFO] No prebuilt cortex.exe was found. Chat, inspect, and plan remain available through Python.", flush=True)
+    print(
+        "[INFO] No prebuilt cortex.exe was found. Chat, inspect, and plan remain "
+        "available through Python.",
+        flush=True,
+    )
     print("[NEXT] Run PCC command: cortex-worker-build", flush=True)
-    print("[INFO] Worker provisioning is explicit; chat will never compile Cortex merely to answer a prompt.", flush=True)
+    print(
+        "[INFO] Worker provisioning is explicit; chat will never compile Cortex merely "
+        "to answer a prompt.",
+        flush=True,
+    )
     return 3
 
 

@@ -2923,12 +2923,32 @@ fn pcc_chat_command(workspace: &Workspace, args: &[String]) -> Result<(), String
         return Err("usage: cortex pcc-chat <prompt> [--json|--jsonl]".into());
     }
 
-    // PCC is the primary Cortex application shell. Reuse the existing common
-    // developer controller, but do not claim Desktop-style runtime ownership.
-    // This path preserves natural-language project creation, approval, coding,
-    // verification, project switching and durable conversation state.
+    let started = Instant::now();
+    eprintln!(
+        "[CortexStage] stage=pcc_chat.start elapsed_ms=0 workspace={}",
+        workspace.root().display()
+    );
+
+    eprintln!(
+        "[CortexStage] stage=controller.open.start elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
     let mut controller = DesktopController::open_embedded(workspace.root())?;
+    eprintln!(
+        "[CortexStage] stage=controller.open.done elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+
+    eprintln!(
+        "[CortexStage] stage=request.route.start elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
     controller.send_chat(&prompt)?;
+    eprintln!(
+        "[CortexStage] stage=request.route.done elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+
     let conversation_id = controller.active_conversation_id();
     let workspace_root = controller.workspace().root().to_path_buf();
     let text = controller
@@ -2963,6 +2983,10 @@ fn pcc_chat_command(workspace: &Workspace, args: &[String]) -> Result<(), String
         ),
         OutputMode::Jsonl => emit_event(OutputMode::Jsonl, "pcc_chat_finished", payload),
     }
+    eprintln!(
+        "[CortexStage] stage=pcc_chat.done elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
     Ok(())
 }
 

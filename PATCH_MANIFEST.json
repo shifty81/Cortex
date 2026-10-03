@@ -1,69 +1,53 @@
 {
   "schema": "cortex.root_patch.v1",
   "project": "Cortex",
-  "patchId": "CORTEX-W13B2C1P-INTERFACE-PRESERVATION-EVIDENCE-20260929",
-  "title": "W13B2C1P verified source-state reconciliation: identical bytes, genuine PCC transaction receipt",
+  "patchId": "CORTEX-W13B2C2A-RUNTIME-EVIDENCE-FOUNDATION-20260930",
+  "title": "W13B2C2A unified runtime intent and short-lived execution evidence",
   "series": "W13",
-  "sequence": 8,
+  "sequence": 9,
   "applyMode": "transactional",
   "dependsOn": [
-    "CORTEX-W13B2C1-TERMINAL-AGENT-OBSERVABILITY-20260929"
+    "CORTEX-W13B2C1P-INTERFACE-PRESERVATION-EVIDENCE-20260929"
   ],
   "files": [
     {
-      "path": "tools/control/CortexAgentCLI.py",
-      "sha256": "8a23282c591c846c9e7f941933a5e597a11171b6cf98e6bc47b50c57ae728978",
-      "bytes": 8815,
+      "path": "crates/cortex_process/src/lib.rs",
+      "sha256": "91c57d3e5929024c962eafd828693b48b15461352ab31ba59405a21fc8567b19",
+      "bytes": 36200,
       "mustExist": true,
-      "beforeSha256": "8a23282c591c846c9e7f941933a5e597a11171b6cf98e6bc47b50c57ae728978",
-      "beforeBytes": 8815
+      "beforeSha256": "774c65d72d9c33ee76e611c67dac45b42ccc030719ea78b9998b6dae7df42fb8",
+      "beforeBytes": 30567
     },
     {
-      "path": "tools/control/CortexAgentEvidence.py",
-      "sha256": "bb7ef38b9203f0fe41d71f662f6d51d28685341ab1454c215c977183ad03cbdf",
-      "bytes": 4876,
+      "path": "crates/cortex_tools/src/lib.rs",
+      "sha256": "2edba4bacaa719a71c80380e46804a63038bcaef9eafe312181646a254d75618",
+      "bytes": 304278,
       "mustExist": true,
-      "beforeSha256": "bb7ef38b9203f0fe41d71f662f6d51d28685341ab1454c215c977183ad03cbdf",
-      "beforeBytes": 4876
+      "beforeSha256": "c46789399424d532e76a1f975f51fae91db2e66d2f341770a53c62f19302ead2",
+      "beforeBytes": 298936
     },
     {
-      "path": "tools/control/CortexCapabilityGuard.py",
-      "sha256": "883fd6740182fc86bedb0848b7fa5ceb8b978b64b0da770a75731eb77440b3d1",
-      "bytes": 3256,
+      "path": "crates/cortex_desktop_core/src/lib.rs",
+      "sha256": "25775aea754f97459daec5d55e6a01d784e788b001c377fc7be1ebecaea5e94c",
+      "bytes": 354673,
       "mustExist": true,
-      "beforeSha256": "883fd6740182fc86bedb0848b7fa5ceb8b978b64b0da770a75731eb77440b3d1",
-      "beforeBytes": 3256
+      "beforeSha256": "3b1ea3d65c650c2807ecac6533756006edd56710f2e4f9d0e1f03c06336b568d",
+      "beforeBytes": 345568
     },
     {
-      "path": "tools/control/tests/test_w13b2c1p_preservation_evidence.py",
-      "sha256": "faad1ff64a63a834802d2ce399ccbd985171a0c692330009edbbaf7719ce1391",
-      "bytes": 6101,
+      "path": "crates/cortex_development/src/lib.rs",
+      "sha256": "f027d2dc5c479f2f42ac3f61fe7bdb5a2f7f966e9e0894c86b83400a82156200",
+      "bytes": 43156,
       "mustExist": true,
-      "beforeSha256": "faad1ff64a63a834802d2ce399ccbd985171a0c692330009edbbaf7719ce1391",
-      "beforeBytes": 6101
+      "beforeSha256": "dc1631b898e2445ec7a809b3804cda4510617a8f3e18ac3f1e5e235ba4c0ccf1",
+      "beforeBytes": 42790
     },
     {
-      "path": "config/cortex/capability-preservation.v1.json",
-      "sha256": "7c86f9ac3349a1dda35628262cf89a22ec05f3fa56c59ca61ac978f385625ac7",
-      "bytes": 1758,
-      "mustExist": true,
-      "beforeSha256": "7c86f9ac3349a1dda35628262cf89a22ec05f3fa56c59ca61ac978f385625ac7",
-      "beforeBytes": 1758
-    },
-    {
-      "path": "docs/patch/CORTEX_W13B2C1P_INTERFACE_PRESERVATION.md",
-      "sha256": "4d873dc4d215214c1bdbe5da5fc177d0a75744c5a07b88d573a649749fe7e527",
-      "bytes": 2049,
-      "mustExist": true,
-      "beforeSha256": "4d873dc4d215214c1bdbe5da5fc177d0a75744c5a07b88d573a649749fe7e527",
-      "beforeBytes": 2049
+      "path": "docs/patch/CORTEX_W13B2C2A_RUNTIME_EVIDENCE_FOUNDATION.md",
+      "sha256": "0d7fc3804efb9fcae1a626dea6483af9362706d2e424a864b2ea15a339c636f1",
+      "bytes": 3170,
+      "mustExist": false
     }
   ],
-  "remove": [],
-  "sourceReconciliation": {
-    "originalPatchId": "CORTEX-W13B2C1P-INTERFACE-PRESERVATION-EVIDENCE-20260929",
-    "originalTransportSha256": "42da87d8dd0575949262d6259ff9559ae3886295cd4badfa4f4f9f3e4a569dcc",
-    "intent": "Record the already-certified W13B2C1P source state through the normal transactional Cortex patch authority without changing functional bytes.",
-    "historicalClaim": "This transport does not claim the original W13B2C1P ZIP was previously applied. It only certifies that the current source already equals the original C1P payload and creates the missing applied receipt through a real PCC transaction."
-  }
+  "remove": []
 }

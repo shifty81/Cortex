@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -51,6 +52,24 @@ class SelfHostingRecoveryTests(unittest.TestCase):
             self.assertIn("elapsedMs", report)
             self.assertIn("tools", report)
             self.assertEqual(env.get("PYTHONUNBUFFERED"), "1")
+
+    def test_windows_environment_overlay_replaces_path_case_insensitively(self):
+        if os.name != "nt":
+            self.skipTest("Windows environment semantics only")
+        env = {
+            "PATH": r"C:\\before",
+            "ComSpec": r"C:\\Windows\\System32\\cmd.exe",
+        }
+        shared._merge_environment_overlay(
+            env,
+            {
+                "Path": r"C:\\VS\\VC\\Tools\\bin;C:\\before",
+                "COMSPEC": r"C:\\Windows\\System32\\cmd.exe",
+            },
+        )
+        self.assertEqual(env["PATH"], r"C:\\VS\\VC\\Tools\\bin;C:\\before")
+        self.assertEqual(len([key for key in env if key.casefold() == "path"]), 1)
+        self.assertEqual(len([key for key in env if key.casefold() == "comspec"]), 1)
 
     def test_python_bridge_does_not_invoke_cargo_for_runtime_discovery(self):
         source = (TOOLS / "CortexPythonBridge.py").read_text(encoding="utf-8")

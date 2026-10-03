@@ -290,7 +290,11 @@ impl DesktopController {
         let workspace = registry.open_workspace(&record)?;
         let state_root = workspace.cortex_state_dir();
         let conversations = ConversationStore::open(&state_root, workspace.root())?;
-        archive_stale_runtime_certification_conversations(&conversations)?;
+        if owns_runtime_lifetime {
+            // Desktop startup may perform housekeeping. Embedded PCC/CLI turns
+            // must not rescan and rewrite every conversation before routing a request.
+            archive_stale_runtime_certification_conversations(&conversations)?;
+        }
         let service = ServiceRegistry::new(&state_root, workspace.root())?;
         let activity = ActivityStore::open(&state_root)?;
         let tasks = TaskStore::open(&state_root)?;
@@ -300,10 +304,16 @@ impl DesktopController {
             .as_ref()
             .map(|record| ModelHostRegistry::new(&record.root))
             .transpose()?;
-        let library_memory = library_root
-            .as_ref()
-            .map(|record| LibraryMemoryDatabase::open(&record.root))
-            .transpose()?;
+        let library_memory = if owns_runtime_lifetime {
+            library_root
+                .as_ref()
+                .map(|record| LibraryMemoryDatabase::open(&record.root))
+                .transpose()?
+        } else {
+            // Embedded PCC/CLI turns keep Vault memory lazy. Library operations
+            // already load the database on demand when they actually need it.
+            None
+        };
         let observability = ProjectObservability::open(workspace.root(), &state_root)
             .map_err(|error| format!("failed to open Cortex observability store: {error}"))?;
         let project_id = record.id.clone();
@@ -341,7 +351,11 @@ impl DesktopController {
             }
         }
         controller.sync_pending_state()?;
-        controller.refresh_overview()?;
+        if owns_runtime_lifetime {
+            // The full Desktop overview is presentation state. Rebuilding it for
+            // each headless PCC/CLI request repeats registry/context/conversation I/O.
+            controller.refresh_overview()?;
+        }
         Ok(controller)
     }
 
@@ -1571,10 +1585,29 @@ impl DesktopController {
             return Ok(());
         }
 
+        eprintln!("[CortexStage] stage=route.intent.start");
         if let Some(intent) = self.routed_developer_intent(prompt) {
+            eprintln!("[CortexStage] stage=route.intent.resolved intent={intent:?}");
+
+            if intent == DeveloperIntent::NewProject && !self.owns_runtime_lifetime {
+                // The Python terminal presentation ID is not yet the Rust ConversationStore ID.
+                // Do not inherit and rewrite an arbitrary/latest Desktop conversation for a
+                // headless NewProject proposal. Start a fresh authoritative Rust conversation;
+                // the persisted pending-project record keeps the approval turn bound to it.
+                eprintln!("[CortexStage] stage=route.new_project.conversation.start");
+                let conversation = self.conversations.create("New conversation")?;
+                self.active_conversation = Some(conversation.id.clone());
+                eprintln!(
+                    "[CortexStage] stage=route.new_project.conversation.done conversation_id={}",
+                    conversation.id
+                );
+            }
+
             self.run_developer_workflow(prompt, intent)?;
+            eprintln!("[CortexStage] stage=route.intent.done");
             return Ok(());
         }
+        eprintln!("[CortexStage] stage=route.intent.chat_fallback");
 
         let id = self.prepare_user_message(prompt)?;
         let trace = self.chat_trace(&id);
@@ -3316,43 +3349,25 @@ COMPILER REPAIR CAPSULE:
         })
     }
 
+    #[cfg(test)]
     fn m11u2_prompt_requests_runtime(prompt: &str) -> bool {
-        let lower = prompt.to_ascii_lowercase();
-        [
-            "launch",
-            "run the actual",
-            "open a working",
-            "native window",
-            "executable",
-            "runtime verification",
-        ]
-        .iter()
-        .any(|needle| lower.contains(needle))
+        prompt_runtime_request(prompt).required
     }
 
+    #[cfg(test)]
     fn m11u2_prompt_requests_window(prompt: &str) -> bool {
-        let lower = prompt.to_ascii_lowercase();
-        [
-            "window",
-            "windowed",
-            "desktop app",
-            "desktop application",
-            "gui",
-            "native app",
-        ]
-        .iter()
-        .any(|needle| lower.contains(needle))
+        prompt_runtime_request(prompt).require_window
     }
 
+    #[cfg(test)]
     fn m11u2_prompt_requests_title_change(prompt: &str) -> bool {
-        let lower = prompt.to_ascii_lowercase();
-        lower.contains("title")
-            && (lower.contains("update")
-                || lower.contains("updating")
-                || lower.contains("once per second"))
+        prompt_runtime_request(prompt).require_title_change
     }
 
-    fn m11u2_runtime_acceptance(client: &CortexClient, prompt: &str) -> Result<Value, String> {
+    fn m11u2_runtime_acceptance(
+        client: &CortexClient,
+        request: &RuntimeRequestIntent,
+    ) -> Result<Value, String> {
         let build = client.tool("build.project_build", json!({}))?;
         let build_success = build
             .get("success")
@@ -3365,18 +3380,28 @@ COMPILER REPAIR CAPSULE:
             ));
         }
 
-        let require_window = Self::m11u2_prompt_requests_window(prompt);
-        let require_title_change = Self::m11u2_prompt_requests_title_change(prompt);
-        let runtime = client.tool(
-            "runtime.verify_project",
-            json!({
-                "minimum_alive_ms": 2_000,
-                "keep_running": true,
-                "require_window": require_window,
-                "require_title_change": require_title_change,
-                "title_sample_interval_ms": 1_200
-            }),
-        )?;
+        let runtime = if request.require_window {
+            client.tool(
+                "runtime.verify_project",
+                json!({
+                    "mode": "long_running",
+                    "minimum_alive_ms": 2_000,
+                    "keep_running": true,
+                    "require_window": true,
+                    "require_title_change": request.require_title_change,
+                    "title_sample_interval_ms": 1_200
+                }),
+            )?
+        } else {
+            client.tool(
+                "runtime.verify_project",
+                json!({
+                    "mode": "completion",
+                    "timeout_ms": request.timeout_ms.max(100),
+                    "expected_stdout": request.expected_stdout.clone()
+                }),
+            )?
+        };
         if !runtime
             .get("success")
             .and_then(Value::as_bool)
@@ -3471,8 +3496,9 @@ COMPILER REPAIR CAPSULE:
                         compact_json(&intent_acceptance, 10_000)
                     ));
                 }
-                let runtime_acceptance = if Self::m11u2_prompt_requests_runtime(prompt) {
-                    Some(Self::m11u2_runtime_acceptance(&client, prompt)?)
+                let runtime_request = project_runtime_request(self.workspace.root(), prompt);
+                let runtime_acceptance = if runtime_request.required {
+                    Some(Self::m11u2_runtime_acceptance(&client, &runtime_request)?)
                 } else {
                     None
                 };
@@ -3658,8 +3684,9 @@ COMPILER REPAIR CAPSULE:
                         compact_json(&intent_acceptance, 10_000)
                     ));
                 }
-                let runtime_acceptance = if Self::m11u2_prompt_requests_runtime(prompt) {
-                    Some(Self::m11u2_runtime_acceptance(&client, prompt)?)
+                let runtime_request = project_runtime_request(self.workspace.root(), prompt);
+                let runtime_acceptance = if runtime_request.required {
+                    Some(Self::m11u2_runtime_acceptance(&client, &runtime_request)?)
                 } else {
                     None
                 };
@@ -3722,14 +3749,41 @@ COMPILER REPAIR CAPSULE:
     }
 
     fn prepare_user_message(&mut self, prompt: &str) -> Result<String, String> {
+        let started = Instant::now();
+        eprintln!("[CortexStage] stage=conversation.prepare.ensure.start");
         let id = self.ensure_conversation()?;
+        eprintln!(
+            "[CortexStage] stage=conversation.prepare.ensure.done elapsed_ms={}",
+            started.elapsed().as_millis()
+        );
+
+        eprintln!("[CortexStage] stage=conversation.prepare.load.start");
         let current = self.conversations.load(&id)?;
+        eprintln!(
+            "[CortexStage] stage=conversation.prepare.load.done elapsed_ms={} messages={}",
+            started.elapsed().as_millis(),
+            current.messages.len()
+        );
+
         if current.title == "New conversation" {
+            eprintln!("[CortexStage] stage=conversation.prepare.rename.start");
             self.conversations
                 .rename(&id, &conversation_title(prompt))?;
+            eprintln!(
+                "[CortexStage] stage=conversation.prepare.rename.done elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
         }
+
+        eprintln!("[CortexStage] stage=conversation.prepare.append_user.start");
         self.conversations
             .append(&id, ConversationRole::User, prompt.to_string())?;
+        eprintln!(
+            "[CortexStage] stage=conversation.prepare.append_user.done elapsed_ms={}",
+            started.elapsed().as_millis()
+        );
+
+        eprintln!("[CortexStage] stage=conversation.prepare.activity.start");
         self.activity.append(
             ActivityKind::Chat,
             "User message",
@@ -3737,6 +3791,10 @@ COMPILER REPAIR CAPSULE:
             None,
             Value::Null,
         )?;
+        eprintln!(
+            "[CortexStage] stage=conversation.prepare.activity.done elapsed_ms={}",
+            started.elapsed().as_millis()
+        );
         Ok(id)
     }
 
@@ -3775,13 +3833,21 @@ COMPILER REPAIR CAPSULE:
         conversation_id: &str,
         prompt: &str,
     ) -> Result<(), String> {
+        let started = Instant::now();
         let project_name = standalone_project_name(prompt);
         let intent = infer_project_intent(prompt);
+
+        eprintln!("[CortexStage] stage=new_project.target.start");
         let target = if let Ok(Some(layout)) = self.registry.library_layout() {
             available_project_target(&layout.projects, &project_name)?
         } else {
             available_sibling_project_target(self.workspace.root(), &project_name)?
         };
+        eprintln!(
+            "[CortexStage] stage=new_project.target.done elapsed_ms={} target={}",
+            started.elapsed().as_millis(),
+            target.display()
+        );
 
         let message = format!(
             "I can create this as a completely separate project without modifying `{}`.\n\n\
@@ -3809,8 +3875,14 @@ Reply **No** to leave the filesystem unchanged.",
             if intent.runtime_required { "yes" } else { "no" },
         );
 
+        eprintln!("[CortexStage] stage=new_project.proposal.append.start");
         self.conversations
             .append(conversation_id, ConversationRole::Assistant, message)?;
+        eprintln!(
+            "[CortexStage] stage=new_project.proposal.append.done elapsed_ms={}",
+            started.elapsed().as_millis()
+        );
+
         self.pending_project_creation = Some(PendingProjectCreation {
             conversation_id: conversation_id.to_string(),
             original_prompt: prompt.to_string(),
@@ -3818,7 +3890,13 @@ Reply **No** to leave the filesystem unchanged.",
             target,
             intent,
         });
+
+        eprintln!("[CortexStage] stage=new_project.pending.persist.start");
         self.persist_background_state()?;
+        eprintln!(
+            "[CortexStage] stage=new_project.pending.persist.done elapsed_ms={}",
+            started.elapsed().as_millis()
+        );
         self.runtime_status = "awaiting approval / create standalone project".into();
         Ok(())
     }
@@ -4093,8 +4171,22 @@ USER MESSAGE:\n{}",
         intent: DeveloperIntent,
     ) -> Result<(), String> {
         if intent == DeveloperIntent::NewProject {
+            let started = Instant::now();
+            eprintln!("[CortexStage] stage=new_project.prepare_user.start");
             let id = self.prepare_user_message(prompt)?;
+            eprintln!(
+                "[CortexStage] stage=new_project.prepare_user.done elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
+            eprintln!(
+                "[CortexStage] stage=new_project.offer.start elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
             self.offer_standalone_project_creation(&id, prompt)?;
+            eprintln!(
+                "[CortexStage] stage=new_project.offer.done elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
             return Ok(());
         }
 
@@ -5604,6 +5696,23 @@ struct ProjectIntentContract {
     expected_window: bool,
     #[serde(default)]
     runtime_required: bool,
+    #[serde(default)]
+    runtime_mode: String,
+    #[serde(default)]
+    runtime_timeout_ms: u64,
+    #[serde(default)]
+    runtime_expected_stdout: Option<String>,
+    #[serde(default)]
+    runtime_require_title_change: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RuntimeRequestIntent {
+    required: bool,
+    require_window: bool,
+    require_title_change: bool,
+    expected_stdout: Option<String>,
+    timeout_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -5672,7 +5781,13 @@ fn developer_intent(prompt: &str) -> Option<DeveloperIntent> {
         return None;
     }
 
-    let new_project_request = [
+    let project_creation_verb = [
+        "create", "make", "start", "build", "want", "can we", "could we",
+    ]
+    .iter()
+    .any(|term| lower.contains(term));
+
+    let explicit_new_project_phrase = [
         "separate project",
         "seperate project",
         "new project",
@@ -5682,12 +5797,28 @@ fn developer_intent(prompt: &str) -> Option<DeveloperIntent> {
         "start a project",
     ]
     .iter()
-    .any(|term| lower.contains(term))
-        && [
-            "create", "make", "start", "build", "want", "can we", "could we",
-        ]
-        .iter()
-        .any(|term| lower.contains(term));
+    .any(|term| lower.contains(term));
+
+    let words: Vec<&str> = lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+
+    let qualified_project = words.iter().enumerate().any(|(index, word)| {
+        matches!(*word, "project" | "projects")
+            && words[index.saturating_sub(5)..index]
+                .iter()
+                .copied()
+                .any(|candidate| {
+                    matches!(
+                        candidate,
+                        "new" | "separate" | "seperate" | "standalone" | "another"
+                    )
+                })
+    });
+
+    let new_project_request =
+        project_creation_verb && (explicit_new_project_phrase || qualified_project);
 
     if new_project_request {
         return Some(DeveloperIntent::NewProject);
@@ -6786,13 +6917,8 @@ fn infer_project_intent(prompt: &str) -> ProjectIntentContract {
         "working window",
     ]);
     let wants_console = lower.contains("console");
-    let runtime_required = prompt_requests_launch(prompt)
-        || contains_any(&[
-            "launch the app",
-            "launch it",
-            "run the actual",
-            "prove it runs",
-        ]);
+    let runtime_request = prompt_runtime_request(prompt);
+    let runtime_required = runtime_request.required;
 
     let (language, build_system, scaffold) = if wants_cpp || wants_cmake {
         (
@@ -6871,6 +6997,18 @@ fn infer_project_intent(prompt: &str) -> ProjectIntentContract {
         scaffold,
         expected_window: wants_gui,
         runtime_required,
+        runtime_mode: if runtime_required {
+            if runtime_request.require_window {
+                "long_running".to_string()
+            } else {
+                "completion".to_string()
+            }
+        } else {
+            String::new()
+        },
+        runtime_timeout_ms: runtime_request.timeout_ms,
+        runtime_expected_stdout: runtime_request.expected_stdout,
+        runtime_require_title_change: runtime_request.require_title_change,
     }
 }
 
@@ -6878,11 +7016,22 @@ fn normalized_project_intent(
     existing: &ProjectIntentContract,
     original_prompt: &str,
 ) -> ProjectIntentContract {
+    let inferred = infer_project_intent(original_prompt);
     if existing.scaffold.trim().is_empty() {
-        infer_project_intent(original_prompt)
-    } else {
-        existing.clone()
+        return inferred;
     }
+
+    let mut normalized = existing.clone();
+    normalized.runtime_required = inferred.runtime_required;
+    normalized.runtime_mode = inferred.runtime_mode;
+    normalized.runtime_timeout_ms = inferred.runtime_timeout_ms;
+    normalized.runtime_expected_stdout = inferred.runtime_expected_stdout;
+    normalized.runtime_require_title_change = inferred.runtime_require_title_change;
+    normalized.expected_window = inferred.expected_window;
+    if normalized.application_kind.trim().is_empty() {
+        normalized.application_kind = inferred.application_kind;
+    }
+    normalized
 }
 
 fn intent_value(value: &str) -> &str {
@@ -7735,20 +7884,143 @@ fn compact_json(value: &Value, max_chars: usize) -> String {
     result
 }
 
-fn prompt_requests_launch(prompt: &str) -> bool {
+fn prompt_expected_stdout(prompt: &str) -> Option<String> {
     let lower = prompt.to_ascii_lowercase();
-    [
-        "launch",
-        "run it",
-        "run the app",
-        "run the project",
-        "start it",
-        "start the app",
-        "open the app",
-        "open it",
+    for marker in [
+        "prints exactly:",
+        "print exactly:",
+        "stdout exactly:",
+        "stdout must be exactly:",
+        "output exactly:",
+        "output must be exactly:",
+    ] {
+        let Some(index) = lower.find(marker) else {
+            continue;
+        };
+        let rest = prompt.get(index + marker.len()..)?.trim_start();
+        let line = rest.lines().next().unwrap_or_default().trim();
+        let value = line
+            .trim_matches(|character| matches!(character, '`' | '"' | '\''))
+            .trim();
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+fn prompt_runtime_request(prompt: &str) -> RuntimeRequestIntent {
+    let lower = prompt.to_ascii_lowercase();
+    let negated = [
+        "do not run",
+        "don't run",
+        "do not execute",
+        "don't execute",
+        "without running",
+        "without executing",
+        "no runtime proof",
+        "no runtime verification",
     ]
     .iter()
-    .any(|term| lower.contains(term))
+    .any(|term| lower.contains(term));
+
+    let required = !negated
+        && [
+            "launch",
+            "run it",
+            "run the app",
+            "run the application",
+            "run the program",
+            "run the project",
+            "run the actual",
+            "execute the app",
+            "execute the application",
+            "execute the program",
+            "execute the actual",
+            "execute compiled",
+            "execute the compiled",
+            "start the app",
+            "start the application",
+            "open the app",
+            "open the application",
+            "runtime proof",
+            "runtime verification",
+            "capture stdout",
+            "capture stderr",
+            "exit code",
+            "actual captured output",
+            "prove it runs",
+        ]
+        .iter()
+        .any(|term| lower.contains(term));
+
+    let require_window = required
+        && [
+            "window",
+            "windowed",
+            "desktop app",
+            "desktop application",
+            "gui",
+            "native app",
+            "native window",
+            "working window",
+        ]
+        .iter()
+        .any(|term| lower.contains(term));
+    let require_title_change = require_window
+        && lower.contains("title")
+        && (lower.contains("update")
+            || lower.contains("updating")
+            || lower.contains("once per second"));
+
+    RuntimeRequestIntent {
+        required,
+        require_window,
+        require_title_change,
+        expected_stdout: if required {
+            prompt_expected_stdout(prompt)
+        } else {
+            None
+        },
+        timeout_ms: if required && !require_window {
+            10_000
+        } else {
+            0
+        },
+    }
+}
+
+fn project_runtime_request(root: &Path, prompt: &str) -> RuntimeRequestIntent {
+    let mut request = prompt_runtime_request(prompt);
+    let path = root.join(".cortex").join("project-intent.json");
+    let Ok(bytes) = fs::read(path) else {
+        return request;
+    };
+    let Ok(intent) = serde_json::from_slice::<ProjectIntentContract>(&bytes) else {
+        return request;
+    };
+    if !intent.runtime_required {
+        return request;
+    }
+
+    request.required = true;
+    request.require_window =
+        intent.expected_window || intent.runtime_mode.eq_ignore_ascii_case("long_running");
+    request.require_title_change =
+        request.require_title_change || intent.runtime_require_title_change;
+    if request.expected_stdout.is_none() {
+        request.expected_stdout = intent.runtime_expected_stdout;
+    }
+    if intent.runtime_timeout_ms > 0 {
+        request.timeout_ms = intent.runtime_timeout_ms;
+    } else if !request.require_window && request.timeout_ms == 0 {
+        request.timeout_ms = 10_000;
+    }
+    request
+}
+
+fn prompt_requests_launch(prompt: &str) -> bool {
+    prompt_runtime_request(prompt).required
 }
 
 fn direct_project_operation(prompt: &str) -> Option<ProjectOperation> {
@@ -8166,7 +8438,25 @@ fn verified_mutation_response_text(value: &Value) -> String {
         ));
     }
     if runtime_verified {
-        text.push_str("\n- runtime launch: verified");
+        text.push_str("\n- runtime execution: verified");
+        if let Some(runtime) = value.pointer("/runtime_acceptance/runtime") {
+            if let Some(exit_code) = runtime.get("exit_code").and_then(Value::as_i64) {
+                text.push_str(&format!(" (exit code {exit_code})"));
+            }
+            if let Some(stdout) = runtime.get("stdout").and_then(Value::as_str) {
+                let captured = stdout
+                    .strip_suffix("\r\n")
+                    .or_else(|| stdout.strip_suffix('\n'))
+                    .or_else(|| stdout.strip_suffix('\r'))
+                    .unwrap_or(stdout);
+                if !captured.is_empty() {
+                    let bounded = captured.chars().take(240).collect::<String>();
+                    text.push_str("\n- captured stdout: `");
+                    text.push_str(&bounded.replace('`', "\\`"));
+                    text.push('`');
+                }
+            }
+        }
     }
 
     if repair_attempts > 0 {
@@ -8349,6 +8639,71 @@ mod tests {
     use super::*;
 
     #[test]
+    fn runtime_request_unifies_console_execution_and_expected_stdout() {
+        let prompt = "Create a standalone Rust console app that prints exactly: Hello, world!\nBuild it, execute the actual compiled application, capture stdout/stderr and exit code.";
+        let request = prompt_runtime_request(prompt);
+        assert!(request.required);
+        assert!(!request.require_window);
+        assert_eq!(request.expected_stdout.as_deref(), Some("Hello, world!"));
+        assert!(infer_project_intent(prompt).runtime_required);
+        assert!(DesktopController::m11u2_prompt_requests_runtime(prompt));
+    }
+
+    #[test]
+    fn explicit_negative_runtime_request_suppresses_execution() {
+        let prompt = "Build the Rust executable, but do not execute it and do not run the app.";
+        let request = prompt_runtime_request(prompt);
+        assert!(!request.required);
+        assert!(!infer_project_intent(prompt).runtime_required);
+        assert!(!DesktopController::m11u2_prompt_requests_runtime(prompt));
+    }
+
+    #[test]
+    fn windowed_runtime_request_keeps_long_running_window_proof() {
+        let prompt = "Build and launch the desktop GUI in a native window and verify its title updates once per second.";
+        let request = prompt_runtime_request(prompt);
+        assert!(request.required);
+        assert!(request.require_window);
+        assert!(request.require_title_change);
+    }
+
+    #[test]
+    fn normalized_project_intent_refreshes_runtime_requirement_from_original_request() {
+        let stale = ProjectIntentContract {
+            scaffold: "rust_cargo".into(),
+            runtime_required: false,
+            ..Default::default()
+        };
+        let normalized = normalized_project_intent(
+            &stale,
+            "Create a Rust app, execute the actual compiled application, and capture stdout.",
+        );
+        assert!(normalized.runtime_required);
+    }
+
+    #[test]
+    fn persisted_project_runtime_request_survives_approval_and_continue_followups() {
+        let root = std::env::temp_dir().join(format!(
+            "cortex-runtime-intent-persist-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".cortex")).unwrap();
+        let intent = infer_project_intent(
+            "Create a Rust console app that prints exactly: Hello, world!\nExecute the actual compiled application and capture stdout/stderr and exit code.",
+        );
+        write_project_intent_contract(&root, &intent).unwrap();
+
+        let resumed = project_runtime_request(&root, "continue");
+        assert!(resumed.required);
+        assert!(!resumed.require_window);
+        assert_eq!(resumed.expected_stdout.as_deref(), Some("Hello, world!"));
+        assert_eq!(resumed.timeout_ms, 10_000);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn project_registration_requires_explicit_affirmative_exact_command() {
         assert!(is_library_registration_request("register AI"));
         assert!(is_library_registration_request(
@@ -8409,6 +8764,18 @@ mod tests {
             Some(DeveloperIntent::NewProject)
         );
         assert_eq!(
+            developer_intent(
+                "Create a new standalone Rust console project named CortexHelloWorld. It must print exactly: Hello, world! Build it, execute the actual compiled application, capture stdout and stderr and the exit code, and do not report success without runtime proof."
+            ),
+            Some(DeveloperIntent::NewProject),
+            "explicit new standalone project language must outrank generic create/build/code cues"
+        );
+        assert_eq!(
+            developer_intent("build this project with a new feature"),
+            Some(DeveloperIntent::Code),
+            "a qualifier after the existing project noun must not create a new project"
+        );
+        assert_eq!(
             standalone_project_name("create a separate project named hello3d"),
             "hello3d"
         );
@@ -8457,6 +8824,7 @@ mod tests {
             scaffold: "cpp_cmake_windows_gui".into(),
             expected_window: true,
             runtime_required: true,
+            ..Default::default()
         };
         write_project_intent_contract(&root, &intent).unwrap();
 
@@ -8487,6 +8855,7 @@ mod tests {
             scaffold: "cpp_cmake_windows_gui".into(),
             expected_window: true,
             runtime_required: true,
+            ..Default::default()
         };
         create_standalone_cpp_cmake(&root, "native_test", true).unwrap();
         write_project_intent_contract(&root, &intent).unwrap();
@@ -9035,6 +9404,14 @@ mod tests {
             "quality_verified": true,
             "compile_verified": true,
             "runtime_verified": true,
+            "runtime_acceptance": {
+                "runtime": {
+                    "mode": "completion",
+                    "exit_code": 0,
+                    "stdout": "Hello, world!\n",
+                    "stderr": ""
+                }
+            },
             "repair_attempts": 2
         });
         let rendered = verified_mutation_response_text(&value);
@@ -9045,7 +9422,8 @@ mod tests {
         assert!(rendered.contains("Verification"));
         assert!(rendered.contains("validate: passed"));
         assert!(rendered.contains("requested project intent: verified"));
-        assert!(rendered.contains("runtime launch: verified"));
+        assert!(rendered.contains("runtime execution: verified (exit code 0)"));
+        assert!(rendered.contains("captured stdout: `Hello, world!`"));
         assert!(!rendered.contains("Should I proceed"));
     }
 

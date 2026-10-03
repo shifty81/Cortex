@@ -24,7 +24,7 @@ class FailureEvidencePerformanceTests(unittest.TestCase):
         shared = (ROOT / "PCCSharedEnvironment.py").read_text(encoding="utf-8")
         gui = (ROOT / "CortexPCCGui.py").read_text(encoding="utf-8")
         self.assertIn('VERSION = "PCC-OPERATION-HOST-0.4"', host)
-        self.assertIn('BROKER_VERSION = "PCC-TOOLCHAIN-BROKER-0.4"', shared)
+        self.assertIn('BROKER_VERSION = "PCC-TOOLCHAIN-BROKER-0.5"', shared)
         self.assertIn('GUI_VERSION = "PCC-GUI-', gui)
 
 

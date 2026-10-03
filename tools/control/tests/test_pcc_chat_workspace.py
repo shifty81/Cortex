@@ -60,7 +60,10 @@ class ChatWorkspaceTests(unittest.TestCase):
         source = (CONTROL / "CortexPythonBridge.py").read_text(encoding="utf-8")
         self.assertIn("history = load_messages(cortex_root, workspace, conversation_id)", source)
         self.assertIn("save_messages(", source)
-        self.assertIn("_run_worker(runtime, cortex_root, workspace, args.conversation_id", source)
+        self.assertRegex(
+            source,
+            r"_run_worker\(\s*runtime,\s*cortex_root,\s*workspace,\s*args\.conversation_id",
+        )
 
 
 if __name__ == "__main__":

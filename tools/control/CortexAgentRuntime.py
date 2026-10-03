@@ -36,6 +36,41 @@ def _safe_duration(raw: str, *, default: float, minimum: float, maximum: float) 
         return default
 
 
+_PORTABLE_AUTHORITY_KEYS = (
+    "CORTEX_VAULT_ROOT",
+    "PCC_VAULT_ROOT",
+    "CORTEX_LIBRARY_ROOT",
+    "CORTEX_PORTABLE_VOLUME_ROOT",
+    "CORTEX_HOME",
+    "CORTEX_RUNTIME_ROOT",
+    "CORTEX_PROJECTS_ROOT",
+    "CORTEX_MODELS_ROOT",
+    "CORTEX_LOCAL_GIT_ROOT",
+    "CORTEX_STATE_MODE",
+)
+
+
+def _portable_authority_environment(cortex_root: Path) -> dict[str, str]:
+    # Return only portable authority variables. Do not inject CARGO_TARGET_DIR:
+    # the worker may switch to another managed project during this request.
+    from PCCVaultStorage import dependency_environment
+
+    resolved = dependency_environment(cortex_root)
+    merged = os.environ.copy()
+    missing: list[str] = []
+    for key in _PORTABLE_AUTHORITY_KEYS:
+        value = str(resolved.get(key) or "").strip()
+        if not value:
+            missing.append(key)
+            continue
+        merged[key] = value
+    if missing:
+        raise RuntimeError(
+            "portable Cortex authority environment is incomplete: " + ", ".join(missing)
+        )
+    return merged
+
+
 @dataclass(frozen=True)
 class WorkerResult:
     returncode: int
@@ -85,9 +120,26 @@ def run_controller(
               promptBytes=len(prompt.encode("utf-8")), timeoutSeconds=deadline_seconds)
         reporter(f"[CortexRuntime] operation={operation_id} START log={log_path}")
         try:
+            worker_env = _portable_authority_environment(cortex_root)
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            event(
+                "environment_failed",
+                errorType=type(exc).__name__,
+                exitCode=126,
+                elapsedSeconds=round(elapsed, 3),
+            )
+            reporter(
+                f"[CortexRuntime] FAIL portable worker environment could not be resolved: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return WorkerResult(126, "", str(exc), operation_id, log_path, elapsed)
+
+        try:
             proc = subprocess.Popen(
                 argv, cwd=str(workspace), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, encoding="utf-8", errors="replace", bufsize=1,
+                env=worker_env,
                 creationflags=(getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0),
             )
         except OSError as exc:

@@ -711,7 +711,7 @@ class PCC60PassTests(TempRoot):
             self.assertIn(token, storage_source)
         self.assertIn("environment_root: Path | None = None", surface_source)
         self.assertIn("apply_shared_toolchain_environment(os.environ.copy(), root=effective_root)", surface_source)
-        self.assertIn('BROKER_VERSION = "PCC-TOOLCHAIN-BROKER-0.4"', shared_source)
+        self.assertIn('BROKER_VERSION = "PCC-TOOLCHAIN-BROKER-0.5"', shared_source)
         self.assertIn("resolve_toolchain_environment", host_source)
         self.assertIn("Provider PID", host_source)
 

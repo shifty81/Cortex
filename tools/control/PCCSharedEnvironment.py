@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
-BROKER_VERSION = "PCC-TOOLCHAIN-BROKER-0.4"
+BROKER_VERSION = "PCC-TOOLCHAIN-BROKER-0.5"
 DEFAULT_PROBE_TIMEOUT = 20.0
 
 
@@ -106,6 +106,31 @@ def _which(name: str, env: Mapping[str, str]) -> str | None:
     return shutil.which(name, path=str(env.get("PATH") or ""))
 
 
+def _merge_environment_overlay(
+    env: dict[str, str],
+    overlay: Mapping[str, str],
+) -> dict[str, str]:
+    # Windows environment keys are case-insensitive even though Python dicts are not.
+    if os.name != "nt":
+        env.update({str(key): str(value) for key, value in overlay.items()})
+        return env
+
+    for raw_key, raw_value in overlay.items():
+        key = str(raw_key)
+        value = str(raw_value)
+        folded = key.casefold()
+
+        matches = [existing for existing in list(env) if existing.casefold() == folded]
+        canonical = "PATH" if folded == "path" else key
+
+        for existing in matches:
+            if existing != canonical:
+                env.pop(existing, None)
+
+        env[canonical] = value
+    return env
+
+
 def _merge_vault_dependency_environment(root: Path, env: dict[str, str]) -> tuple[dict[str, str], str]:
     """Merge the existing Vault dependency policy without provisioning anything."""
     try:
@@ -117,7 +142,10 @@ def _merge_vault_dependency_environment(root: Path, env: dict[str, str]) -> tupl
 
     inherited_path = str(env.get("PATH") or "")
     overlay_path = str(overlay.get("PATH") or "")
-    env.update({str(k): str(v) for k, v in overlay.items() if v is not None})
+    _merge_environment_overlay(
+        env,
+        {str(k): str(v) for k, v in overlay.items() if v is not None},
+    )
     if overlay_path or inherited_path:
         merged = [item for item in overlay_path.split(os.pathsep) if item]
         merged.extend(item for item in inherited_path.split(os.pathsep) if item)
@@ -291,7 +319,7 @@ def resolve_toolchain_environment(
             else:
                 try:
                     captured = _capture_cmd_environment(vsdevcmd, timeout=timeout)
-                    result.update(captured)
+                    _merge_environment_overlay(result, captured)
                     result["CORTEX_VSDEVCMD"] = str(vsdevcmd)
                     after = _tool_report(result)
                     status = "activated" if after.get("cl") and after.get("link") else "activation_incomplete"

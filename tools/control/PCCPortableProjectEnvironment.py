@@ -4,7 +4,7 @@ import hashlib, os, re, shutil, subprocess
 from pathlib import Path
 from typing import Any, Mapping
 from PCCVolumeAuthority import resolve_volume_context
-BROKER_VERSION="PCC-PORTABLE-PROJECT-ENV-0.5"
+BROKER_VERSION="PCC-PORTABLE-PROJECT-ENV-0.6"
 
 def _project_id(root:Path)->str:
     manifest=root/"project.control.json"
@@ -26,6 +26,7 @@ def portable_project_environment(root:Path, env:Mapping[str,str]|None=None)->tup
     root=root.resolve(); out=dict(os.environ if env is None else env); ctx=resolve_volume_context(root)
     pid=_project_id(root); shared=ctx.shared_root
     cargo=shared/"dependencies"/"rust"/"cargo-home"
+    rustup=shared/"toolchains"/"rust"/"rustup-home"
     sccache=shared/"dependencies"/"rust"/"sccache"
     target=shared/"build"/"rust"/"targets"/pid
     npm=shared/"dependencies"/"node"/"npm-cache"
@@ -34,17 +35,18 @@ def portable_project_environment(root:Path, env:Mapping[str,str]|None=None)->tup
     nuget=shared/"dependencies"/"dotnet"/"nuget-packages"
     vcpkgd=shared/"dependencies"/"cpp"/"vcpkg-downloads"
     vcpkgb=shared/"dependencies"/"cpp"/"vcpkg-binary-cache"
-    for p in (cargo,sccache,target,npm,pip,gradle,nuget,vcpkgd,vcpkgb): p.mkdir(parents=True,exist_ok=True)
+    for p in (cargo,rustup,sccache,target,npm,pip,gradle,nuget,vcpkgd,vcpkgb): p.mkdir(parents=True,exist_ok=True)
     out.update({
       "CORTEX_VOLUME_ROOT":str(ctx.mount_root),"CORTEX_VOLUME_ID":ctx.volume_id,
       "CORTEX_SHARED_ROOT":str(shared),"PCC_SHARED_ROOT":str(shared),
       "CORTEX_ARTIFACTS_ROOT":str(ctx.artifacts_root),"CORTEX_PROJECTS_ROOT":str(ctx.projects_root),
-      "CORTEX_PROJECT_ID":pid,"CARGO_HOME":str(cargo),"CARGO_TARGET_DIR":str(target),
+      "CORTEX_PROJECT_ID":pid,"CARGO_HOME":str(cargo),"RUSTUP_HOME":str(rustup),"CARGO_TARGET_DIR":str(target),
       "npm_config_cache":str(npm),"PIP_CACHE_DIR":str(pip),"GRADLE_USER_HOME":str(gradle),
       "NUGET_PACKAGES":str(nuget),"VCPKG_DOWNLOADS":str(vcpkgd),
       "VCPKG_DEFAULT_BINARY_CACHE":str(vcpkgb),"RUSTUP_AUTO_INSTALL":"0","PYTHONUNBUFFERED":"1"
     })
-    # Portable toolchains, if present. Machine-installed tools remain fallback.
+    # Vault-owned Rust shims and portable toolchains must win over host-machine PATH.
+    _prepend(out,cargo/"bin")
     tc=shared/"toolchains"
     for family in ("rust","python","node","cmake","ninja","git"):
         base=tc/family
@@ -54,6 +56,6 @@ def portable_project_environment(root:Path, env:Mapping[str,str]|None=None)->tup
     if shutil.which("sccache",path=out.get("PATH","")): out["RUSTC_WRAPPER"]="sccache"
     report={"schema":"pcc.portable_project_environment.v1","brokerVersion":BROKER_VERSION,
       "projectId":pid,"projectRoot":str(root),"volumeId":ctx.volume_id,"mountRoot":str(ctx.mount_root),
-      "sharedRoot":str(shared),"cargoHome":str(cargo),"cargoTargetDir":str(target),
+      "sharedRoot":str(shared),"cargoHome":str(cargo),"rustupHome":str(rustup),"cargoTargetDir":str(target),
       "artifactRoot":str(ctx.artifacts_root/"projects"/pid)}
     return out,report

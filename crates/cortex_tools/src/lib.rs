@@ -2031,6 +2031,99 @@ impl ToolBroker {
                 }))
             }
             "runtime.verify_project" => {
+                let mode = arg_string(&call.arguments, "mode")
+                    .unwrap_or_else(|| "long_running".to_string())
+                    .to_ascii_lowercase();
+                let plan = cortex_universal::plan_project(self.workspace.root(), true);
+                let runtime = plan.runtime.clone().ok_or_else(|| {
+                    format!(
+                        "the detected project profile has no resolvable runtime artifact: {:?}",
+                        plan.profile
+                    )
+                })?;
+                let args = runtime.args.clone();
+
+                if mode == "completion" {
+                    let timeout_ms = arg_u64(&call.arguments, "timeout_ms")
+                        .unwrap_or(10_000)
+                        .clamp(100, 120_000);
+                    let expected_stdout = arg_string(&call.arguments, "expected_stdout");
+                    let project_candidate = if runtime.program.is_absolute() {
+                        runtime.program.clone()
+                    } else {
+                        self.workspace.root().join(&runtime.program)
+                    };
+                    if !project_candidate.is_file() {
+                        return Err(format!(
+                            "completion-mode runtime evidence requires a project-local executable; resolved `{}`",
+                            project_candidate.display()
+                        ));
+                    }
+
+                    let result = self.processes.run_project_executable_capture(
+                        self.workspace.root(),
+                        &project_candidate,
+                        &args,
+                        timeout_ms,
+                    )?;
+                    let executable_bytes = fs::metadata(&project_candidate)
+                        .map(|metadata| metadata.len())
+                        .unwrap_or(0);
+                    let executable_sha256 = windows_sha256(&project_candidate).ok();
+                    let stdout_match = expected_stdout.as_deref().is_none_or(|expected| {
+                        !result.stdout_truncated
+                            && runtime_stdout_matches_expected(&result.stdout, expected)
+                    });
+                    let success = result.success && stdout_match;
+                    self.record_development_evidence(
+                        "runtime.acceptance",
+                        if success {
+                            "Runtime completion acceptance passed"
+                        } else {
+                            "Runtime completion acceptance failed"
+                        },
+                        Some(project_candidate.clone()),
+                        json!({
+                            "mode": "completion",
+                            "result": result.clone(),
+                            "executable_bytes": executable_bytes,
+                            "executable_sha256": executable_sha256.clone(),
+                            "expected_stdout": expected_stdout,
+                            "stdout_match": stdout_match,
+                            "success": success
+                        }),
+                    )?;
+                    return Ok(json!({
+                        "success": success,
+                        "mode": "completion",
+                        "pid": result.pid,
+                        "executable": project_candidate,
+                        "program": runtime.program.clone(),
+                        "args": args,
+                        "timeout_ms": timeout_ms,
+                        "started_unix_ms": result.started_unix_ms,
+                        "finished_unix_ms": result.finished_unix_ms,
+                        "exit_code": result.exit_code,
+                        "timed_out": result.timed_out,
+                        "duration_ms": result.duration_ms,
+                        "executable_bytes": executable_bytes,
+                        "executable_sha256": executable_sha256,
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                        "stdout_truncated": result.stdout_truncated,
+                        "stderr_truncated": result.stderr_truncated,
+                        "expected_stdout": expected_stdout,
+                        "stdout_match": stdout_match,
+                        "evidence": runtime.evidence.clone()
+                    }));
+                }
+
+                if mode != "long_running" && mode != "alive" {
+                    return Err(format!(
+                        "unsupported runtime verification mode `{mode}`; expected `completion` or `long_running`"
+                    ));
+                }
+
                 let minimum_alive_ms = arg_u64(&call.arguments, "minimum_alive_ms")
                     .unwrap_or(1_500)
                     .clamp(100, 10_000);
@@ -2047,21 +2140,12 @@ impl ToolBroker {
                 let title_sample_interval_ms = arg_u64(&call.arguments, "title_sample_interval_ms")
                     .unwrap_or(1_200)
                     .clamp(250, 5_000);
-
-                let plan = cortex_universal::plan_project(self.workspace.root(), true);
-                let runtime = plan.runtime.clone().ok_or_else(|| {
-                    format!(
-                        "the detected project profile has no resolvable runtime artifact: {:?}",
-                        plan.profile
-                    )
-                })?;
                 let require_window = call
                     .arguments
                     .get("require_window")
                     .and_then(Value::as_bool)
                     .unwrap_or(runtime.expected_window);
 
-                let args = runtime.args.clone();
                 let (pid, executable) = spawn_universal_runtime(
                     &mut self.processes,
                     self.workspace.root(),
@@ -2113,6 +2197,7 @@ impl ToolBroker {
                     },
                     executable.clone(),
                     json!({
+                        "mode": "long_running",
                         "pid": pid,
                         "program": runtime.program.clone(),
                         "args": args,
@@ -2131,6 +2216,7 @@ impl ToolBroker {
                 )?;
                 Ok(json!({
                     "success": success,
+                    "mode": "long_running",
                     "pid": pid,
                     "executable": executable,
                     "program": runtime.program.clone(),
@@ -2902,7 +2988,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool("build.project_lint", "Run the detected project adapter's lint/static-analysis stage when supported.", false, json!({"type":"object","properties":{}})),
         tool("build.project_build", "Build the active project through its detected project adapter.", false, json!({"type":"object","properties":{}})),
         tool("runtime.launch_project", "Launch the runtime artifact resolved by Cortex's universal project plan under Cortex ownership. Project-local executables and approved interpreter runtimes are supported through the detected adapter/profile.", true, json!({"type":"object","properties":{"args":{"type":"array","items":{"type":"string"}}}})),
-        tool("runtime.verify_project", "Controller-owned runtime completion gate for any project with a resolvable universal RuntimeArtifact. Proves the process remains alive and can require a visible responsive native window plus a changing title.", true, json!({"type":"object","properties":{"minimum_alive_ms":{"type":"integer"},"keep_running":{"type":"boolean"},"require_window":{"type":"boolean"},"require_title_change":{"type":"boolean"},"title_sample_interval_ms":{"type":"integer"}}})),
+        tool("runtime.verify_project", "Controller-owned runtime evidence gate for any project with a resolvable universal RuntimeArtifact. Completion mode executes a short-lived project-local artifact to exit and captures stdout/stderr/exit code; long-running mode proves process/window liveness.", true, json!({"type":"object","properties":{"mode":{"type":"string"},"timeout_ms":{"type":"integer"},"expected_stdout":{"type":"string"},"minimum_alive_ms":{"type":"integer"},"keep_running":{"type":"boolean"},"require_window":{"type":"boolean"},"require_title_change":{"type":"boolean"},"title_sample_interval_ms":{"type":"integer"}}})),
         tool("runtime.process_status", "Read Cortex-owned runtime process records and live states.", false, json!({"type":"object","properties":{}})),
         tool("runtime.window_info", "Inspect the native main window for a known runtime PID: title, visibility, responsiveness and bounds.", false, json!({"type":"object","properties":{"pid":{"type":"integer"}},"required":["pid"]})),
         tool("runtime.process_stop", "Stop a Cortex-owned runtime process by PID; arbitrary external processes are never terminated.", true, json!({"type":"object","properties":{"pid":{"type":"integer"}},"required":["pid"]})),
@@ -6249,6 +6335,18 @@ fn compact_json_chars(value: &Value, max_chars: usize) -> String {
     compact
 }
 
+fn strip_one_line_ending(value: &str) -> &str {
+    value
+        .strip_suffix("\r\n")
+        .or_else(|| value.strip_suffix('\n'))
+        .or_else(|| value.strip_suffix('\r'))
+        .unwrap_or(value)
+}
+
+fn runtime_stdout_matches_expected(actual: &str, expected: &str) -> bool {
+    strip_one_line_ending(actual) == strip_one_line_ending(expected)
+}
+
 fn spawn_universal_runtime(
     processes: &mut ProcessService,
     workspace_root: &Path,
@@ -6320,6 +6418,23 @@ fn unix_ms() -> u128 {
 #[cfg(test)]
 mod schema_tests {
     use super::*;
+
+    #[test]
+    fn completion_runtime_stdout_allows_one_platform_line_ending_only() {
+        assert!(runtime_stdout_matches_expected(
+            "Hello, world!\n",
+            "Hello, world!"
+        ));
+        assert!(runtime_stdout_matches_expected(
+            "Hello, world!\r\n",
+            "Hello, world!"
+        ));
+        assert!(!runtime_stdout_matches_expected(
+            "Hello, world!\n\n",
+            "Hello, world!"
+        ));
+        assert!(!runtime_stdout_matches_expected("Hello!", "Hello, world!"));
+    }
 
     fn assert_array_items(tool_name: &str, path: &str, schema: &Value) {
         if schema.get("type").and_then(Value::as_str) == Some("array") {

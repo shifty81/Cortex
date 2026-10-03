@@ -289,7 +289,10 @@ class CommandRunner:
             timed_out=timed_out,
             cancelled=cancelled,
         )
-        capture = self.log.command_output_dir / f"{local_stamp()}-{uuid.uuid4().hex[:8]}.txt"
+        safe_phase = re.sub(r"[^A-Za-z0-9._-]+", "-", phase or "command").strip("-")[:48] or "command"
+        capture = self.log.command_output_dir / (
+            f"{local_stamp()}-{safe_phase}-{uuid.uuid4().hex[:8]}.txt"
+        )
         capture.write_text(result.stdout + result.stderr, encoding="utf-8")
         level = "PASS" if result.ok else "FAIL"
         suffix = f" ({elapsed:.2f}s, exit {result.returncode})"
@@ -719,6 +722,32 @@ class EvidenceBuilder:
                     dst = work / "logs" / src.name
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, dst)
+
+            # Include a bounded set of the actual subprocess captures. These are
+            # the authoritative compiler/test diagnostics and are essential when
+            # the summary log only records an exit code (for example Clippy 101).
+            if self.log.command_output_dir.is_dir():
+                recent_outputs = sorted(
+                    (
+                        item
+                        for item in self.log.command_output_dir.glob("*.txt")
+                        if item.is_file() and not item.is_symlink()
+                    ),
+                    key=lambda item: item.stat().st_mtime,
+                    reverse=True,
+                )[:12]
+                copied_bytes = 0
+                for src in recent_outputs:
+                    size = src.stat().st_size
+                    if size > 2 * 1024 * 1024:
+                        continue
+                    if copied_bytes + size > 4 * 1024 * 1024:
+                        continue
+                    dst = work / "command-output" / src.name
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
+                    copied_bytes += size
+
             receipts = sorted(self.ctx.patch_receipts.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:20] if self.ctx.patch_receipts.is_dir() else []
             for src in receipts:
                 dst = work / "patch-receipts" / src.name

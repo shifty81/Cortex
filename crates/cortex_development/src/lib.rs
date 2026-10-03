@@ -310,6 +310,9 @@ pub fn detect_project_profile(root: &Path) -> ProjectProfile {
     ];
     if runnable_root {
         runtime_capabilities.insert(0, RuntimeCapability::Launch);
+        if matches!(kind, ProjectKind::Rust | ProjectKind::CMake) {
+            runtime_capabilities.push(RuntimeCapability::Stdout);
+        }
     }
 
     ProjectProfile {
@@ -1187,6 +1190,12 @@ mod tests {
         assert!(profile
             .runtime_capabilities
             .contains(&RuntimeCapability::Launch));
+        assert!(profile
+            .runtime_capabilities
+            .contains(&RuntimeCapability::Stdout));
+        assert!(profile
+            .runtime_capabilities
+            .contains(&RuntimeCapability::ExitCode));
         let _ = fs::remove_dir_all(root);
     }
 

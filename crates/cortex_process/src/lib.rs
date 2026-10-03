@@ -3,14 +3,18 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::io::Read;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+const RUNTIME_CAPTURE_MAX_BYTES: usize = 1024 * 1024;
 
 fn configure_background_command(command: &mut Command) {
     #[cfg(windows)]
@@ -242,6 +246,25 @@ pub struct CommandResult {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeCaptureResult {
+    pub pid: u32,
+    pub executable: PathBuf,
+    pub args: Vec<String>,
+    pub cwd: PathBuf,
+    pub started_unix_ms: u128,
+    pub finished_unix_ms: u128,
+    pub exit_code: Option<i32>,
+    pub success: bool,
+    pub timed_out: bool,
+    pub timeout_ms: u64,
+    pub duration_ms: u128,
+    pub stdout: String,
+    pub stderr: String,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompilerDiagnostic {
     pub level: String,
     pub code: Option<String>,
@@ -445,6 +468,30 @@ fn fs_first_extension(root: &Path, extension: &str) -> Option<PathBuf> {
         })
 }
 
+fn drain_bounded_output<R: Read>(
+    mut reader: R,
+    maximum_bytes: usize,
+) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut captured = Vec::new();
+    let mut truncated = false;
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let remaining = maximum_bytes.saturating_sub(captured.len());
+        let keep = remaining.min(read);
+        if keep > 0 {
+            captured.extend_from_slice(&buffer[..keep]);
+        }
+        if keep < read {
+            truncated = true;
+        }
+    }
+    Ok((captured, truncated))
+}
+
 #[derive(Default)]
 pub struct ProcessService {
     owned: BTreeMap<u32, OwnedProcess>,
@@ -574,6 +621,107 @@ impl ProcessService {
             stdout,
             stderr,
             diagnostics,
+        })
+    }
+
+    pub fn run_project_executable_capture(
+        &self,
+        workspace: &Path,
+        executable: &Path,
+        args: &[String],
+        timeout_ms: u64,
+    ) -> Result<RuntimeCaptureResult, String> {
+        let workspace = std::fs::canonicalize(workspace)
+            .map_err(|error| format!("failed to resolve project root: {error}"))?;
+        let executable = std::fs::canonicalize(executable)
+            .map_err(|error| format!("failed to resolve project executable: {error}"))?;
+        if !executable.starts_with(&workspace) {
+            return Err(format!(
+                "Cortex refuses to execute a runtime artifact outside the active project: {}",
+                executable.display()
+            ));
+        }
+        if !executable.is_file() {
+            return Err(format!(
+                "project runtime artifact does not exist: {}",
+                executable.display()
+            ));
+        }
+
+        let timeout_ms = timeout_ms.clamp(100, 120_000);
+        let started_unix_ms = process_unix_ms();
+        let started = Instant::now();
+        let mut command = Command::new(&executable);
+        command
+            .args(args)
+            .current_dir(&workspace)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        configure_background_command(&mut command);
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("failed to execute project runtime artifact: {error}"))?;
+        let pid = child.id();
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "runtime stdout capture pipe was not created".to_string())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "runtime stderr capture pipe was not created".to_string())?;
+        let stdout_reader =
+            thread::spawn(move || drain_bounded_output(stdout, RUNTIME_CAPTURE_MAX_BYTES));
+        let stderr_reader =
+            thread::spawn(move || drain_bounded_output(stderr, RUNTIME_CAPTURE_MAX_BYTES));
+
+        let timeout = Duration::from_millis(timeout_ms);
+        let mut timed_out = false;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if started.elapsed() >= timeout => {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break child
+                        .wait()
+                        .map_err(|error| format!("failed to reap timed-out runtime: {error}"))?;
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(10)),
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("failed while waiting for project runtime: {error}"));
+                }
+            }
+        };
+
+        let (stdout, stdout_truncated) = stdout_reader
+            .join()
+            .map_err(|_| "runtime stdout capture thread panicked".to_string())?
+            .map_err(|error| format!("failed to capture runtime stdout: {error}"))?;
+        let (stderr, stderr_truncated) = stderr_reader
+            .join()
+            .map_err(|_| "runtime stderr capture thread panicked".to_string())?
+            .map_err(|error| format!("failed to capture runtime stderr: {error}"))?;
+
+        Ok(RuntimeCaptureResult {
+            pid,
+            executable,
+            args: args.to_vec(),
+            cwd: workspace,
+            started_unix_ms,
+            finished_unix_ms: process_unix_ms(),
+            exit_code: status.code(),
+            success: status.success() && !timed_out,
+            timed_out,
+            timeout_ms,
+            duration_ms: started.elapsed().as_millis(),
+            stdout: String::from_utf8_lossy(&stdout).to_string(),
+            stderr: String::from_utf8_lossy(&stderr).to_string(),
+            stdout_truncated,
+            stderr_truncated,
         })
     }
 
@@ -909,6 +1057,16 @@ pub fn wait_for_file(path: &Path, timeout: Duration) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_runtime_capture_drains_while_capping_saved_bytes() {
+        let input = vec![b'x'; RUNTIME_CAPTURE_MAX_BYTES + 257];
+        let (captured, truncated) =
+            drain_bounded_output(std::io::Cursor::new(input), RUNTIME_CAPTURE_MAX_BYTES).unwrap();
+        assert_eq!(captured.len(), RUNTIME_CAPTURE_MAX_BYTES);
+        assert!(truncated);
+    }
+
     #[test]
     fn detects_cargo_project_operations() {
         let root =
