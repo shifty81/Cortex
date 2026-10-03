@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import json
 import sys
 import tempfile
@@ -21,7 +22,7 @@ import CortexPythonBridge as bridge
 
 
 class RuntimeTraceTests(unittest.TestCase):
-    def test_streams_stderr_heartbeat_and_keeps_json_stdout_pristine(self) -> None:
+    def test_streams_stderr_status_and_keeps_json_stdout_pristine(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             code = ('import sys,time,json; print("loading model",file=sys.stderr,flush=True);'
@@ -33,12 +34,46 @@ class RuntimeTraceTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertEqual(json.loads(result.stdout)['text'], 'Hello, world!')
             self.assertTrue(any('loading model' in line for line in shown))
-            self.assertTrue(any('no completed response yet' in line for line in shown))
+            self.assertFalse(any('no completed response yet' in line for line in shown))
             traces = [json.loads(line) for line in result.log_path.read_text(encoding='utf-8').splitlines()]
             self.assertEqual(traces[0]['kind'], 'started')
             self.assertEqual(traces[-1]['kind'], 'finished')
             self.assertFalse(any('A private request' in line or 'Hello, world!' in line for line in result.log_path.read_text().splitlines()))
             self.assertEqual(traces[-1]['exitCode'], 0)
+
+    def test_live_execution_snapshot_is_projected_without_spam(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            local = root / 'localappdata'
+            state_lines = [
+                'schema=1', 'execution_id=exec-test', 'conversation_id=c', 'workspace_root=x',
+                'mode=apply', 'phase=building', 'current=Running project validation',
+                'next_expected=inspect compiler diagnostics', 'current_tool=build.project_validate',
+                'current_target=Cargo.toml', 'model=Qwen-Test', 'model_role=tool',
+                'agent_iteration=2', 'agent_iteration_budget=8', 'missing_dependencies=',
+                'grounded_dependencies=', 'transaction_id=t', 'provider_scope=',
+            ]
+            prefix = "\n".join(state_lines) + "\n"
+            code = (
+                'import json,os,pathlib,time;'
+                'base=pathlib.Path(os.environ["LOCALAPPDATA"])/"Open2D"/"Cortex"/"executions"/"fixture";'
+                'base.mkdir(parents=True,exist_ok=True);'
+                'now=int(time.time()*1000);'
+                f'prefix={prefix!r};'
+                'state=prefix+f"provider_last_activity_unix_ms={now}\\ntool_last_activity_unix_ms={now}\\nstarted_unix_ms={now}\\nupdated_unix_ms={now}\\nterminal_error=\\nowner_pid={os.getpid()}\\n";'
+                '(base/"active.state").write_text(state,encoding="utf-8");'
+                'time.sleep(.2);print(json.dumps({"text":"done"}),flush=True)'
+            )
+            shown = []
+            with mock.patch.dict(os.environ, {'LOCALAPPDATA': str(local)}, clear=False):
+                result = runtime.run_controller(
+                    [sys.executable, '-u', '-c', code], cortex_root=root, workspace=root,
+                    prompt='build it', heartbeat_seconds=.05, timeout_seconds=4.0, reporter=shown.append)
+            self.assertEqual(result.returncode, 0)
+            live = [line for line in shown if line.startswith('[CortexLive] ')]
+            self.assertTrue(live)
+            self.assertTrue(any('building' in line and 'build.project_validate' in line for line in live))
+            self.assertFalse(any('no completed response yet' in line for line in shown))
 
     def test_spawn_error_produces_durable_failure_record(self) -> None:
         with tempfile.TemporaryDirectory() as td:

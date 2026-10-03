@@ -71,6 +71,108 @@ def _portable_authority_environment(cortex_root: Path) -> dict[str, str]:
     return merged
 
 
+def _parse_execution_state(path: Path) -> dict[str, str] | None:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    state: dict[str, str] = {}
+    for raw in text.splitlines():
+        if "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        state[key.strip()] = value.strip()
+    return state if state.get("owner_pid") else None
+
+
+def _execution_roots(environment: dict[str, str]) -> list[Path]:
+    roots: list[Path] = []
+    explicit = str(environment.get("CORTEX_EXECUTION_ROOT") or "").strip()
+    if explicit:
+        roots.append(Path(explicit).expanduser())
+    local = str(environment.get("LOCALAPPDATA") or "").strip()
+    if local:
+        base = Path(local).expanduser()
+    else:
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home())
+    # Current Rust authority first, then the normalized future location. Keeping
+    # both here makes the PCC projection migration-safe without changing the
+    # Rust state format or inventing a second execution authority.
+    roots.extend([base / "Open2D" / "Cortex" / "executions", base / "Cortex" / "executions"])
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root).casefold() if os.name == "nt" else str(root)
+        if key not in seen:
+            seen.add(key)
+            unique.append(root)
+    return unique
+
+
+def _execution_live_status_for_owner(owner_pid: int, environment: dict[str, str]) -> tuple[str, str] | None:
+    selected: dict[str, str] | None = None
+    for base in _execution_roots(environment):
+        if not base.is_dir():
+            continue
+        for path in base.glob("*/active.state"):
+            state = _parse_execution_state(path)
+            if not state or state.get("owner_pid") != str(owner_pid):
+                continue
+            try:
+                updated = int(state.get("updated_unix_ms") or 0)
+                selected_updated = int((selected or {}).get("updated_unix_ms") or -1)
+            except ValueError:
+                updated, selected_updated = 0, -1
+            if selected is None or updated >= selected_updated:
+                selected = state
+    if selected is None:
+        return None
+
+    try:
+        started = int(selected.get("started_unix_ms") or 0)
+    except ValueError:
+        started = 0
+    elapsed = max(0.0, (time.time() * 1000.0 - started) / 1000.0) if started else 0.0
+    mode = selected.get("mode") or "cortex"
+    phase = selected.get("phase") or "working"
+    parts = [f"{mode} · {phase} · {elapsed:.1f}s"]
+    current = selected.get("current") or ""
+    if current:
+        parts.append(current)
+    tool = selected.get("current_tool") or ""
+    target = selected.get("current_target") or ""
+    if tool:
+        parts.append(f"tool: {tool}" + (f" → {target}" if target else ""))
+    model = selected.get("model") or ""
+    role = selected.get("model_role") or ""
+    if model:
+        parts.append("model: " + model + (f" ({role})" if role else ""))
+    iteration = selected.get("agent_iteration") or "0"
+    budget = selected.get("agent_iteration_budget") or "0"
+    if iteration != "0" or budget != "0":
+        parts.append(f"iteration: {iteration}/{budget}")
+    missing = selected.get("missing_dependencies") or ""
+    if missing:
+        parts.append(f"grounding: {missing}")
+    next_expected = selected.get("next_expected") or ""
+    if next_expected and phase not in {"completed", "failed", "cancelled"}:
+        parts.append(f"next: {next_expected}")
+    error = selected.get("terminal_error") or ""
+    if error:
+        parts.append("error: " + (error[:217] + "..." if len(error) > 220 else error))
+    token = "|".join((
+        selected.get("execution_id") or "",
+        selected.get("updated_unix_ms") or "",
+        phase, current, tool, target, model, role, iteration, budget, missing, next_expected, error,
+    ))
+    return "  |  ".join(parts), token
+
+
+def _execution_live_line_for_owner(owner_pid: int, environment: dict[str, str]) -> str | None:
+    status = _execution_live_status_for_owner(owner_pid, environment)
+    return status[0] if status else None
+
+
 @dataclass(frozen=True)
 class WorkerResult:
     returncode: int
@@ -95,7 +197,7 @@ def run_controller(
     still alive, never that a tool is progressing or that inference succeeded.
     """
     heartbeat = heartbeat_seconds if heartbeat_seconds is not None else _safe_duration(
-        os.environ.get("CORTEX_AGENT_HEARTBEAT_SECONDS", "5"), default=5.0, minimum=0.1, maximum=60.0,
+        os.environ.get("CORTEX_AGENT_HEARTBEAT_SECONDS", "1"), default=1.0, minimum=0.1, maximum=60.0,
     )
     deadline_seconds = timeout_seconds if timeout_seconds is not None else _safe_duration(
         os.environ.get("CORTEX_AGENT_TIMEOUT_SECONDS", "1800"), default=1800.0, minimum=10.0, maximum=7200.0,
@@ -149,7 +251,7 @@ def run_controller(
             reporter(f"[CortexRuntime] FAIL worker could not start: {type(exc).__name__}: {exc}")
             return WorkerResult(127, "", str(exc), operation_id, log_path, elapsed)
         event("worker_spawned", pid=proc.pid)
-        reporter(f"[CortexRuntime] worker PID={proc.pid}; awaiting controller response")
+        reporter(f"[CortexRuntime] worker PID={proc.pid}; waiting for execution/provider activity")
 
         output_queue: queue.Queue[tuple[str, str | None]] = queue.Queue()
         chunks: dict[str, list[str]] = {"stdout": [], "stderr": []}
@@ -170,6 +272,8 @@ def run_controller(
         open_channels = {"stdout", "stderr"}
         timed_out = False
         exceeded = False
+        last_live_token = ""
+        last_fallback_notice = 0.0
         while open_channels:
             elapsed = time.monotonic() - started
             if elapsed >= deadline_seconds:
@@ -182,9 +286,18 @@ def run_controller(
                 channel, line = output_queue.get(timeout=min(heartbeat, max(0.01, deadline_seconds - elapsed)))
             except queue.Empty:
                 elapsed = time.monotonic() - started
-                event("heartbeat", pid=proc.pid, elapsedSeconds=round(elapsed, 3),
-                      state="waiting_for_controller_output")
-                reporter(f"[CortexRuntime] worker PID={proc.pid} running; elapsed={elapsed:.1f}s; no completed response yet")
+                live_status = _execution_live_status_for_owner(proc.pid, worker_env)
+                if live_status and live_status[1] != last_live_token:
+                    live_line, last_live_token = live_status
+                    encoded = live_line.encode("utf-8", errors="replace")
+                    event("execution_status", pid=proc.pid, elapsedSeconds=round(elapsed, 3),
+                          bytes=len(encoded), sha256=hashlib.sha256(encoded).hexdigest())
+                    reporter(f"[CortexLive] {live_line}")
+                elif not live_status and (elapsed - last_fallback_notice >= 15.0 or last_fallback_notice == 0.0 and elapsed >= 5.0):
+                    last_fallback_notice = elapsed
+                    event("heartbeat", pid=proc.pid, elapsedSeconds=round(elapsed, 3),
+                          state="waiting_for_execution_or_provider_activity")
+                    reporter(f"[CortexRuntime] worker PID={proc.pid} active; elapsed={elapsed:.1f}s; waiting for execution/provider activity")
                 continue
             if line is None:
                 open_channels.discard(channel)

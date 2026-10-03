@@ -60,7 +60,14 @@
     "README_R*.md",
     "README_ROOT_CONTROL_BOOTSTRAP.md",
     "Snapshot-*",
-    "PROJECT_CONTROL_CENTER.cmd.fixpayload"
+    "PROJECT_CONTROL_CENTER.cmd.fixpayload",
+    "Apply-Cortex-*",
+    "W*_PACKAGE_MANIFEST.json",
+    "W*_GREEN_APPLY.py",
+    "test_w*_green_apply.py",
+    "SOURCE_*MANIFEST.json",
+    "VERIFY_CORTEX_SOURCE_OVERWRITE.ps1",
+    "README_OVERWRITE_FIRST.txt"
   ],
   "keep_review_root_files": [
     "BOOTSTRAP_CORTEX_ENVIRONMENT.cmd",
@@ -78,7 +85,9 @@
   "notes": [
     "products/forge-rust remains active source until its project.control.json and command consumers are deliberately migrated.",
     "keep_review_root_files are not deleted by this pass because current source still references several of them.",
-    "The six tracked logs/*/.gitkeep files are repository scaffolding, not runtime log data. Convergence migrates untracked runtime contents file-by-file and retains tracked placeholders."
+    "The six tracked logs/*/.gitkeep files are repository scaffolding, not runtime log data. Convergence migrates untracked runtime contents file-by-file and retains tracked placeholders.",
+    "generated_root_directories are ignored/rebuildable local development outputs and do not violate source-authority layout.",
+    "volume_runtime_state identifies legacy runtime directories that must be migrated from the repository root to the marked portable volume runtime authority."
   ],
   "preserve_runtime_placeholders": [
     "logs/arbiter_engine/.gitkeep",
@@ -87,5 +96,35 @@
     "logs/self_build/.gitkeep",
     "logs/steam_server_admin/.gitkeep",
     "logs/vs_extension/.gitkeep"
-  ]
+  ],
+  "operational_directories": [
+    ".cortex",
+    ".project_control",
+    "artifacts"
+  ],
+  "generated_root_directories": [
+    "target",
+    "build",
+    "dist",
+    "coverage",
+    ".pytest_cache",
+    ".venv",
+    "venv",
+    "env",
+    "bin",
+    "obj",
+    ".vs",
+    "TestResults",
+    "node_modules",
+    ".nyc_output",
+    "Temp",
+    "updates",
+    ".local",
+    "handoffs"
+  ],
+  "volume_runtime_state": {
+    "Memory": ".cortex/data/Memory",
+    "Search": ".cortex/data/Search",
+    "Tasks": ".cortex/data/Tasks"
+  }
 }

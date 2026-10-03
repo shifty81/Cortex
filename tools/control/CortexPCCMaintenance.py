@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from CortexRepositoryLayout import scan_repository_layout
+
 MAINTENANCE_SCHEMA = "cortex.pcc_maintenance.v1"
 DEBUG_MANIFEST_SCHEMA = "cortex.pcc_debug_manifest.v1"
 LATEST_DEBUG_SCHEMA = "cortex.pcc_latest_debug.v1"
@@ -187,14 +189,46 @@ def scan_root_hygiene(root: Path) -> dict[str, Any]:
                     Residue(path, path.relative_to(root).as_posix(), "legacy-log-location", "logs", "advisory")
                 )
 
+    layout: dict[str, Any] | None = None
+    policy = root / "config" / "cortex" / "repository_layout.v1.json"
+    if policy.is_file():
+        try:
+            layout = scan_repository_layout(root)
+        except Exception as exc:
+            layout = {
+                "schema": "cortex.repository_layout.scan.v1",
+                "projectRoot": str(root),
+                "clean": False,
+                "violationCount": 1,
+                "items": [{"path": str(policy.relative_to(root)), "kind": "layout-policy-error",
+                           "severity": "violation", "error": str(exc), "archiveEligible": False}],
+            }
+
+    seen = {r.relative.casefold() for r in residues}
+    if layout is not None:
+        for item in layout.get("items", []) or []:
+            rel = str(item.get("path") or "").rstrip("/")
+            if not rel or rel.casefold() in seen:
+                continue
+            kind = str(item.get("kind") or "repository-layout")
+            if kind == "runtime-in-repository":
+                group = "runtime-state"
+            elif bool(item.get("archiveEligible")):
+                group = "layout-archive"
+            else:
+                group = "layout-blocked"
+            residues.append(Residue(root / rel, str(item.get("path") or rel), kind, group, "violation"))
+            seen.add(rel.casefold())
+
     violations = [r for r in residues if r.severity == "violation"]
     advisories = [r for r in residues if r.severity == "advisory"]
     return {
-        "schema": "cortex.pcc_root_hygiene.v1",
+        "schema": "cortex.pcc_root_hygiene.v2",
         "projectRoot": str(root),
         "clean": len(violations) == 0,
         "violationCount": len(violations),
         "advisoryCount": len(advisories),
+        "layout": layout,
         "items": [
             {
                 "path": r.relative,
@@ -221,16 +255,42 @@ def _unique_destination(path: Path) -> Path:
 def repair_root_hygiene(root: Path) -> dict[str, Any]:
     root = root.resolve()
     before = scan_root_hygiene(root)
-    items = before["items"]
     moved: list[dict[str, Any]] = []
-    for item in items:
-        src = root / item["path"]
+    runtime_migration: dict[str, Any] = {"migrated": 0, "invalid": 0}
+    volume_runtime_migration: dict[str, Any] = {"migrated": 0, "actions": []}
+
+    # PCC presentation-cache state is project-local. The migration is loss-averse:
+    # malformed JSON remains in place so repository hygiene stays RED rather than
+    # silently discarding evidence that could not be read.
+    try:
+        from PCCChatStore import migrate_legacy_conversations
+        runtime_migration = migrate_legacy_conversations(root)
+    except Exception as exc:
+        runtime_migration = {"migrated": 0, "invalid": 0, "error": str(exc)}
+
+    # Legacy global Cortex runtime roots (Memory/Search/Tasks) belong to the marked
+    # portable volume, not inside the source repository. Copy and hash-verify every
+    # destination before deleting any legacy source bytes. A collision fails closed
+    # and leaves the source tree RED for explicit inspection.
+    try:
+        from CortexRepositoryConvergence import migrate_runtime_state
+        volume_runtime_migration = migrate_runtime_state(root, scopes=("volume",))
+    except Exception as exc:
+        volume_runtime_migration = {"migrated": 0, "actions": [], "error": str(exc)}
+
+    for item in before["items"]:
+        src = root / str(item["path"]).rstrip("/")
         if not src.is_file():
             continue
-        if item["destinationGroup"] == "debug" and item["kind"] == "root-debug-bundle":
+        group = item["destinationGroup"]
+        if group == "debug" and item["kind"] == "root-debug-bundle":
             dest_dir = root / "artifacts" / "debug"
-        elif item["destinationGroup"] == "logs":
+        elif group == "logs":
             dest_dir = root / "artifacts" / "logs" / "sessions"
+        elif group == "layout-archive":
+            dest_dir = root / "artifacts" / "maintenance" / "legacy-root-source"
+        elif group == "layout-blocked" or group == "runtime-state":
+            continue
         else:
             dest_dir = root / "artifacts" / "maintenance" / "legacy-root-residue"
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -252,6 +312,8 @@ def repair_root_hygiene(root: Path) -> dict[str, Any]:
         "createdUtc": now_utc(),
         "before": {"violationCount": before["violationCount"], "advisoryCount": before["advisoryCount"]},
         "after": {"violationCount": after["violationCount"], "advisoryCount": after["advisoryCount"]},
+        "runtimeMigration": runtime_migration,
+        "volumeRuntimeMigration": volume_runtime_migration,
         "moved": moved,
     }
     receipt_dir = root / "artifacts" / "maintenance" / "receipts"

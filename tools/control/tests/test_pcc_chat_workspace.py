@@ -9,7 +9,7 @@ CONTROL = Path(__file__).resolve().parents[1]
 if str(CONTROL) not in sys.path:
     sys.path.insert(0, str(CONTROL))
 
-from PCCChatStore import list_conversations, load_messages, save_messages
+from PCCChatStore import list_conversations, load_messages, save_messages, workspace_key
 
 
 class ChatWorkspaceTests(unittest.TestCase):
@@ -39,6 +39,23 @@ class ChatWorkspaceTests(unittest.TestCase):
             self.assertEqual(load_messages(cortex, b, "one")[0]["content"], "gamma")
             rows = list_conversations(cortex, a)
             self.assertEqual([row["conversationId"] for row in rows], ["two", "one"])
+
+    def test_legacy_source_tree_conversations_migrate_to_runtime_state(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cortex = Path(td) / "cortex"
+            workspace = Path(td) / "project"
+            workspace.mkdir()
+            legacy = cortex / "data" / "conversations" / "pcc" / workspace_key(workspace) / "legacy.json"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text(
+                '{"schema":"cortex.python_bridge.conversation.v2","conversationId":"legacy","updatedUnixMs":7,"messages":[{"role":"user","content":"old"}]}',
+                encoding="utf-8",
+            )
+            self.assertEqual(load_messages(cortex, workspace, "legacy")[0]["content"], "old")
+            canonical = cortex / ".cortex" / "conversations" / "pcc" / workspace_key(workspace) / "legacy.json"
+            self.assertTrue(canonical.is_file())
+            self.assertFalse(legacy.exists())
+            self.assertFalse((cortex / "data").exists())
 
     def test_gui_has_first_class_chat_tab_and_single_bridge_path(self) -> None:
         source = (CONTROL / "CortexPCCGui.py").read_text(encoding="utf-8")

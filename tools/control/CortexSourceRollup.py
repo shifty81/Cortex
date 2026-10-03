@@ -7,6 +7,7 @@ Git mutation, installer action, or source file modifications are performed.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -42,6 +43,11 @@ MAX_PATH = 240
 DEFAULT_MAX_FILE = 64 * 1024 * 1024
 DEFAULT_MAX_TOTAL = 1024 * 1024 * 1024
 DEFAULT_MAX_COUNT = 50_000
+
+LEGACY_RUNTIME_PREFIXES = (
+    "data/conversations",
+    "data/registry",
+)
 
 
 class RollupError(RuntimeError):
@@ -87,9 +93,17 @@ def check_output_dir(root: Path) -> Path:
     return current
 
 
-def classify(rel: str, is_dir: bool) -> str | None:
+def classify(rel: str, is_dir: bool, archive_root_globs: tuple[str, ...] = ()) -> str | None:
+    normalized = rel.replace("\\", "/").strip("/")
+    folded_rel = normalized.casefold()
+    for prefix in LEGACY_RUNTIME_PREFIXES:
+        folded_prefix = prefix.casefold()
+        if folded_rel == folded_prefix or folded_rel.startswith(folded_prefix + "/"):
+            return "legacy-runtime-state"
     p = PurePosixPath(rel)
     name = p.name.casefold()
+    if len(p.parts) == 1 and any(fnmatch.fnmatch(name, pattern.casefold()) for pattern in archive_root_globs):
+        return "legacy-root-update-artifact"
     if name in SKIP_NAMES or name in {".git", ".cortex", ".project_control"} or name.startswith(".env."):
         return "sensitive-or-reserved-name"
     if is_dir:
@@ -102,6 +116,15 @@ def classify(rel: str, is_dir: bool) -> str | None:
 def walk_source(root: Path) -> tuple[list[tuple[str, Path]], list[dict[str, str]]]:
     files: list[tuple[str, Path]] = []
     excluded: list[dict[str, str]] = []
+    archive_root_globs: tuple[str, ...] = ()
+    policy_path = root / "config" / "cortex" / "repository_layout.v1.json"
+    if policy_path.is_file():
+        try:
+            policy = json.loads(policy_path.read_text(encoding="utf-8"))
+            if isinstance(policy, dict):
+                archive_root_globs = tuple(str(item) for item in policy.get("archive_root_globs", []) or [])
+        except (OSError, UnicodeError, ValueError):
+            archive_root_globs = ()
 
     def descend(directory: Path, prefix: str) -> None:
         with os.scandir(directory) as scan:
@@ -115,7 +138,7 @@ def walk_source(root: Path) -> tuple[list[tuple[str, Path]], list[dict[str, str]
             if link_or_reparse(path):
                 excluded.append({"path": rel, "reason": "symlink-or-reparse-point"})
                 continue
-            reason = classify(rel, is_dir)
+            reason = classify(rel, is_dir, archive_root_globs)
             if reason:
                 excluded.append({"path": rel, "reason": reason})
                 continue

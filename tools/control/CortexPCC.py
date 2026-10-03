@@ -537,10 +537,10 @@ class GateEngine:
         violations = int(summary.get("violationCount", 0) or 0)
         advisories = int(summary.get("advisoryCount", 0) or 0)
         if violations:
-            return "WARN", f"{violations} generated root residue item(s); Fast/Full will normalize them into artifacts"
+            return "WARN", f"{violations} canonical repository layout violation(s); Fast/Full will normalize repairable items into artifacts"
         if advisories:
             return "WARN", f"root clean; {advisories} legacy operational log item(s) can be normalized"
-        return "PASS", "generated operational artifacts are contained under artifacts/"
+        return "PASS", "canonical repository layout and operational-artifact containment are clean"
 
     def _cargo_tools(self) -> tuple[str, str]:
         cargo = shutil.which("cargo")
@@ -859,8 +859,24 @@ class CortexPCC:
         if pending == 0:
             self.log.emit("PASS", "No pending validated patch queue.")
             return 0
-        if confirm and sys.stdin.isatty():
-            answer = input(f"Apply {pending} validated patch(es) now? [y/N] ").strip().lower()
+        if confirm:
+            # GUI/embedded provider processes intentionally run with stdin detached.
+            # They must arrive here with --yes after the operator-facing surface has
+            # already confirmed the mutation. Never attempt input() against DEVNULL.
+            if sys.stdin is None or not sys.stdin.isatty():
+                self.log.emit(
+                    "FAIL",
+                    "Patch apply requires explicit --yes when stdin is non-interactive.",
+                )
+                return 2
+            try:
+                answer = input(f"Apply {pending} validated patch(es) now? [y/N] ").strip().lower()
+            except EOFError:
+                self.log.emit(
+                    "FAIL",
+                    "Patch confirmation input is unavailable; rerun with --yes or use the confirmed GUI action.",
+                )
+                return 2
             if answer not in {"y", "yes"}:
                 self.log.emit("INFO", "Patch apply cancelled by operator.")
                 return 0
@@ -902,7 +918,7 @@ class CortexPCC:
         _, patch = self.patch.scan()
         target = self.cargo_target_dir()
         cli = self.binary_path("cortex", target)
-        gui = self.binary_path("cortex_desktop", target)
+        pcc_gui = self.ctx.root / "tools" / "control" / "CortexPCCGui.py"
         hygiene = maintenance.scan_root_hygiene(self.ctx.root)
         status = {
             "schema": "cortex.pcc_status.v2",
@@ -930,7 +946,11 @@ class CortexPCC:
                 "powershell": shutil.which("pwsh") or shutil.which("powershell") or shutil.which("powershell.exe"),
             },
             "cargoTarget": str(target) if target else None,
-            "binaries": {"cli": str(cli) if cli and cli.is_file() else None, "gui": str(gui) if gui and gui.is_file() else None},
+            "binaries": {
+                "cli": str(cli) if cli and cli.is_file() else None,
+                "gui": str(pcc_gui) if pcc_gui.is_file() else None,
+                "pccGui": str(pcc_gui) if pcc_gui.is_file() else None,
+            },
             "session": {"id": self.log.session_id, "log": str(self.log.text_path), "jsonl": str(self.log.jsonl_path)},
         }
         if as_json:
@@ -1089,9 +1109,31 @@ class CortexPCC:
                     hygiene = maintenance.scan_root_hygiene(self.ctx.root)
                     if hygiene.get("violationCount") or hygiene.get("advisoryCount"):
                         repaired = maintenance.repair_root_hygiene(self.ctx.root)
+                        remaining = int((repaired.get("after") or {}).get("violationCount", 0) or 0)
+                        if remaining:
+                            self.gates.failed_stage = "repository-layout"
+                            self.log.emit(
+                                "FAIL",
+                                f"Repository hygiene repair left {remaining} canonical layout violation(s); Full/Fast gate is blocked.",
+                                phase="maintenance",
+                            )
+                            final_hygiene = maintenance.scan_root_hygiene(self.ctx.root)
+                            for item in final_hygiene.get("items", []) or []:
+                                if str(item.get("severity") or "") != "violation":
+                                    continue
+                                detail = str(item.get("path") or "<unknown>")
+                                kind_name = str(item.get("kind") or "repository-layout")
+                                self.log.emit("FAIL", f"Layout blocker [{kind_name}]: {detail}", phase="maintenance")
+                            ok = False
+                            if evidence:
+                                self.log.emit("INFO", "Collecting debug bundle (lightweight evidence path)", phase="evidence")
+                                self.evidence.create(reason=f"{kind_l.upper()}_FAIL", failed_stage=self.gates.failed_stage, exit_code=1, open_after=False)
+                            return 1
                         self.log.emit(
                             "PASS",
-                            f"Operational hygiene normalized {len(repaired.get('moved', []))} item(s) before {kind_l} gate.",
+                            f"Repository hygiene normalized {len(repaired.get('moved', []))} file(s), migrated "
+                            f"{int((repaired.get('runtimeMigration') or {}).get('migrated', 0) or 0)} runtime conversation file(s), and "
+                            f"{int((repaired.get('volumeRuntimeMigration') or {}).get('migrated', 0) or 0)} portable runtime file(s) before {kind_l} gate.",
                             phase="maintenance",
                         )
                 if kind_l == "quick":
@@ -1259,18 +1301,16 @@ class CortexPCC:
             self.print_banner()
             print("BUILD / RUN")
             print(" 1 Build Cortex workspace - debug")
-            print(" 2 Build Cortex Desktop package")
-            print(" 3 Build Cortex workspace - release")
-            print(" 4 Launch Cortex GUI / Project Control")
-            print(" 5 Native status")
+            print(" 2 Build Cortex workspace - release")
+            print(" 3 Launch Cortex GUI / Project Control")
+            print(" 4 Native status")
             print(" 0 Back")
             choice = input("Select: ").strip()
             if choice == "0": return
             if choice == "1": self.build()
-            elif choice == "2": self.build(package="cortex_desktop")
-            elif choice == "3": self.build(release=True)
-            elif choice == "4": self.launch_gui()
-            elif choice == "5": self.status()
+            elif choice == "2": self.build(release=True)
+            elif choice == "3": self.launch_gui()
+            elif choice == "4": self.status()
             else: continue
             input("Press Enter to continue...")
 
@@ -1289,7 +1329,7 @@ class CortexPCC:
             print(" 9 Open failed patches")
             print("10 Open patch receipts")
             print("11 Root artifact hygiene scan")
-            print("12 Repair generated root residue")
+            print("12 Repair repository layout / root hygiene")
             print("13 Verify latest debug bundle")
             print("14 Artifact retention dry-run")
             print("15 Apply artifact retention policy")

@@ -52,6 +52,21 @@ class SourceRollupTests(unittest.TestCase):
         self.assertNotIn("target/debug.bin", names)
         self.assertGreaterEqual(len(manifest["exclusions"]), 3)
 
+    def test_02b_excludes_legacy_runtime_state_from_source_rollup(self):
+        legacy = self.root / "data" / "conversations" / "pcc" / "workspace"
+        legacy.mkdir(parents=True)
+        (legacy / "conversation.json").write_text('{"messages":[]}', encoding="utf-8")
+        registry = self.root / "data" / "registry"
+        registry.mkdir(parents=True)
+        (registry / "project_registry.json").write_text('{}', encoding="utf-8")
+        archive = rollup.create(self.root)
+        manifest, names = self.manifest(archive)
+        self.assertFalse(any(name.startswith("data/conversations/") for name in names))
+        self.assertFalse(any(name.startswith("data/registry/") for name in names))
+        excluded = {row["path"]: row["reason"] for row in manifest["exclusions"]}
+        self.assertEqual(excluded.get("data/conversations"), "legacy-runtime-state")
+        self.assertEqual(excluded.get("data/registry"), "legacy-runtime-state")
+
     def test_03_does_not_follow_symlink(self):
         external = Path(self.temp.name) / "private.txt"
         external.write_text("outside")

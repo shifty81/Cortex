@@ -110,6 +110,29 @@ def _chat_execution_intent(prompt: str, selected_mode: str) -> tuple[str, str]:
     return mode, value
 
 
+def _friendly_cortex_stage(line: str) -> str:
+    match = re.search(r"\bstage=([^\s]+)", line)
+    stage = match.group(1) if match else "working"
+    known = {
+        "pcc_chat.start": "Starting Cortex request",
+        "controller.open.start": "Opening Cortex controller",
+        "controller.open.done": "Cortex controller ready",
+        "request.route.start": "Routing request",
+        "request.route.done": "Request routed",
+        "route.intent.start": "Classifying project intent",
+        "route.intent.chat_fallback": "Starting conversational response",
+        "route.new_project.conversation.start": "Preparing new-project conversation",
+        "conversation.prepare.ensure.start": "Preparing conversation state",
+        "conversation.prepare.load.start": "Loading conversation context",
+        "conversation.prepare.append_user.start": "Recording request",
+        "new_project.target.start": "Resolving new-project target",
+        "new_project.proposal.append.start": "Preparing project proposal",
+        "new_project.pending.persist.start": "Persisting pending project operation",
+        "pcc_chat.done": "Finalizing Cortex response",
+    }
+    return known.get(stage, stage.replace(".", " › ").replace("_", " "))
+
+
 class CortexPCCGui:
     def __init__(self, root: Path) -> None:
         import tkinter as tk
@@ -478,6 +501,17 @@ class CortexPCCGui:
             justify="left",
         )
         self.chat_project_label.pack(anchor="w", pady=(3, 0))
+        self.chat_live_label = tk.Label(
+            header_left,
+            text="Idle",
+            bg=PANEL,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+            anchor="w",
+            justify="left",
+            wraplength=760,
+        )
+        self.chat_live_label.pack(anchor="w", fill="x", pady=(3, 0))
 
         header_right = tk.Frame(header, bg=PANEL)
         header_right.pack(side="right", padx=10, pady=8)
@@ -580,7 +614,7 @@ class CortexPCCGui:
         self.chat_mode_box.pack(side="left", padx=(6, 8))
         tk.Label(
             composer_top,
-            text="Chat is read-only • /repair or Repair mode runs a governed source attempt • No automatic builds",
+            text="Chat can inspect or perform governed project work • Inspect/Plan stay read-only • Apply/Repair are explicit transactional modes",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI", 8),
@@ -3571,8 +3605,8 @@ class CortexPCCGui:
             self._set_status_card("Hygiene", f"{hygiene.get('violationCount', '?')} issue(s)", YELLOW)
 
         self._set_status_card("PCC", "Ready", GREEN)
-        runtime_ready = bool(binaries.get("gui"))
-        self._set_status_card("Runtime", "Ready" if runtime_ready else "Not built", GREEN if runtime_ready else YELLOW)
+        runtime_ready = bool(binaries.get("cli"))
+        self._set_status_card("Runtime", "Worker ready" if runtime_ready else "Worker not built", GREEN if runtime_ready else YELLOW)
 
         ahead = git.get("ahead")
         behind = git.get("behind")
@@ -3606,7 +3640,8 @@ class CortexPCCGui:
             f"Hygiene    : {'Clean' if hygiene.get('clean', True) else 'Needs attention'}",
             f"PCC        : {provider}",
             f"Toolchain  : {toolchain}",
-            f"Runtime    : {binaries.get('gui') or 'Not built / not reported'}",
+            f"Cortex CLI : {binaries.get('cli') or 'Not built / not reported'}",
+            f"PCC GUI    : {binaries.get('pccGui') or binaries.get('gui') or 'Not reported'}",
             f"Active log : {(status.get('session') or {}).get('log') or '<not reported>'}",
         ]
         self.summary_text.configure(state="normal")
@@ -3684,8 +3719,24 @@ class CortexPCCGui:
     def _start_registered_command(self, row: SurfaceCommand) -> None:
         if row.source == "project_contract":
             self._start_contract_command(row.key, label=row.label)
-        else:
-            self._start_command(row.key, label=row.label)
+            return
+
+        # Provider operations run under the embedded ProcessHost with stdin=DEVNULL.
+        # patch-apply owns a CLI confirmation for interactive shells, so the GUI must
+        # confirm at the surface and forward --yes rather than letting the provider
+        # call input() inside a detached child process.
+        if row.key == "patch-apply":
+            if not self._popup(
+                "Apply Validated Updates",
+                "Apply the currently validated PCC update queue? Invalid updates remain fail-closed.",
+                kind="warning",
+                confirm=True,
+            ):
+                return
+            self._start_command(row.key, ["--yes"], label=row.label)
+            return
+
+        self._start_command(row.key, label=row.label)
 
     # ------------------------------------------------------------------
     # Operations
@@ -3946,12 +3997,14 @@ class CortexPCCGui:
                 "Cortex transactional source operation",
                 f"Run {mode.upper()} against {self.root_path}?\n\n"
                 "The prebuilt Cortex worker may inspect or modify approved project files "
-                "under its governed transaction/permission rules. No Cargo build is "
-                "started by sending this message.\n\nProceed?",
+                "under its governed transaction/permission rules and may run configured "
+                "format/build/test/runtime verification as part of that operation.\n\nProceed?",
                 kind="warning", confirm=True,
             ):
                 return "break"
         self.chat_input.delete("1.0", "end")
+        if hasattr(self, "chat_live_label"):
+            self.chat_live_label.configure(text="Request accepted • preparing Cortex execution", fg=CYAN)
         self._append_chat_message("user", prompt)
         self._append_chat_message("system", f"Execution mode: {mode.upper()}" + (
             " • explicit transactional worker operation" if mode in {"apply", "repair"}
@@ -4027,6 +4080,11 @@ class CortexPCCGui:
         answer_lines: list[str] = []
         for line in lines:
             if line.startswith("[CortexRuntime]"):
+                continue
+            if line.startswith("[CortexLive]"):
+                continue
+            if line.startswith("[CortexStage]"):
+                self._append_log(line + "\n", "muted")
                 continue
             if line.startswith("[CortexTiming]"):
                 self._append_log(line + "\n", "muted")
@@ -4241,15 +4299,32 @@ class CortexPCCGui:
                 kind, payload = self._event_q.get_nowait()
                 if kind == "log":
                     line = str(payload)
-                    if line.startswith("[CortexRuntime]") and hasattr(self, "chat_worker_label"):
+                    if line.startswith("[CortexLive] "):
+                        live = line[len("[CortexLive] "):].strip()
+                        if hasattr(self, "chat_worker_label"):
+                            self.chat_worker_label.configure(text="Cortex execution live", fg=CYAN)
+                        if hasattr(self, "chat_live_label"):
+                            self.chat_live_label.configure(text=live or "Cortex execution active", fg=CYAN)
+                    elif line.startswith("[CortexStage]"):
+                        if hasattr(self, "chat_worker_label"):
+                            self.chat_worker_label.configure(text="Cortex request active", fg=CYAN)
+                        if hasattr(self, "chat_live_label"):
+                            self.chat_live_label.configure(text=_friendly_cortex_stage(line), fg=CYAN)
+                    elif line.startswith("[CortexRuntime]") and hasattr(self, "chat_worker_label"):
                         # Expose safe live operational state next to PCC Chat as
                         # well as in the existing independently scrolling console.
                         if " FAIL " in line or " exit=" in line and " exit=0 " not in line:
                             self.chat_worker_label.configure(text="Cortex worker failed • see Project Console", fg=RED)
+                            if hasattr(self, "chat_live_label"):
+                                self.chat_live_label.configure(text="Execution failed • see Project Console for diagnostics", fg=RED)
                         elif " END exit=0 " in line:
                             self.chat_worker_label.configure(text="Cortex worker completed", fg=GREEN)
-                        elif "running;" in line or "awaiting controller response" in line:
-                            self.chat_worker_label.configure(text="Cortex worker running • see Project Console", fg=CYAN)
+                            if hasattr(self, "chat_live_label"):
+                                self.chat_live_label.configure(text="Execution completed", fg=GREEN)
+                        elif "active;" in line or "waiting for execution/provider activity" in line:
+                            self.chat_worker_label.configure(text="Cortex worker active", fg=CYAN)
+                            if hasattr(self, "chat_live_label") and not str(self.chat_live_label.cget("text") or "").strip():
+                                self.chat_live_label.configure(text="Waiting for execution/provider activity", fg=CYAN)
                     up = line.upper()
                     tag = "fail" if ("FAIL" in up or "ERROR" in up) else ("warn" if "WARN" in up else ("pass" if "PASS" in up or "GREEN" in up else ""))
                     self._append_stream_log(line, tag)
